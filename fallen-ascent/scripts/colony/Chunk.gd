@@ -26,6 +26,39 @@ func populate(coord: Vector2i, noise: FastNoiseLite) -> void:
 	queue_redraw()
 
 
+func get_tile(local: Vector2i) -> int:
+	return _tiles[local.y * SIZE + local.x]
+
+
+func set_tile(local: Vector2i, t: int) -> void:
+	_tiles[local.y * SIZE + local.x] = t
+	queue_redraw()
+
+
+## Vector2i.MAX-style sentinel returned by grid_to_chunk when called with
+## negative coords would be inconvenient; these helpers use Euclidean math so
+## negative grid indices map correctly.
+static func grid_to_chunk(grid: Vector2i) -> Vector2i:
+	return Vector2i(
+		int(floor(float(grid.x) / SIZE)),
+		int(floor(float(grid.y) / SIZE)),
+	)
+
+
+static func grid_to_local(grid: Vector2i) -> Vector2i:
+	return Vector2i(
+		posmod(grid.x, SIZE),
+		posmod(grid.y, SIZE),
+	)
+
+
+static func grid_to_pixel_center(grid: Vector2i) -> Vector2:
+	return Vector2(
+		grid.x * TILE_PIXELS + TILE_PIXELS * 0.5,
+		grid.y * TILE_PIXELS + TILE_PIXELS * 0.5,
+	)
+
+
 func _draw() -> void:
 	# Single-pass draw of every cell. With TileMapLayer this becomes one
 	# set_cells_terrain_connect / set_cell call per tile instead.

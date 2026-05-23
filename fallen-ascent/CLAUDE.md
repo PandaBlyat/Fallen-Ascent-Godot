@@ -1,5 +1,12 @@
 # Fallen Ascent — Project Conventions
 
+> **Before you start a task, read `to-do-list.md`.** That file is the
+> running ledger of work that is known to be needed but is intentionally
+> out of scope of past sessions. When *this* session identifies anything
+> in the same category — a real need that you can't address right now —
+> append it there before you finish. The to-do list is how we avoid
+> forgetting things between sessions.
+
 ## Project overview
 
 Fallen Ascent is a 2D colony sim set inside a vast, BLAME!-inspired megastructure.

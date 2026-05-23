@@ -13,6 +13,9 @@ extends Node
 ##   chunk_loaded(chunk_coord)        - emitted by ChunkManager after a chunk
 ##                                      has been instantiated and populated.
 ##   chunk_unloaded(chunk_coord)      - emitted just before a chunk is freed.
+##   tile_changed(grid, new_tile)     - emitted by ChunkManager after a tile is
+##                                      mutated via set_tile_at. Payload: global
+##                                      grid coord (Vector2i) + new tile id.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -23,3 +26,4 @@ signal game_speed_changed(speed: float)
 signal camera_moved(world_pos: Vector2, zoom: Vector2)
 signal chunk_loaded(chunk_coord: Vector2i)
 signal chunk_unloaded(chunk_coord: Vector2i)
+signal tile_changed(grid: Vector2i, new_tile: int)

@@ -68,6 +68,54 @@ func loaded_count() -> int:
 	return _loaded.size()
 
 
+## Returns the bounding rect of loaded chunks in chunk coords (inclusive lo,
+## exclusive hi). Used by pathfinder to size its AStarGrid2D region.
+func loaded_chunk_bounds() -> Rect2i:
+	if _loaded.is_empty():
+		return Rect2i()
+	var first := true
+	var lo := Vector2i.ZERO
+	var hi := Vector2i.ZERO
+	for coord in _loaded.keys():
+		var c: Vector2i = coord as Vector2i
+		if first:
+			lo = c
+			hi = c + Vector2i.ONE
+			first = false
+		else:
+			lo.x = mini(lo.x, c.x)
+			lo.y = mini(lo.y, c.y)
+			hi.x = maxi(hi.x, c.x + 1)
+			hi.y = maxi(hi.y, c.y + 1)
+	return Rect2i(lo, hi - lo)
+
+
+## Returns the tile id at a global grid coord. If the chunk isn't loaded,
+## reports TILE_VOID — callers treat that as impassable.
+func get_tile_at(grid: Vector2i) -> int:
+	var ccoord := Chunk.grid_to_chunk(grid)
+	if not _loaded.has(ccoord):
+		return TerrainGenerator.TILE_VOID
+	var chunk: Chunk = _loaded[ccoord]
+	return chunk.get_tile(Chunk.grid_to_local(grid))
+
+
+## Writes a tile id at a global grid coord and emits tile_changed. No-op if
+## the chunk isn't loaded (mining unloaded terrain is not supported).
+func set_tile_at(grid: Vector2i, t: int) -> void:
+	var ccoord := Chunk.grid_to_chunk(grid)
+	if not _loaded.has(ccoord):
+		return
+	var chunk: Chunk = _loaded[ccoord]
+	chunk.set_tile(Chunk.grid_to_local(grid), t)
+	EventBus.tile_changed.emit(grid, t)
+
+
+func is_walkable(grid: Vector2i) -> bool:
+	var t: int = get_tile_at(grid)
+	return t == TerrainGenerator.TILE_FLOOR or t == TerrainGenerator.TILE_DEBRIS
+
+
 static func _world_to_chunk(world_pos: Vector2) -> Vector2i:
 	var px: int = Chunk.SIZE * Chunk.TILE_PIXELS
 	return Vector2i(

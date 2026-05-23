@@ -1,15 +1,48 @@
-[gd_scene load_steps=5 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=12 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
 [ext_resource type="Script" path="res://scripts/camera/CameraController.gd" id="3_camera"]
 [ext_resource type="Script" path="res://scripts/ui/SpeedControls.gd" id="4_speed"]
+[ext_resource type="Script" path="res://scripts/colony/JobBoard.gd" id="5_jobboard"]
+[ext_resource type="Script" path="res://scripts/colony/Pathfinder.gd" id="6_pathfinder"]
+[ext_resource type="Script" path="res://scripts/colony/StockpileManager.gd" id="7_stock"]
+[ext_resource type="Script" path="res://scripts/ui/Designator.gd" id="8_designator"]
+[ext_resource type="Script" path="res://scripts/ui/MineOverlay.gd" id="9_mineoverlay"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
 
 [node name="ChunkManager" type="Node2D" parent="."]
 script = ExtResource("2_chunks")
+
+[node name="Items" type="Node2D" parent="."]
+
+[node name="StockpileManager" type="Node2D" parent="."]
+script = ExtResource("7_stock")
+job_board_path = NodePath("../JobBoard")
+chunk_manager_path = NodePath("../ChunkManager")
+items_root_path = NodePath("../Items")
+
+[node name="Workers" type="Node2D" parent="."]
+
+[node name="MineOverlay" type="Node2D" parent="."]
+script = ExtResource("9_mineoverlay")
+job_board_path = NodePath("../JobBoard")
+
+[node name="Designator" type="Node2D" parent="."]
+script = ExtResource("8_designator")
+camera_path = NodePath("../Camera")
+chunk_manager_path = NodePath("../ChunkManager")
+job_board_path = NodePath("../JobBoard")
+stockpile_manager_path = NodePath("../StockpileManager")
+
+[node name="JobBoard" type="Node" parent="."]
+script = ExtResource("5_jobboard")
+
+[node name="Pathfinder" type="Node" parent="."]
+script = ExtResource("6_pathfinder")
+chunk_manager_path = NodePath("../ChunkManager")
 
 [node name="Camera" type="Camera2D" parent="."]
 script = ExtResource("3_camera")
@@ -19,8 +52,15 @@ script = ExtResource("3_camera")
 [node name="DebugLabel" type="Label" parent="HUD"]
 offset_left = 8.0
 offset_top = 8.0
-offset_right = 400.0
+offset_right = 600.0
 offset_bottom = 28.0
+text = ""
+
+[node name="ModeLabel" type="Label" parent="HUD"]
+offset_left = 8.0
+offset_top = 28.0
+offset_right = 600.0
+offset_bottom = 48.0
 text = ""
 
 [node name="SpeedControls" type="HBoxContainer" parent="HUD"]

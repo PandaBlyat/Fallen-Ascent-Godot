@@ -68,7 +68,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_set_mode(Mode.STOCKPILE if _mode != Mode.STOCKPILE else Mode.NONE)
 		return
 	if event.is_action_pressed("cancel_mode"):
-		_set_mode(Mode.NONE)
+		if _mode != Mode.NONE:
+			_set_mode(Mode.NONE)
+			get_viewport().set_input_as_handled()
 		return
 
 	if _mode == Mode.NONE:
@@ -87,7 +89,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 
 
-func _on_right_press(mb: InputEventMouseButton) -> void:
+func _on_right_press(_mb: InputEventMouseButton) -> void:
 	var grid := _world_to_grid(_camera.get_global_mouse_position())
 	match _mode:
 		Mode.MINE:

@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=13 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/colony/StockpileManager.gd" id="7_stock"]
 [ext_resource type="Script" path="res://scripts/ui/Designator.gd" id="8_designator"]
 [ext_resource type="Script" path="res://scripts/ui/MineOverlay.gd" id="9_mineoverlay"]
+[ext_resource type="Script" path="res://scripts/ui/PauseOverlay.gd" id="10_pause"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
@@ -48,6 +49,9 @@ chunk_manager_path = NodePath("../ChunkManager")
 script = ExtResource("3_camera")
 
 [node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="PauseOverlay" type="Node" parent="HUD"]
+script = ExtResource("10_pause")
 
 [node name="DebugLabel" type="Label" parent="HUD"]
 offset_left = 8.0

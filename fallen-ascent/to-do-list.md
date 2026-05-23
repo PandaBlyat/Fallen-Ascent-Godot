@@ -65,6 +65,16 @@ Format: `[area] short description — why it matters / first hint at how`.
 - [ ] **Designation tool palette** with on-screen buttons (today: hotkeys
       M / B / Esc only).
 - [ ] **Tooltip on hover** showing tile type, occupant, designation status.
+- [ ] **Audio settings** — master / music / SFX volume sliders in
+      `SettingsMenu` once we have audio. Wire to AudioServer bus volumes
+      and persist via `SettingsManager` (add a `[audio]` section).
+- [ ] **Keybinding rebinder** — UI to remap actions in `project.godot`'s
+      InputMap at runtime, saved per-action to `user://settings.cfg`.
+- [ ] **Return to Main Menu** action — from ColonySite / WorldMap, route
+      back to `Main.tscn` (currently the only way back is to quit).
+- [ ] **Windowed resolution picker** in `SettingsMenu` — current settings
+      ship display-mode + vsync + FPS only; resolution UX (custom vs.
+      monitor-native list, what to do in fullscreen) needs its own pass.
 
 ## Tests / tooling
 

@@ -21,9 +21,11 @@ extends Node
 ##   - No state, no logic. This file holds signal declarations only.
 ##   - Payloads use typed primitives or Resource subclasses — no Dictionaries.
 
+@warning_ignore_start("unused_signal")
 signal site_selected(site: Resource)
 signal game_speed_changed(speed: float)
 signal camera_moved(world_pos: Vector2, zoom: Vector2)
 signal chunk_loaded(chunk_coord: Vector2i)
 signal chunk_unloaded(chunk_coord: Vector2i)
 signal tile_changed(grid: Vector2i, new_tile: int)
+@warning_ignore_restore("unused_signal")

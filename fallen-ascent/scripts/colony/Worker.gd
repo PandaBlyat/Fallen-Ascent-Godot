@@ -59,7 +59,7 @@ func current_grid() -> Vector2i:
 	)
 
 
-func _on_job_added(_job: Job) -> void:
+func _on_job_added(_added_job: Job) -> void:
 	if _state == State.IDLE:
 		_idle_cooldown = 0.0
 

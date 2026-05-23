@@ -1,0 +1,72 @@
+[gd_scene load_steps=2 format=3 uid="uid://bfa_settingsmenu_0001"]
+
+[ext_resource type="Script" path="res://scripts/ui/SettingsMenu.gd" id="1_settingsmenu"]
+
+[node name="SettingsMenu" type="CanvasLayer"]
+layer = 100
+script = ExtResource("1_settingsmenu")
+
+[node name="Dimmer" type="ColorRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.5)
+mouse_filter = 1
+
+[node name="Panel" type="PanelContainer" parent="."]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -160.0
+offset_right = 200.0
+offset_bottom = 160.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Margin" type="MarginContainer" parent="Panel"]
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="Panel/Margin"]
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="Panel/Margin/VBox"]
+text = "Settings"
+horizontal_alignment = 1
+
+[node name="Grid" type="GridContainer" parent="Panel/Margin/VBox"]
+columns = 2
+theme_override_constants/h_separation = 16
+theme_override_constants/v_separation = 8
+
+[node name="DisplayModeLabel" type="Label" parent="Panel/Margin/VBox/Grid"]
+text = "Display Mode"
+
+[node name="DisplayModeButton" type="OptionButton" parent="Panel/Margin/VBox/Grid"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="VSyncLabel" type="Label" parent="Panel/Margin/VBox/Grid"]
+text = "V-Sync"
+
+[node name="VSyncButton" type="OptionButton" parent="Panel/Margin/VBox/Grid"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="MaxFpsLabel" type="Label" parent="Panel/Margin/VBox/Grid"]
+text = "Max FPS"
+
+[node name="MaxFpsButton" type="OptionButton" parent="Panel/Margin/VBox/Grid"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+
+[node name="Spacer" type="Control" parent="Panel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 8)
+
+[node name="CloseButton" type="Button" parent="Panel/Margin/VBox"]
+unique_name_in_owner = true
+text = "Close"

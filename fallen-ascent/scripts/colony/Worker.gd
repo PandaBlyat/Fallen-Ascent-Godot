@@ -71,8 +71,15 @@ const MENTAL_IDLE_RISE_PER_SEC: float = 0.04
 const MENTAL_WORK_RISE_PER_SEC: float = 0.16
 const REST_RECOVERY_PER_SEC: float = 8.0
 const REPAIR_RECOVERY_PER_SEC: float = 12.0
-const SOCIAL_GAIN_PER_SEC: float = 2.0
+const SOCIAL_MAX: float = 100.0
+const SOCIAL_GAIN_PER_SEC: float = 12.0          ## per-second gain while chatting
+const SOCIAL_DECAY_PER_SEC: float = 0.18         ## passive decay when not chatting
 const SOCIAL_ADJACENCY_RANGE: int = 1
+const MOOD_MAX: float = 100.0
+const MOOD_BASELINE: float = 80.0
+const MOOD_RECOVERY_PER_SEC: float = 0.4         ## drift back to baseline when needs satisfied
+const MOOD_NEED_DECAY_PER_SEC: float = 0.6       ## per-need extra decay while unsatisfied
+const MOOD_LOW_THRESHOLD: float = 35.0
 const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
 const TELEPORT_COOLDOWN_SECONDS: float = 1.0
 const SCRAPE_RUST_DURATION: float = 1.4
@@ -95,7 +102,9 @@ var _manual_charging: bool = false
 var _action_text: String = ""
 var _condition: float = CONDITION_MAX
 var _mental_tiredness: float = 0.0
-var _social: float = 0.0
+var _social: float = 50.0
+var _mood: float = MOOD_BASELINE
+var _unsatisfied_needs: Array[String] = []
 var _activity_timer: float = 0.0
 var _activity_target: Vector2i = Vector2i.ZERO
 var _activity_partner: Worker = null
@@ -127,6 +136,7 @@ var _items_root: Node2D
 var _colony_site: Node
 var _fog: FogOfWar
 var _structure_manager: StructureManager
+var _room_manager: Node = null
 
 
 func setup(
@@ -138,6 +148,7 @@ func setup(
 	colony_site: Node,
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
+	room_manager: Node = null,
 ) -> void:
 	_job_board = job_board
 	_pathfinder = pathfinder
@@ -147,6 +158,7 @@ func setup(
 	_colony_site = colony_site
 	_fog = fog
 	_structure_manager = structure_manager
+	_room_manager = room_manager
 
 
 func _ready() -> void:
@@ -161,6 +173,7 @@ func _ready() -> void:
 	stats.attack_range_tiles = 1
 	stats.knockback_px = 6.0
 	stats.stun_on_hit_seconds = 0.15
+	stats.dodge_chance = 0.12
 	if _job_board != null:
 		_job_board.job_added.connect(_on_job_added)
 		_job_board.job_cancelled.connect(_on_job_cancelled)
@@ -208,22 +221,32 @@ func apply_knockback(vec: Vector2, stun_seconds: float) -> void:
 	_stun_remaining = maxf(_stun_remaining, stun_seconds)
 
 
-func command_attack(target: Node2D) -> bool:
+func command_attack(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNREACHABLE) -> bool:
 	if _dead or target == null or not is_instance_valid(target):
 		return false
 	if target.has_method("is_alive") and not bool(target.call("is_alive")):
 		return false
 	_abandon_job()
-	_enter_fighting(target)
+	_enter_fighting(target, preferred_stand)
 	_remember("ordered to attack %s" % _target_label(target))
 	return true
 
 
-func _enter_fighting(target: Node2D) -> void:
+func _enter_fighting(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNREACHABLE) -> void:
 	_combat_target = target
 	_state = State.FIGHTING
 	_combat_repath_cooldown = 0.0
 	_last_combat_contact_at = _now_seconds()
+	if preferred_stand != Pathfinder.UNREACHABLE and _chunk_manager != null and _chunk_manager.is_walkable(preferred_stand):
+		if preferred_stand == current_grid():
+			_path = PackedVector2Array()
+			_path_index = 0
+		else:
+			var path: PackedVector2Array = _pathfinder.find_path(current_grid(), preferred_stand)
+			if not path.is_empty():
+				_path = path
+				_path_index = 0
+				return
 	_repath_to_combat_target()
 
 
@@ -282,6 +305,8 @@ func _die() -> void:
 		_job_board.release(_job)
 	_job = null
 	_release_charge_reservation()
+	if _room_manager != null and _room_manager.has_method("release_worker"):
+		_room_manager.call("release_worker", self)
 	EventBus.combatant_died.emit(self, FACTION_COLONY)
 	queue_redraw()
 	var fade := Timer.new()
@@ -336,6 +361,32 @@ func mental_tiredness_ratio() -> float:
 
 func social_score() -> int:
 	return int(roundf(_social))
+
+
+func social_ratio() -> float:
+	return clampf(_social / SOCIAL_MAX, 0.0, 1.0)
+
+
+func mood_ratio() -> float:
+	return clampf(_mood / MOOD_MAX, 0.0, 1.0)
+
+
+func mood_value() -> int:
+	return int(roundf(_mood))
+
+
+func mood_label() -> String:
+	if _mood >= 80.0:
+		return "content"
+	if _mood >= 55.0:
+		return "neutral"
+	if _mood >= MOOD_LOW_THRESHOLD:
+		return "uneasy"
+	return "broken"
+
+
+func unsatisfied_needs() -> Array[String]:
+	return _unsatisfied_needs.duplicate()
 
 
 func limb_status_lines() -> Array[String]:
@@ -551,7 +602,7 @@ func _process(delta: float) -> void:
 			_activity_timer -= delta
 			var adjacent: bool = _activity_partner != null and is_instance_valid(_activity_partner) and _is_adjacent_to(_activity_partner)
 			if adjacent:
-				_social += SOCIAL_GAIN_PER_SEC * delta
+				_social = clampf(_social + SOCIAL_GAIN_PER_SEC * delta, 0.0, SOCIAL_MAX)
 				_activity_partner.add_social(SOCIAL_GAIN_PER_SEC * 0.5 * delta)
 			if not adjacent or _activity_timer <= 0.0:
 				if _activity_partner != null and is_instance_valid(_activity_partner):
@@ -616,7 +667,7 @@ func _try_claim_job() -> bool:
 
 
 func add_social(amount: float) -> void:
-	_social += amount
+	_social = clampf(_social + amount, 0.0, SOCIAL_MAX)
 
 
 func _remember(text: String) -> void:
@@ -1495,12 +1546,43 @@ func _update_body_stats(delta: float) -> void:
 			pass
 		_:
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
+	# Social slowly decays unless actively chatting.
+	if _state != State.SOCIALIZING:
+		_social = maxf(0.0, _social - SOCIAL_DECAY_PER_SEC * delta)
+	_update_mood(delta)
 	if condition_decay <= 0.0:
 		return
 	if _chunk_manager != null and _chunk_manager.get_tile_at(current_grid()) == TerrainGenerator.TILE_RUST:
 		condition_decay *= RUST_CONDITION_DECAY_MULTIPLIER
 	_condition = maxf(0.0, _condition - condition_decay)
 	_damage_limb(condition_decay)
+
+
+func _update_mood(delta: float) -> void:
+	_unsatisfied_needs.clear()
+	# Need: dock room. Try to claim/keep a room from the RoomManager.
+	if _room_manager != null and _room_manager.has_method("ensure_dock_room_for"):
+		_room_manager.call("ensure_dock_room_for", self)
+		var has_room: bool = false
+		if _room_manager.has_method("has_dock_room"):
+			has_room = bool(_room_manager.call("has_dock_room", self))
+		if not has_room:
+			_unsatisfied_needs.append("Needs dock room")
+	# Mood drift: recover toward baseline, but suffer per unsatisfied need.
+	var target: float = MOOD_BASELINE
+	if _social < 25.0:
+		target -= 8.0
+	if _mental_tiredness > 70.0:
+		target -= 10.0
+	if _condition < 50.0:
+		target -= 6.0
+	var penalty: float = float(_unsatisfied_needs.size()) * MOOD_NEED_DECAY_PER_SEC
+	if _mood < target:
+		_mood = minf(MOOD_MAX, _mood + MOOD_RECOVERY_PER_SEC * delta)
+	if penalty > 0.0:
+		_mood = maxf(0.0, _mood - penalty * delta)
+	# Hard ceiling clamp.
+	_mood = clampf(_mood, 0.0, MOOD_MAX)
 
 
 func _damage_limb(amount: float) -> void:

@@ -12,6 +12,7 @@ const ICON_CELL_SIZE := Vector2i(32, 32)
 const TAB_ORDERS := &"orders"
 const TAB_ZONES := &"zones"
 const TAB_STRUCTURES := &"structures"
+const TAB_ROOMS := &"rooms"
 
 const ICON_CANCEL := Vector2i(0, 0)
 const ICON_MINE := Vector2i(1, 0)
@@ -247,6 +248,7 @@ func _build_layout() -> void:
 
 	_add_tab_button(tabs, TAB_ORDERS, "Orders")
 	_add_tab_button(tabs, TAB_ZONES, "Zones")
+	_add_tab_button(tabs, TAB_ROOMS, "Rooms")
 	_add_tab_button(tabs, TAB_STRUCTURES, "Structures")
 
 	_command_grid = GridContainer.new()
@@ -367,7 +369,6 @@ func _set_tab(tab: StringName) -> void:
 			command["tooltip"] as String,
 			command["icon"] as Vector2i,
 		)
-	_add_command_button(Designator.Mode.NONE, "Cancel", "Cancel\nClears active order, zone, or build tool.", ICON_CANCEL)
 	_refresh_mode_buttons()
 
 
@@ -377,6 +378,11 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 			return [
 				{"mode": Designator.Mode.STOCKPILE, "label": "Stockpile", "tooltip": "Stockpile\nPaint explored walkable cells for loose item storage.\nWorkers haul loose stacks here and merge same-kind stacks.", "icon": ICON_STOCKPILE},
 				{"mode": Designator.Mode.REMOVE_STOCKPILE, "label": "Remove", "tooltip": "Remove stockpile\nDeletes stockpile zone under cursor.\nStored items drop in place as loose stacks.", "icon": ICON_REMOVE},
+			]
+		TAB_ROOMS:
+			return [
+				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
+				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its dock room need satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
 			return [
@@ -654,7 +660,14 @@ func _build_worker_cards() -> void:
 		_add_meter(card, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
 		_add_meter(card, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
 		_add_meter(card, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
-		_add_card_line(card, "social", "%d" % worker.social_score())
+		_add_meter(card, "social", worker.social_ratio(), Color(0.55, 0.85, 0.55))
+		var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
+		_add_meter(card, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
+		var needs: Array[String] = worker.unsatisfied_needs()
+		if needs.is_empty():
+			_add_card_line(card, "needs", "satisfied", COLOR_METER_GOOD)
+		else:
+			_add_card_line(card, "needs", ", ".join(needs), Color(1.0, 0.5, 0.35))
 		for limb_line in worker.limb_status_lines():
 			_add_card_line(card, "limb", limb_line)
 		_add_history_panel(card, worker)

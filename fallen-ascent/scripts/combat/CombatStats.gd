@@ -14,6 +14,7 @@ extends Resource
 @export var attack_range_tiles: int = 1
 @export var knockback_px: float = 6.0
 @export var stun_on_hit_seconds: float = 0.15
+@export var dodge_chance: float = 0.0           ## 0..1 probability of dodging incoming swings
 
 var last_attack_at: float = -1000.0
 

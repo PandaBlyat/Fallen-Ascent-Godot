@@ -64,6 +64,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       haul) and per-worker work types.
 - [ ] **Worker needs** — power/charge, repair, "sleep" cycle. Sets up the
       AI director that CLAUDE.md flags as a future autoload candidate.
+      **Implemented v1:** `_mood` stat + `_unsatisfied_needs` list on Worker;
+      first need is "Needs dock room". Mood decays while needs are unmet,
+      drifts back to baseline (80) otherwise. ColonyHud renders mood meter
+      and an explicit "needs" line per selected worker.
 - [x] **Idle behavior table.** Workers should not only poll for jobs while
       idle. Add weighted low-cost idle choices: wait, roam explored space,
       wander toward frontier cells, recharge at nearest outlet, socialize with
@@ -168,6 +172,34 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       `WorldGenerator.WORLDGEN_VERSION` when terrain output changes.
 - [ ] **Headless smoke test** that boots `Main.tscn`, runs a fixed number of
       frames, and asserts no errors / no leaked nodes. Useful in CI.
+
+## Rooms / Mood (v1 landed, more to do)
+
+- [ ] **Room enclosure check.** `RoomManager.is_room_valid` currently only
+      enforces a minimum cell count and the presence of a Dock (or Maint Dock)
+      inside. Rimworld-style enclosure detection (walls on every external
+      border, no leak to outside floor) is not implemented. Right now any
+      painted floor area with a Dock counts as a valid room.
+- [ ] **Multiple room kinds.** Only DOCK_ROOM exists. Future kinds:
+      workshop, mess, recreation. Add to `RoomManager.Kind` and add a tab
+      button per kind.
+- [ ] **Per-worker assigned dock visualization.** The HUD shows "needs:
+      satisfied" / "needs dock room" but doesn't draw a link from the worker
+      to their owned room.
+- [ ] **Dock-room rest bonus.** Resting in the assigned dock room should
+      restore mental tiredness faster and trickle mood up. Today the room
+      just satisfies the need; resting still uses the global nearest dock.
+- [ ] **Mood breakdown thresholds.** Past behaviour like "wander off",
+      "refuse jobs", "lash out" when mood < 25 is not modeled yet.
+
+## Combat polish (v1 landed)
+
+- [ ] **Dodge chance scaling.** All three factions ship a fixed dodge
+      chance constant. Later: tie to condition, limb status, fatigue,
+      assigned room (e.g. well-rested bots dodge more).
+- [ ] **Damage / dodge floating text styling.** FloatingText is monochrome
+      labels per hit. Add crit/heal variants when added; consider object
+      pooling once a fight involves more than ~20 hits/sec.
 
 ## Known small bugs / cleanups
 

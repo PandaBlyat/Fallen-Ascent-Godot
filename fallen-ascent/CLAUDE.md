@@ -79,6 +79,33 @@ Naming convention for script roles:
 - `*Controller`— translates input/state into behavior on a single node.
 - `*Data`      — `Resource` subclass holding typed, savable state.
 
+## Designation tabs
+
+The colony palette is grouped into four tabs (`ColonyHud._set_tab`):
+
+- **Orders** — task overlays (mine).
+- **Zones** — stockpile paint/remove.
+- **Rooms** — Rimworld-style room designations (currently Dock Room).
+- **Structures** — buildables.
+
+There is no per-tab Cancel button: a left-click on any world tile while a
+designation mode is active cancels it (see `SelectionController._unhandled_input`),
+and Esc still cancels through `Designator.cancel_active()`.
+
+## Bot mood + needs
+
+`Worker._mood` is a 0..100 stat with `MOOD_BASELINE = 80`. `_unsatisfied_needs`
+is recomputed every frame from `RoomManager`. Each unmet need drains mood at
+`MOOD_NEED_DECAY_PER_SEC`; when satisfied, mood drifts back to baseline at
+`MOOD_RECOVERY_PER_SEC`. Add new needs by appending to `_unsatisfied_needs`
+in `Worker._update_mood` — the HUD will render them automatically.
+
+`RoomManager` owns the list of player-designated rooms. v1 has one kind,
+`DOCK_ROOM`: a 1×2+ painted area containing at least one Dock (or
+Maintenance Dock) structure. Rooms can be assigned to a single worker via
+`ensure_dock_room_for`; once assigned, the worker's "Needs dock room" need
+is satisfied.
+
 ---
 
 ## Coding standards

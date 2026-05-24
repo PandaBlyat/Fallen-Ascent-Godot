@@ -5,11 +5,14 @@ extends CanvasLayer
 signal closed
 
 const FPS_LABELS: Array[String] = ["30", "60", "120", "144", "165", "240", "Unlimited"]
+const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 
 @onready var _display_mode_button: OptionButton = %DisplayModeButton
 @onready var _vsync_button: OptionButton = %VSyncButton
 @onready var _fps_button: OptionButton = %MaxFpsButton
 @onready var _close_button: Button = %CloseButton
+@onready var _main_menu_button: Button = %MainMenuButton
+@onready var _quit_button: Button = %QuitButton
 
 
 func _ready() -> void:
@@ -20,6 +23,9 @@ func _ready() -> void:
 	_initialize_fps()
 
 	_close_button.pressed.connect(_close)
+	_main_menu_button.pressed.connect(_on_main_menu_pressed)
+	_quit_button.pressed.connect(_on_quit_pressed)
+	_main_menu_button.visible = _is_in_game()
 
 	# Grab focus on the first element to support controller and keyboard navigation
 	_display_mode_button.grab_focus()
@@ -78,6 +84,23 @@ func _on_vsync_selected(index: int) -> void:
 func _on_fps_selected(index: int) -> void:
 	if index < SettingsManager.FPS_PRESETS.size():
 		SettingsManager.set_max_fps(SettingsManager.FPS_PRESETS[index])
+
+
+func _on_main_menu_pressed() -> void:
+	GameState.set_game_speed(1.0)
+	get_tree().change_scene_to_file(MAIN_MENU_SCENE_PATH)
+
+
+func _on_quit_pressed() -> void:
+	get_tree().quit()
+
+
+func _is_in_game() -> bool:
+	# Hide the "Main Menu" button when we are already on the main menu.
+	var current: Node = get_tree().current_scene
+	if current == null:
+		return false
+	return current.scene_file_path != MAIN_MENU_SCENE_PATH
 
 
 func _close() -> void:

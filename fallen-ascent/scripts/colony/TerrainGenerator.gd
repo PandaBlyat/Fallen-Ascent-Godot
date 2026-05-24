@@ -25,6 +25,11 @@ const TILE_TELEPORTER: int = 9
 # Global fallbacks & boundary-critical constants
 const _DOOR_PROBABILITY: float = 0.74
 const _SHORTCUT_PROBABILITY: float = 0.34
+const _DEAD_END_PROBABILITY: float = 0.55      ## per-chunk chance to attempt one dead-end stub
+const _DEAD_END_COUNT_MIN: int = 1
+const _DEAD_END_COUNT_MAX: int = 3
+const _DEAD_END_MIN_LENGTH: int = 3
+const _DEAD_END_MAX_LENGTH: int = 7
 const _DEBRIS_NOISE_THRESHOLD: float = 0.45
 const _CONDUIT_NOISE_THRESHOLD: float = 0.56
 const _RUST_NOISE_THRESHOLD: float = -0.62
@@ -191,6 +196,11 @@ static func populate(
 		var b_idx: int = rng.randi_range(0, rooms.size() - 1)
 		if a_idx != b_idx:
 			_carve_corridor(out, chunk_size, _rect_center(rooms[a_idx]), _rect_center(rooms[b_idx]), rng, max_corridor_width)
+
+	# 7.5. Dead-end stubs: short corridors that branch off main paths into walls
+	# and terminate. Makes the layout feel mazey without breaking connectivity.
+	if rng.randf() < _DEAD_END_PROBABILITY:
+		_carve_dead_ends(out, chunk_size, rng, rooms)
 
 	# 8. Continuous global utility lines spanning boundaries.
 	_draw_global_conduits(out, chunk_size, chunk_coord, site_seed)
@@ -658,6 +668,72 @@ static func _carve_disc(out: PackedInt32Array, chunk_size: int, center: Vector2i
 
 static func _rect_center(r: Rect2i) -> Vector2i:
 	return r.position + r.size / 2
+
+
+## Carves a small number of short dead-end stubs branching from existing floor
+## tiles into surrounding walls. Increases the mazey "many-pockets" feel
+## without breaking connectivity.
+static func _carve_dead_ends(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+	rooms: Array[Rect2i],
+) -> void:
+	if rooms.is_empty():
+		return
+	var count: int = rng.randi_range(_DEAD_END_COUNT_MIN, _DEAD_END_COUNT_MAX)
+	const DIRS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for _i in range(count):
+		# Pick a random floor cell as the stub origin.
+		var origin: Vector2i = _random_floor_cell(out, chunk_size, rng)
+		if origin.x < 0:
+			continue
+		var dir: Vector2i = DIRS[rng.randi() % DIRS.size()]
+		var length: int = rng.randi_range(_DEAD_END_MIN_LENGTH, _DEAD_END_MAX_LENGTH)
+		var pos: Vector2i = origin
+		for _step in range(length):
+			pos += dir
+			if pos.x < _EDGE_MARGIN or pos.x >= chunk_size - _EDGE_MARGIN \
+					or pos.y < _EDGE_MARGIN or pos.y >= chunk_size - _EDGE_MARGIN:
+				break
+			var idx: int = pos.y * chunk_size + pos.x
+			# Only burrow through walls.
+			if out[idx] != TILE_WALL:
+				break
+			out[idx] = TILE_FLOOR
+			# Small chance to add a 1-tile dangling pocket at the very end.
+		# Optional pocket at the tip.
+		if rng.randf() < 0.45:
+			var perp := Vector2i(-dir.y, dir.x)
+			var pocket: Vector2i = pos + perp
+			if pocket.x >= _EDGE_MARGIN and pocket.x < chunk_size - _EDGE_MARGIN \
+					and pocket.y >= _EDGE_MARGIN and pocket.y < chunk_size - _EDGE_MARGIN:
+				var p_idx: int = pocket.y * chunk_size + pocket.x
+				if out[p_idx] == TILE_WALL:
+					out[p_idx] = TILE_FLOOR
+
+
+static func _random_floor_cell(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+) -> Vector2i:
+	for _attempt in 24:
+		var x: int = rng.randi_range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN - 1)
+		var y: int = rng.randi_range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN - 1)
+		var idx: int = y * chunk_size + x
+		if out[idx] == TILE_FLOOR:
+			# Prefer cells with at least one wall neighbour so the stub burrows in.
+			for off in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx < 0 or nx >= chunk_size or ny < 0 or ny >= chunk_size:
+					continue
+				if out[ny * chunk_size + nx] == TILE_WALL:
+					return Vector2i(x, y)
+	return Vector2i(-1, -1)
 
 
 static func _nearest_room_center(from: Vector2i, rooms: Array[Rect2i]) -> Vector2i:

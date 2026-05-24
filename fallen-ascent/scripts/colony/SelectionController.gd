@@ -19,17 +19,19 @@ extends Node2D
 
 const SELECT_RADIUS_PX: float = 10.0
 const DRAG_THRESHOLD_PX: float = 6.0
-const DRAG_FILL := Color(0.35, 0.65, 1.0, 0.12)
-const DRAG_BORDER := Color(0.55, 0.78, 1.0, 0.8)
+const DRAG_FILL := Color(0.35, 0.65, 1.0, 0.06)
+const DRAG_BORDER := Color(0.55, 0.78, 1.0, 0.45)
 const ORDER_HIGHLIGHT_SECONDS: float = 1.2
-const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.22)
-const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.95)
-const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.18)
-const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.95)
-const PATH_PREVIEW_COLOR := Color(1.0, 1.0, 1.0, 0.34)
+const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.10)
+const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.55)
+const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.08)
+const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.55)
+const PATH_PREVIEW_COLOR := Color(1.0, 1.0, 1.0, 0.18)
 const ORDER_FAIL_SECONDS: float = 1.2
-const ORDER_FAIL_FILL := Color(1.0, 0.12, 0.12, 0.18)
-const ORDER_FAIL_BORDER := Color(1.0, 0.22, 0.18, 0.92)
+const ORDER_FAIL_FILL := Color(1.0, 0.12, 0.12, 0.10)
+const ORDER_FAIL_BORDER := Color(1.0, 0.22, 0.18, 0.55)
+const HIGHLIGHT_BORDER_PX: float = 1.0
+const HIGHLIGHT_ENTITY_BORDER_PX: float = 1.0
 
 var _camera: Camera2D
 var _workers_root: Node2D
@@ -574,7 +576,7 @@ func _draw() -> void:
 		var fail_origin := Vector2(_order_fail_grid.x * Chunk.TILE_PIXELS, _order_fail_grid.y * Chunk.TILE_PIXELS)
 		var fail_rect := Rect2(fail_origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(fail_rect, Color(ORDER_FAIL_FILL.r, ORDER_FAIL_FILL.g, ORDER_FAIL_FILL.b, ORDER_FAIL_FILL.a * fail_alpha))
-		draw_rect(fail_rect, Color(ORDER_FAIL_BORDER.r, ORDER_FAIL_BORDER.g, ORDER_FAIL_BORDER.b, ORDER_FAIL_BORDER.a * fail_alpha), false, 1.5)
+		draw_rect(fail_rect, Color(ORDER_FAIL_BORDER.r, ORDER_FAIL_BORDER.g, ORDER_FAIL_BORDER.b, ORDER_FAIL_BORDER.a * fail_alpha), false, HIGHLIGHT_BORDER_PX)
 	if _order_highlight_target != null and is_instance_valid(_order_highlight_target):
 		var alpha_target: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
 		_draw_entity_highlight(_order_highlight_target, ORDER_HIGHLIGHT_FILL, ORDER_HIGHLIGHT_BORDER, alpha_target)
@@ -583,7 +585,7 @@ func _draw() -> void:
 		var origin := Vector2(_order_highlight_grid.x * Chunk.TILE_PIXELS, _order_highlight_grid.y * Chunk.TILE_PIXELS)
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(rect, Color(ORDER_HIGHLIGHT_FILL.r, ORDER_HIGHLIGHT_FILL.g, ORDER_HIGHLIGHT_FILL.b, ORDER_HIGHLIGHT_FILL.a * alpha))
-		draw_rect(rect, Color(ORDER_HIGHLIGHT_BORDER.r, ORDER_HIGHLIGHT_BORDER.g, ORDER_HIGHLIGHT_BORDER.b, ORDER_HIGHLIGHT_BORDER.a * alpha), false, 1.5)
+		draw_rect(rect, Color(ORDER_HIGHLIGHT_BORDER.r, ORDER_HIGHLIGHT_BORDER.g, ORDER_HIGHLIGHT_BORDER.b, ORDER_HIGHLIGHT_BORDER.a * alpha), false, HIGHLIGHT_BORDER_PX)
 	if _dragging:
 		var is_box: bool = (_drag_end_screen - _drag_start_screen).length() >= DRAG_THRESHOLD_PX
 		if not is_box:
@@ -592,7 +594,7 @@ func _draw() -> void:
 		var size := Vector2(absf(_drag_start_world.x - _drag_end_world.x), absf(_drag_start_world.y - _drag_end_world.y))
 		var drag_rect := Rect2(drag_origin, size)
 		draw_rect(drag_rect, DRAG_FILL)
-		draw_rect(drag_rect, DRAG_BORDER, false, 1.0)
+		draw_rect(drag_rect, DRAG_BORDER, false, HIGHLIGHT_BORDER_PX)
 
 
 func _draw_selected_paths() -> void:
@@ -602,11 +604,11 @@ func _draw_selected_paths() -> void:
 		var pts: PackedVector2Array = worker.active_path_points()
 		if pts.size() < 2:
 			continue
-		draw_polyline(pts, PATH_PREVIEW_COLOR, 1.5, true)
+		draw_polyline(pts, PATH_PREVIEW_COLOR, 1.0, true)
 
 
 func _draw_entity_highlight(target: Node2D, fill: Color, border: Color, alpha: float) -> void:
 	var center: Vector2 = target.position
 	var radius: float = SELECT_RADIUS_PX + 3.0
 	draw_circle(center, radius, Color(fill.r, fill.g, fill.b, fill.a * alpha))
-	draw_arc(center, radius, 0.0, TAU, 32, Color(border.r, border.g, border.b, border.a * alpha), 1.7)
+	draw_arc(center, radius, 0.0, TAU, 32, Color(border.r, border.g, border.b, border.a * alpha), HIGHLIGHT_ENTITY_BORDER_PX)

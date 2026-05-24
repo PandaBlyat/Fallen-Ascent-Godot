@@ -31,15 +31,88 @@ static func spawn(
 ) -> int:
 	var spawned: int = 0
 	for cell in _walkable_cells_near(origin, count, chunk_manager):
-		var worker: Worker = WORKER_SCRIPT.new() as Worker
-		worker.name = _generated_name(spawned)
-		worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager, room_manager)
-		worker.position = Chunk.grid_to_pixel_center(cell)
+		var index: int = workers_root.get_child_count() + spawned
+		var worker: Worker = _make_worker(
+			cell, index, chunk_manager, job_board, pathfinder,
+			stockpile_manager, items_root, colony_site, fog,
+			structure_manager, room_manager,
+		)
 		workers_root.add_child(worker)
 		spawned += 1
 		if spawned >= count:
 			break
 	return spawned
+
+
+## Spawns a single Worker at a walkable cell adjacent to `anchor`. Used by the
+## Sentience Cradle to drop a fresh bot next to its footprint after a cycle.
+## Returns null if no walkable adjacent cell exists.
+static func spawn_one_at(
+	anchor: Vector2i,
+	chunk_manager: ChunkManager,
+	job_board: JobBoard,
+	pathfinder: Pathfinder,
+	stockpile_manager: StockpileManager,
+	items_root: Node2D,
+	workers_root: Node2D,
+	colony_site: Node,
+	fog: FogOfWar = null,
+	structure_manager: StructureManager = null,
+	room_manager: Node = null,
+) -> Worker:
+	var target: Vector2i = _walkable_adjacent_or_self(anchor, chunk_manager)
+	if target == Pathfinder.UNREACHABLE:
+		return null
+	var index: int = workers_root.get_child_count()
+	var worker: Worker = _make_worker(
+		target, index, chunk_manager, job_board, pathfinder,
+		stockpile_manager, items_root, colony_site, fog,
+		structure_manager, room_manager,
+	)
+	workers_root.add_child(worker)
+	return worker
+
+
+static func _make_worker(
+	cell: Vector2i,
+	index: int,
+	chunk_manager: ChunkManager,
+	job_board: JobBoard,
+	pathfinder: Pathfinder,
+	stockpile_manager: StockpileManager,
+	items_root: Node2D,
+	colony_site: Node,
+	fog: FogOfWar,
+	structure_manager: StructureManager,
+	room_manager: Node,
+) -> Worker:
+	var worker: Worker = WORKER_SCRIPT.new() as Worker
+	worker.name = _generated_name(index)
+	worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager, room_manager)
+	worker.position = Chunk.grid_to_pixel_center(cell)
+	return worker
+
+
+static func _walkable_adjacent_or_self(anchor: Vector2i, chunk_manager: ChunkManager) -> Vector2i:
+	if chunk_manager.is_walkable(anchor):
+		return anchor
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	for off in OFFSETS:
+		var candidate: Vector2i = anchor + off
+		if chunk_manager.is_walkable(candidate):
+			return candidate
+	for r in range(2, MAX_SEARCH_RADIUS + 1):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dy) != r:
+					continue
+				var candidate2 := anchor + Vector2i(dx, dy)
+				if chunk_manager.is_walkable(candidate2):
+					return candidate2
+	return Pathfinder.UNREACHABLE
 
 
 static func _generated_name(index: int) -> String:

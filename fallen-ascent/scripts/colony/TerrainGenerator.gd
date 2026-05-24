@@ -274,10 +274,10 @@ static func tile_name(t: int) -> String:
 		TILE_DEBRIS: return "debris"
 		TILE_VOID: return "void"
 		TILE_OUTLET: return "outlet"
-		TILE_SERVICE_CORE: return "service core"
+		TILE_SERVICE_CORE: return "derelict core"
 		TILE_CONDUIT: return "conduit floor"
 		TILE_RUST: return "rust sludge"
-		TILE_RICH_WALL: return "rich wall"
+		TILE_RICH_WALL: return "plated wall"
 		TILE_TELEPORTER: return "teleporter"
 		_: return "unknown"
 

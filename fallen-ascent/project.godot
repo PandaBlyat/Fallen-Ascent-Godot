@@ -20,6 +20,11 @@ config/icon="res://icon.svg"
 EventBus="*res://scripts/autoload/EventBus.gd"
 SettingsManager="*res://scripts/autoload/SettingsManager.gd"
 GameState="*res://scripts/autoload/GameState.gd"
+TechManager="*res://scripts/autoload/TechManager.gd"
+
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
 
 [display]
 

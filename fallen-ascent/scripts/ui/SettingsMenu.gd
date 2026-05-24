@@ -7,9 +7,16 @@ signal closed
 const FPS_LABELS: Array[String] = ["30", "60", "120", "144", "165", "240", "Unlimited"]
 const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 
+@onready var _tabs: TabContainer = %Tabs
 @onready var _display_mode_button: OptionButton = %DisplayModeButton
 @onready var _vsync_button: OptionButton = %VSyncButton
 @onready var _fps_button: OptionButton = %MaxFpsButton
+@onready var _master_slider: HSlider = %MasterSlider
+@onready var _music_slider: HSlider = %MusicSlider
+@onready var _sfx_slider: HSlider = %SfxSlider
+@onready var _master_value: Label = %MasterValue
+@onready var _music_value: Label = %MusicValue
+@onready var _sfx_value: Label = %SfxValue
 @onready var _close_button: Button = %CloseButton
 @onready var _main_menu_button: Button = %MainMenuButton
 @onready var _quit_button: Button = %QuitButton
@@ -18,9 +25,15 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
+	if _tabs != null:
+		_tabs.set_tab_title(0, "Display")
+		if _tabs.get_tab_count() > 1:
+			_tabs.set_tab_title(1, "Audio")
+
 	_initialize_display_mode()
 	_initialize_vsync()
 	_initialize_fps()
+	_initialize_audio()
 
 	_close_button.pressed.connect(_close)
 	_main_menu_button.pressed.connect(_on_main_menu_pressed)
@@ -71,6 +84,39 @@ func _initialize_fps() -> void:
 
 	_fps_button.select(current_fps_index)
 	_fps_button.item_selected.connect(_on_fps_selected)
+
+
+func _initialize_audio() -> void:
+	_master_slider.value = SettingsManager.master_volume
+	_music_slider.value = SettingsManager.music_volume
+	_sfx_slider.value = SettingsManager.sfx_volume
+	_update_volume_label(_master_value, SettingsManager.master_volume)
+	_update_volume_label(_music_value, SettingsManager.music_volume)
+	_update_volume_label(_sfx_value, SettingsManager.sfx_volume)
+	_master_slider.value_changed.connect(_on_master_volume_changed)
+	_music_slider.value_changed.connect(_on_music_volume_changed)
+	_sfx_slider.value_changed.connect(_on_sfx_volume_changed)
+
+
+func _on_master_volume_changed(value: float) -> void:
+	SettingsManager.set_master_volume(value)
+	_update_volume_label(_master_value, value)
+
+
+func _on_music_volume_changed(value: float) -> void:
+	SettingsManager.set_music_volume(value)
+	_update_volume_label(_music_value, value)
+
+
+func _on_sfx_volume_changed(value: float) -> void:
+	SettingsManager.set_sfx_volume(value)
+	_update_volume_label(_sfx_value, value)
+
+
+func _update_volume_label(label: Label, value: float) -> void:
+	if label == null:
+		return
+	label.text = "%d%%" % int(roundf(clampf(value, 0.0, 1.0) * 100.0))
 
 
 func _on_display_mode_selected(index: int) -> void:

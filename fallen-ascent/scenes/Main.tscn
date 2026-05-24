@@ -110,3 +110,4 @@ theme_override_font_sizes/font_size = 11
 
 [node name="MenuMusic" type="AudioStreamPlayer" parent="."]
 stream = ExtResource("3_music")
+bus = &"Music"

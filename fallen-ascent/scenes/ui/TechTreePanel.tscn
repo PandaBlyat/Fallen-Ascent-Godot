@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://bfa_techtreepanel_0001"]
+
+[ext_resource type="Script" path="res://scripts/ui/TechTreePanel.gd" id="1_techtreepanel"]
+
+[node name="TechTreePanel" type="CanvasLayer"]
+layer = 100
+script = ExtResource("1_techtreepanel")

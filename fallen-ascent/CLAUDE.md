@@ -22,6 +22,7 @@ Far-future stretch: a Kenshi-style RPG mode controlling a single entity.
 mind. When in doubt, prefer the cheaper approach now and measure before
 "improving."
 
+UPDATE THIS FILE WHENEVER NEEDED.
 ---
 
 ## Folder structure

@@ -102,3 +102,4 @@ changing from fullscreen/wincowed/borderless doesnt do anything.
 
 when doing an action/order and player presses "esc" it opens the settings instead of cancelling action/order. 
 
+moving camera around can have extreme stuttering (fps wise)

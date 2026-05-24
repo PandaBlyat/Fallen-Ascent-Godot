@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfa_placeholder_atlas"
-path="res://.godot/imported/placeholder_atlas.png-placeholder.ctex"
+uid="uid://d1qfsn6op1g8q"
+path="res://.godot/imported/placeholder_atlas.png-0ecdda05f816536d7f16351c68708345.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://resources/tiles/placeholder_atlas.png"
-dest_files=["res://.godot/imported/placeholder_atlas.png-placeholder.ctex"]
+dest_files=["res://.godot/imported/placeholder_atlas.png-0ecdda05f816536d7f16351c68708345.ctex"]
 
 [params]
 

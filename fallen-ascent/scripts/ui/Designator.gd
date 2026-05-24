@@ -27,12 +27,16 @@ enum Mode {
 	BUILD_PARTS_LOOM,
 	BUILD_MAINTENANCE_DOCK,
 	BUILD_CALIBRATION_SHRINE,
+	DESIGNATE_DOCK_ROOM,
+	REMOVE_ROOM,
 }
 
 const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.18)
 const ZONE_PREVIEW_BORDER := Color(0.4, 0.85, 0.5, 0.6)
 const ORDER_PREVIEW_FILL := Color(0.85, 0.72, 0.35, 0.16)
 const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.65)
+const ROOM_PREVIEW_FILL := Color(0.45, 0.62, 0.98, 0.18)
+const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.7)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -40,6 +44,7 @@ const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.65)
 @export var stockpile_manager_path: NodePath
 @export var structure_manager_path: NodePath
 @export var fog_of_war_path: NodePath
+@export var room_manager_path: NodePath
 
 var _camera: Camera2D
 var _chunk_manager: ChunkManager
@@ -47,6 +52,7 @@ var _job_board: JobBoard
 var _stockpile_manager: StockpileManager
 var _structure_manager: StructureManager
 var _fog: FogOfWar
+var _room_manager: Node
 
 var _mode: int = Mode.NONE
 var _dragging: bool = false
@@ -62,6 +68,7 @@ func _ready() -> void:
 	_stockpile_manager = get_node(stockpile_manager_path) as StockpileManager
 	_structure_manager = get_node(structure_manager_path) as StructureManager
 	_fog = get_node(fog_of_war_path) as FogOfWar
+	_room_manager = get_node_or_null(room_manager_path)
 
 
 func current_mode() -> int:
@@ -93,14 +100,21 @@ func mode_label() -> String:
 		Mode.BUILD_PARTS_LOOM: return "BUILD PARTS LOOM"
 		Mode.BUILD_MAINTENANCE_DOCK: return "BUILD MAINTENANCE DOCK"
 		Mode.BUILD_CALIBRATION_SHRINE: return "BUILD CALIBRATION SHRINE"
+		Mode.DESIGNATE_DOCK_ROOM: return "DOCK ROOM"
+		Mode.REMOVE_ROOM: return "REMOVE ROOM"
 		_: return "-"
 
 
 func cancel_active() -> bool:
 	if _mode == Mode.NONE:
 		return false
+	_dragging = false
 	_set_mode(Mode.NONE)
 	return true
+
+
+func is_active() -> bool:
+	return _mode != Mode.NONE
 
 
 func _set_mode(m: int) -> void:
@@ -166,7 +180,8 @@ func _on_right_press() -> void:
 		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_LIGHT, Mode.BUILD_EXTRACTOR, \
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
-		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE:
+		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE, \
+		Mode.DESIGNATE_DOCK_ROOM, Mode.REMOVE_ROOM:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -195,9 +210,18 @@ func _on_right_release() -> void:
 			Mode.REMOVE_STOCKPILE:
 				for cell in cells:
 					_apply_remove_stockpile_click(cell)
+			Mode.DESIGNATE_DOCK_ROOM:
+				_apply_dock_room(cells)
+			Mode.REMOVE_ROOM:
+				for cell in cells:
+					_apply_remove_room(cell)
 			_:
 				if _is_build_mode():
-					var anchors: Array[Vector2i] = cells if blueprint_id == BuildBlueprint.Id.WALL else [_drag_start]
+					var anchors: Array[Vector2i] = []
+					if blueprint_id == BuildBlueprint.Id.WALL:
+						anchors = cells
+					else:
+						anchors.append(_drag_start)
 					for cell in anchors:
 						_apply_build_click(cell, blueprint_id)
 	queue_redraw()
@@ -236,6 +260,18 @@ func _apply_remove_stockpile_click(grid: Vector2i) -> void:
 	if zone == null:
 		return
 	_stockpile_manager.remove_zone(zone)
+
+
+func _apply_dock_room(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_dock_room"):
+		return
+	_room_manager.call("create_dock_room", cells)
+
+
+func _apply_remove_room(grid: Vector2i) -> void:
+	if _room_manager == null or not _room_manager.has_method("remove_room_at"):
+		return
+	_room_manager.call("remove_room_at", grid)
 
 
 func _blueprint_for_mode() -> int:
@@ -308,8 +344,14 @@ func _draw() -> void:
 			(hi.y - lo.y + 1) * Chunk.TILE_PIXELS,
 		)
 		var r := Rect2(origin, size)
-		var fill: Color = ZONE_PREVIEW_FILL if _mode == Mode.STOCKPILE else ORDER_PREVIEW_FILL
-		var border: Color = ZONE_PREVIEW_BORDER if _mode == Mode.STOCKPILE else ORDER_PREVIEW_BORDER
+		var fill: Color = ORDER_PREVIEW_FILL
+		var border: Color = ORDER_PREVIEW_BORDER
+		if _mode == Mode.STOCKPILE:
+			fill = ZONE_PREVIEW_FILL
+			border = ZONE_PREVIEW_BORDER
+		elif _mode == Mode.DESIGNATE_DOCK_ROOM:
+			fill = ROOM_PREVIEW_FILL
+			border = ROOM_PREVIEW_BORDER
 		draw_rect(r, fill)
 		draw_rect(r, border, false, 1.0)
 	if _is_build_mode():

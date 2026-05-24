@@ -38,6 +38,7 @@ var _chunk_manager: ChunkManager
 var _pathfinder: Pathfinder
 var _workers_root: Node2D
 var _neutrals_root: Node2D
+var _fog: FogOfWar
 var _state: int = State.WANDERING
 var _path: PackedVector2Array = PackedVector2Array()
 var _path_index: int = 0
@@ -51,11 +52,15 @@ var _stun_remaining: float = 0.0
 var _dead: bool = false
 
 
-func setup(chunk_manager: ChunkManager, pathfinder: Pathfinder, workers_root: Node2D, neutrals_root: Node2D) -> void:
+func setup(chunk_manager: ChunkManager, pathfinder: Pathfinder, workers_root: Node2D, neutrals_root: Node2D, fog: FogOfWar = null) -> void:
 	_chunk_manager = chunk_manager
 	_pathfinder = pathfinder
 	_workers_root = workers_root
 	_neutrals_root = neutrals_root
+	_fog = fog
+	if _fog != null:
+		EventBus.visibility_changed.connect(_on_visibility_changed)
+		_apply_visibility()
 
 
 func _ready() -> void:
@@ -68,6 +73,7 @@ func _ready() -> void:
 	stats.attack_range_tiles = 1
 	stats.knockback_px = 8.0
 	stats.stun_on_hit_seconds = 0.20
+	stats.dodge_chance = 0.06
 	_wander_timer = Timer.new()
 	_wander_timer.one_shot = true
 	_wander_timer.timeout.connect(_on_wander_timer_timeout)
@@ -210,6 +216,7 @@ func _on_perception_tick() -> void:
 	if _dead:
 		return
 	_perception_timer.wait_time = randf_range(PERCEPTION_TICK_MIN, PERCEPTION_TICK_MAX)
+	_apply_visibility()
 	var best: Node2D = _scan_for_target()
 	var now: float = _now()
 	if best != null:
@@ -358,6 +365,17 @@ func _die() -> void:
 
 func _now() -> float:
 	return Time.get_ticks_msec() / 1000.0
+
+
+func _on_visibility_changed(_bounds: Rect2i) -> void:
+	_apply_visibility()
+
+
+func _apply_visibility() -> void:
+	if _fog == null:
+		visible = true
+		return
+	visible = _fog.is_cell_visible(current_grid())
 
 
 func _draw() -> void:

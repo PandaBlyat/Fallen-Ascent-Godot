@@ -23,6 +23,8 @@ const DRAG_BORDER := Color(0.55, 0.78, 1.0, 0.8)
 const ORDER_HIGHLIGHT_SECONDS: float = 1.2
 const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.22)
 const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.95)
+const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.18)
+const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.95)
 
 var _camera: Camera2D
 var _workers_root: Node2D
@@ -41,6 +43,7 @@ var _drag_start_world: Vector2 = Vector2.ZERO
 var _drag_end_world: Vector2 = Vector2.ZERO
 var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_highlight_timer: float = 0.0
+var _attack_hover_target: Node2D = null
 
 
 func _ready() -> void:
@@ -80,7 +83,13 @@ func clear_selection() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# When a designator mode is active, a plain left-click anywhere cancels it.
 	if _designator != null and _designator.current_mode() != Designator.Mode.NONE:
+		if event is InputEventMouseButton:
+			var mb_d := event as InputEventMouseButton
+			if mb_d.pressed and mb_d.button_index == MOUSE_BUTTON_LEFT:
+				_designator.cancel_active()
+				get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -93,11 +102,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and not _selected.is_empty():
 			_handle_right_click(mb.shift_pressed)
 			get_viewport().set_input_as_handled()
-	elif event is InputEventMouseMotion and _dragging:
+	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		_drag_end_screen = mm.position
-		_drag_end_world = _camera.get_global_mouse_position()
-		queue_redraw()
+		if _dragging:
+			_drag_end_screen = mm.position
+			_drag_end_world = _camera.get_global_mouse_position()
+			queue_redraw()
+		_update_attack_hover()
 
 
 func _begin_drag(screen_pos: Vector2) -> void:
@@ -144,10 +155,11 @@ func _finish_drag(screen_pos: Vector2) -> void:
 
 func _handle_right_click(shift_held: bool) -> void:
 	var world_pos: Vector2 = _camera.get_global_mouse_position()
-	var hostile_target: Node2D = _hostile_under(world_pos)
-	if hostile_target != null:
-		_command_group_attack(hostile_target)
-		_show_order_highlight(hostile_target.call("current_grid") as Vector2i)
+	# Attack any hostile/neutral under cursor (multi-bot via stand spreading).
+	var attack_target: Node2D = _attackable_under(world_pos)
+	if attack_target != null:
+		_command_group_attack(attack_target)
+		_show_order_highlight(attack_target.call("current_grid") as Vector2i)
 		return
 	var grid: Vector2i = Vector2i(
 		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
@@ -311,6 +323,34 @@ func _hostile_under(world_pos: Vector2) -> Node2D:
 			continue
 		if not (child is Node2D):
 			continue
+		if not (child as Node2D).visible:
+			continue
+		var d: float = ((child as Node2D).position - world_pos).length()
+		if d <= best_d:
+			best = child as Node2D
+			best_d = d
+	return best
+
+
+func _attackable_under(world_pos: Vector2) -> Node2D:
+	# Returns the closest hostile OR neutral under the cursor that the player
+	# can attack. Hostiles win ties to keep the priority intuitive.
+	var best: Node2D = _hostile_under(world_pos)
+	if best != null:
+		return best
+	if _neutrals_root == null:
+		return null
+	var best_d: float = SELECT_RADIUS_PX
+	for child in _neutrals_root.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.has_method("is_alive") and not bool(child.call("is_alive")):
+			continue
+		if not (child is Node2D):
+			continue
+		# Only allow targeting bots the player can see (fog-aware).
+		if not (child as Node2D).visible:
+			continue
 		var d: float = ((child as Node2D).position - world_pos).length()
 		if d <= best_d:
 			best = child as Node2D
@@ -319,11 +359,57 @@ func _hostile_under(world_pos: Vector2) -> Node2D:
 
 
 func _command_group_attack(target: Node2D) -> void:
-	for worker in _selected.duplicate():
+	if target == null or not is_instance_valid(target):
+		return
+	var target_grid: Vector2i = target.call("current_grid") as Vector2i
+	var workers: Array[Worker] = _selected_by_distance(target_grid)
+	var assigned_stand: Dictionary = {}
+	for worker in workers:
 		if worker == null or not is_instance_valid(worker):
 			continue
-		if worker.has_method("command_attack"):
-			worker.call("command_attack", target)
+		if not worker.has_method("command_attack"):
+			continue
+		var stand: Vector2i = _best_attack_stand(worker, target_grid, assigned_stand)
+		worker.call("command_attack", target, stand)
+		if stand != Pathfinder.UNREACHABLE:
+			assigned_stand[stand] = true
+
+
+func _best_attack_stand(worker: Worker, target_grid: Vector2i, assigned: Dictionary) -> Vector2i:
+	# Find the closest unassigned walkable cell adjacent to target_grid.
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	var origin: Vector2i = worker.current_grid()
+	for off in OFFSETS:
+		var candidate: Vector2i = target_grid + off
+		if assigned.has(candidate):
+			continue
+		if not _chunk_manager.is_walkable(candidate):
+			continue
+		if _occupied_by_unselected(candidate):
+			continue
+		if candidate != origin and not _pathfinder.has_path(origin, candidate):
+			continue
+		var d: int = maxi(absi(candidate.x - origin.x), absi(candidate.y - origin.y))
+		if d < best_d:
+			best = candidate
+			best_d = d
+	return best
+
+
+func _update_attack_hover() -> void:
+	if _camera == null:
+		return
+	var new_target: Node2D = null
+	if not _selected.is_empty():
+		new_target = _attackable_under(_camera.get_global_mouse_position())
+	if new_target != _attack_hover_target:
+		_attack_hover_target = new_target
+		queue_redraw()
 
 
 func _worker_under(world_pos: Vector2) -> Array[Worker]:
@@ -380,11 +466,21 @@ func _select_many(workers: Array[Worker]) -> void:
 	for worker in _selected:
 		if worker != null and is_instance_valid(worker):
 			worker.set_selected(true)
+	if _selected.is_empty() and _attack_hover_target != null:
+		_attack_hover_target = null
+		queue_redraw()
 	EventBus.worker_selected.emit(selected_worker())
 	EventBus.workers_selected.emit(_selected.duplicate())
 
 
 func _draw() -> void:
+	var designator_idle: bool = _designator == null or _designator.current_mode() == Designator.Mode.NONE
+	if designator_idle and _attack_hover_target != null and is_instance_valid(_attack_hover_target):
+		var g: Vector2i = _attack_hover_target.call("current_grid") as Vector2i
+		var origin := Vector2(g.x * Chunk.TILE_PIXELS, g.y * Chunk.TILE_PIXELS)
+		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(rect, ATTACK_HOVER_FILL)
+		draw_rect(rect, ATTACK_HOVER_BORDER, false, 1.5)
 	if _order_highlight_grid != Pathfinder.UNREACHABLE:
 		var alpha: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
 		var origin := Vector2(_order_highlight_grid.x * Chunk.TILE_PIXELS, _order_highlight_grid.y * Chunk.TILE_PIXELS)

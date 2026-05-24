@@ -25,10 +25,19 @@ static func try_attack(attacker: Node2D, target: Node, stats: CombatStats, now_s
 	var cheb: int = maxi(absi(attacker_grid.x - target_grid.x), absi(attacker_grid.y - target_grid.y))
 	if cheb > stats.attack_range_tiles:
 		return false
+	stats.last_attack_at = now_seconds
+	# Dodge check on the target's own stats.
+	var target_dodge: float = 0.0
+	if target.has_method("combat_stats"):
+		var target_stats: CombatStats = target.call("combat_stats") as CombatStats
+		if target_stats != null:
+			target_dodge = clampf(target_stats.dodge_chance, 0.0, 1.0)
+	if target_dodge > 0.0 and randf() < target_dodge:
+		EventBus.combat_dodged.emit(attacker, target)
+		return true
 	var damage: float = randf_range(stats.damage_min, stats.damage_max)
 	if target.has_method("take_damage"):
 		target.call("take_damage", damage, attacker)
-	stats.last_attack_at = now_seconds
 	if target is Node2D and target.has_method("apply_knockback"):
 		var dir: Vector2 = (target as Node2D).position - attacker.position
 		if dir.length() <= 0.0001:

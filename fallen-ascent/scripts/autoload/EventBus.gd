@@ -32,6 +32,8 @@ extends Node
 ##                                      (1=neutral, 2=hostile).
 ##   combat_hit(attacker, target, dmg)- emitted after a successful melee swing.
 ##                                      Payload: Node, Node, float.
+##   combat_dodged(attacker, target)  - emitted when a target dodges a swing.
+##                                      Payload: Node, Node.
 ##   combatant_died(node, faction)    - emitted just before a downed combatant
 ##                                      is queue_freed. Payload: Node, int
 ##                                      faction id (0=colony, 1=neutral,
@@ -57,6 +59,7 @@ signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
 signal bot_inspected(node: Node, faction: int)
 signal combat_hit(attacker: Node, target: Node, damage: float)
+signal combat_dodged(attacker: Node, target: Node)
 signal combatant_died(node: Node, faction: int)
 signal hostile_spawned(node: Node)
 @warning_ignore_restore("unused_signal")

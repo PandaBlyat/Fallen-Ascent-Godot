@@ -27,12 +27,13 @@ static func spawn(
 	colony_site: Node,
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
+	room_manager: Node = null,
 ) -> int:
 	var spawned: int = 0
 	for cell in _walkable_cells_near(origin, count, chunk_manager):
 		var worker: Worker = WORKER_SCRIPT.new() as Worker
 		worker.name = _generated_name(spawned)
-		worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager)
+		worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager, room_manager)
 		worker.position = Chunk.grid_to_pixel_center(cell)
 		workers_root.add_child(worker)
 		spawned += 1

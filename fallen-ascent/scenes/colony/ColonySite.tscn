@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=21 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -16,6 +16,8 @@
 [ext_resource type="Script" path="res://scripts/colony/FogOfWar.gd" id="14_fog"]
 [ext_resource type="Script" path="res://scripts/ui/ColonyHud.gd" id="15_hud"]
 [ext_resource type="Script" path="res://scripts/colony/HostileSpawner.gd" id="16_hostiles"]
+[ext_resource type="Script" path="res://scripts/colony/RoomManager.gd" id="17_rooms"]
+[ext_resource type="Script" path="res://scripts/ui/FloatingText.gd" id="18_floating"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
@@ -39,6 +41,14 @@ chunk_manager_path = NodePath("../ChunkManager")
 items_root_path = NodePath("../Items")
 stockpile_manager_path = NodePath("../StockpileManager")
 
+[node name="RoomManager" type="Node2D" parent="."]
+script = ExtResource("17_rooms")
+structure_manager_path = NodePath("../StructureManager")
+chunk_manager_path = NodePath("../ChunkManager")
+
+[node name="FloatingText" type="Node2D" parent="."]
+script = ExtResource("18_floating")
+
 [node name="FogOfWar" type="Node2D" parent="."]
 script = ExtResource("14_fog")
 camera_path = NodePath("../Camera")
@@ -59,6 +69,7 @@ pathfinder_path = NodePath("../Pathfinder")
 workers_root_path = NodePath("../Workers")
 neutrals_root_path = NodePath("../Neutrals")
 hostiles_root_path = NodePath("../Hostiles")
+fog_of_war_path = NodePath("../FogOfWar")
 
 [node name="MineOverlay" type="Node2D" parent="."]
 script = ExtResource("9_mineoverlay")
@@ -72,6 +83,7 @@ job_board_path = NodePath("../JobBoard")
 stockpile_manager_path = NodePath("../StockpileManager")
 structure_manager_path = NodePath("../StructureManager")
 fog_of_war_path = NodePath("../FogOfWar")
+room_manager_path = NodePath("../RoomManager")
 
 [node name="SelectionController" type="Node2D" parent="."]
 script = ExtResource("11_select")

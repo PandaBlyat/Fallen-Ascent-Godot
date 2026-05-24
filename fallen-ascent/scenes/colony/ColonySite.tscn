@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=18 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -11,6 +11,10 @@
 [ext_resource type="Script" path="res://scripts/ui/MineOverlay.gd" id="9_mineoverlay"]
 [ext_resource type="Script" path="res://scripts/ui/PauseOverlay.gd" id="10_pause"]
 [ext_resource type="Script" path="res://scripts/colony/SelectionController.gd" id="11_select"]
+[ext_resource type="Script" path="res://scripts/colony/StructureManager.gd" id="12_structures"]
+[ext_resource type="Script" path="res://scripts/ui/ColonyTooltip.gd" id="13_tooltip"]
+[ext_resource type="Script" path="res://scripts/colony/FogOfWar.gd" id="14_fog"]
+[ext_resource type="Script" path="res://scripts/ui/ColonyHud.gd" id="15_hud"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
@@ -26,6 +30,19 @@ job_board_path = NodePath("../JobBoard")
 chunk_manager_path = NodePath("../ChunkManager")
 items_root_path = NodePath("../Items")
 
+[node name="StructureManager" type="Node2D" parent="."]
+script = ExtResource("12_structures")
+chunk_manager_path = NodePath("../ChunkManager")
+items_root_path = NodePath("../Items")
+stockpile_manager_path = NodePath("../StockpileManager")
+
+[node name="FogOfWar" type="Node2D" parent="."]
+script = ExtResource("14_fog")
+camera_path = NodePath("../Camera")
+chunk_manager_path = NodePath("../ChunkManager")
+workers_root_path = NodePath("../Workers")
+structure_manager_path = NodePath("../StructureManager")
+
 [node name="Workers" type="Node2D" parent="."]
 
 [node name="MineOverlay" type="Node2D" parent="."]
@@ -38,13 +55,17 @@ camera_path = NodePath("../Camera")
 chunk_manager_path = NodePath("../ChunkManager")
 job_board_path = NodePath("../JobBoard")
 stockpile_manager_path = NodePath("../StockpileManager")
+structure_manager_path = NodePath("../StructureManager")
+fog_of_war_path = NodePath("../FogOfWar")
 
 [node name="SelectionController" type="Node2D" parent="."]
 script = ExtResource("11_select")
 camera_path = NodePath("../Camera")
 workers_root_path = NodePath("../Workers")
 chunk_manager_path = NodePath("../ChunkManager")
+pathfinder_path = NodePath("../Pathfinder")
 designator_path = NodePath("../Designator")
+fog_of_war_path = NodePath("../FogOfWar")
 
 [node name="JobBoard" type="Node" parent="."]
 script = ExtResource("5_jobboard")
@@ -60,32 +81,55 @@ script = ExtResource("3_camera")
 
 [node name="PauseOverlay" type="Node" parent="HUD"]
 script = ExtResource("10_pause")
+designator_path = NodePath("../../Designator")
+selection_controller_path = NodePath("../../SelectionController")
 
-[node name="DebugLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 8.0
-offset_right = 600.0
-offset_bottom = 28.0
-text = ""
+[node name="ColonyHud" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("15_hud")
+designator_path = NodePath("../../Designator")
+job_board_path = NodePath("../../JobBoard")
+stockpile_manager_path = NodePath("../../StockpileManager")
+items_root_path = NodePath("../../Items")
+workers_root_path = NodePath("../../Workers")
 
-[node name="ModeLabel" type="Label" parent="HUD"]
-offset_left = 8.0
-offset_top = 28.0
-offset_right = 600.0
-offset_bottom = 48.0
-text = ""
+[node name="ColonyTooltip" type="Label" parent="HUD"]
+visible = false
+offset_left = 16.0
+offset_top = 56.0
+offset_right = 320.0
+offset_bottom = 132.0
+theme_override_colors/font_color = Color(0.94, 0.94, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+script = ExtResource("13_tooltip")
+camera_path = NodePath("../../Camera")
+chunk_manager_path = NodePath("../../ChunkManager")
+job_board_path = NodePath("../../JobBoard")
+stockpile_manager_path = NodePath("../../StockpileManager")
+items_root_path = NodePath("../../Items")
+workers_root_path = NodePath("../../Workers")
+structure_manager_path = NodePath("../../StructureManager")
+fog_of_war_path = NodePath("../../FogOfWar")
 
 [node name="SpeedControls" type="HBoxContainer" parent="HUD"]
-anchors_preset = 7
-anchor_left = 0.5
-anchor_top = 1.0
-anchor_right = 0.5
-anchor_bottom = 1.0
-offset_left = -100.0
-offset_top = -48.0
-offset_right = 100.0
-offset_bottom = -8.0
-grow_horizontal = 2
-grow_vertical = 0
+anchors_preset = 1
+anchor_left = 1.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 0.0
+offset_left = -210.0
+offset_top = 8.0
+offset_right = -10.0
+offset_bottom = 48.0
+grow_horizontal = 0
+grow_vertical = 1
 alignment = 1
 script = ExtResource("4_speed")

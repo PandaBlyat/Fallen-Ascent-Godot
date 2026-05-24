@@ -1,21 +1,53 @@
 class_name BuildJob
 extends Job
 ##
-## "Place a wall on `target`." Worker first picks up a `material_kind` item
-## (the StockpileManager pairs the job with a free source Item when posted,
-## so the worker can find it). After delivering it adjacent to the target,
-## the worker spends BUILD_DURATION seconds and sets the tile to TILE_WALL.
+## Build a blueprint at `anchor`. Workers deliver each ingredient one unit at a
+## time, then spend blueprint-specific build time and place a tile/object.
 ##
 
-const BUILD_DURATION: float = 2.0
-
-var target: Vector2i = Vector2i.ZERO
+var anchor: Vector2i = Vector2i.ZERO
+var blueprint_id: int = BuildBlueprint.Id.WALL
+var footprint: Array[Vector2i] = []
+var ingredients: Dictionary = {}
+var delivered: Dictionary = {}
 var material_kind: int = Item.Kind.SCRAP
 var source_item: Node = null              ## Item being consumed; assigned at claim time
 var progress: float = 0.0
 
 
-func _init(t: Vector2i = Vector2i.ZERO, mk: int = Item.Kind.SCRAP) -> void:
+func _init(t: Vector2i = Vector2i.ZERO, blueprint: int = BuildBlueprint.Id.WALL) -> void:
 	kind = Kind.BUILD
-	target = t
-	material_kind = mk
+	anchor = t
+	blueprint_id = blueprint
+	footprint = BuildBlueprint.footprint(blueprint_id, anchor)
+	ingredients = BuildBlueprint.ingredients(blueprint_id)
+	material_kind = next_missing_kind()
+
+
+func target() -> Vector2i:
+	return anchor
+
+
+func has_all_materials() -> bool:
+	for key in ingredients.keys():
+		var k: int = int(key)
+		if int(delivered.get(k, 0)) < int(ingredients[k]):
+			return false
+	return true
+
+
+func next_missing_kind() -> int:
+	for key in ingredients.keys():
+		var k: int = int(key)
+		if int(delivered.get(k, 0)) < int(ingredients[k]):
+			return k
+	return -1
+
+
+func accept_delivered(kind_id: int, amount: int = 1) -> void:
+	delivered[kind_id] = int(delivered.get(kind_id, 0)) + amount
+	material_kind = next_missing_kind()
+
+
+func build_duration() -> float:
+	return BuildBlueprint.build_duration(blueprint_id)

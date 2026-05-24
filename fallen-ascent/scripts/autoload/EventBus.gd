@@ -16,8 +16,12 @@ extends Node
 ##   tile_changed(grid, new_tile)     - emitted by ChunkManager after a tile is
 ##                                      mutated via set_tile_at. Payload: global
 ##                                      grid coord (Vector2i) + new tile id.
-##   worker_selected(worker)          - emitted by SelectionController when the
-##                                      player selects a worker (null clears).
+##   worker_selected(worker)          - legacy single-worker selection mirror.
+##   workers_selected(workers)        - emitted by SelectionController when the
+##                                      player changes worker selection.
+##   structure_built(manager)         - emitted after StructureManager places
+##                                      or changes static objects.
+##   visibility_changed(bounds)       - emitted after FogOfWar recomputes sight.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -31,4 +35,7 @@ signal chunk_loaded(chunk_coord: Vector2i)
 signal chunk_unloaded(chunk_coord: Vector2i)
 signal tile_changed(grid: Vector2i, new_tile: int)
 signal worker_selected(worker: Node)
+signal workers_selected(workers: Array)
+signal structure_built(manager: Node)
+signal visibility_changed(bounds: Rect2i)
 @warning_ignore_restore("unused_signal")

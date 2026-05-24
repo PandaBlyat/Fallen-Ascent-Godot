@@ -22,6 +22,18 @@ Far-future stretch: a Kenshi-style RPG mode controlling a single entity.
 mind. When in doubt, prefer the cheaper approach now and measure before
 "improving."
 
+**Placeholder atlas rule.** Whenever a new item, resource, static object, or
+tile is added, also add a flat-color placeholder entry for it:
+- Single-tile terrain goes in `resources/tiles/placeholder_atlas.png`.
+- Multi-tile structures or object references go in
+  `resources/tiles/placeholder_atlas_multi_tile.png`.
+- UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
+- If terrain atlas cells change, update `resources/tiles/placeholder_tiles.tres`
+  so the new tile id has a TileSet atlas entry. Keep cells 16x16 aligned.
+- Treat placeholder atlases as append-only. Add new cells by expanding the
+  canvas or filling unused aligned cells; do not reshuffle or repaint existing
+  cells unless every coordinate reference is updated in the same change.
+
 UPDATE THIS FILE WHENEVER NEEDED.
 ---
 

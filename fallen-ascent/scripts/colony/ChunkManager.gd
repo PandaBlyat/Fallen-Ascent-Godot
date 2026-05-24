@@ -1,8 +1,9 @@
 class_name ChunkManager
 extends Node2D
 ##
-## Streams chunks around the camera. Listens to EventBus.camera_moved so it
-## only does work when the camera actually moves, not every frame.
+## Owns the finite colony map. By default all chunks are generated once on
+## scene entry, RimWorld-style, so camera movement never triggers terrain
+## generation or Pathfinder region shifts.
 ##
 ## Algorithm (each camera_moved):
 ##   1. Compute the camera's current chunk coord (cam_chunk).
@@ -17,6 +18,8 @@ extends Node2D
 @export var view_radius: int = 4                  ## chunks loaded around camera
 @export var unload_padding: int = 1               ## hysteresis, in chunks
 @export var max_loads_per_frame: int = 2          ## stagger spawns to smooth FPS
+@export var map_size_chunks: Vector2i = Vector2i(16, 16)
+@export var preload_entire_map: bool = true
 
 var _site_seed: int = 0
 var _noise: FastNoiseLite
@@ -28,6 +31,9 @@ var _last_cam_chunk: Vector2i = Vector2i(0x7fffffff, 0x7fffffff)
 var _load_queue: Array[Vector2i] = []
 var _load_pending: Dictionary = {}                ## Vector2i -> true (in _load_queue)
 var _initial_loaded: bool = false                 ## first batch loads sync
+var _outlets: Dictionary = {}                      ## Vector2i -> true
+var _outlet_reservations: Dictionary = {}          ## Vector2i -> Worker
+var _structure_manager: Node = null
 
 
 func setup(site_seed: int) -> void:
@@ -40,6 +46,12 @@ func _ready() -> void:
 
 
 func _on_camera_moved(world_pos: Vector2, _zoom: Vector2) -> void:
+	if preload_entire_map:
+		if not _initial_loaded:
+			_enqueue_entire_map()
+			_drain_queue(_load_queue.size())
+			_initial_loaded = true
+		return
 	# Camera_moved fires roughly every pixel of motion; chunk streaming only
 	# needs to react when the camera crosses a chunk boundary.
 	var cam_chunk: Vector2i = _world_to_chunk(world_pos)
@@ -64,10 +76,23 @@ func _load_around(center: Vector2i) -> void:
 				if maxi(absi(dx), absi(dy)) != r:
 					continue
 				var coord := Vector2i(center.x + dx, center.y + dy)
+				if not is_chunk_in_map(coord):
+					continue
 				if _loaded.has(coord) or _load_pending.has(coord):
 					continue
 				_load_queue.append(coord)
 				_load_pending[coord] = true
+
+
+func _enqueue_entire_map() -> void:
+	var bounds: Rect2i = map_chunk_bounds()
+	for y in range(bounds.position.y, bounds.position.y + bounds.size.y):
+		for x in range(bounds.position.x, bounds.position.x + bounds.size.x):
+			var coord := Vector2i(x, y)
+			if _loaded.has(coord) or _load_pending.has(coord):
+				continue
+			_load_queue.append(coord)
+			_load_pending[coord] = true
 
 
 func _process(_delta: float) -> void:
@@ -85,6 +110,7 @@ func _drain_queue(budget: int) -> void:
 		chunk.populate(coord, _noise)
 		_apply_diffs(chunk, coord)
 		_loaded[coord] = chunk
+		_index_outlets(chunk, coord)
 		EventBus.chunk_loaded.emit(coord)
 		budget -= 1
 
@@ -99,6 +125,7 @@ func _unload_outside(center: Vector2i) -> void:
 	for c in to_free:
 		var chunk: Chunk = _loaded[c]
 		_loaded.erase(c)
+		_unindex_outlets(c)
 		EventBus.chunk_unloaded.emit(c)
 		chunk.queue_free()
 
@@ -107,9 +134,19 @@ func loaded_count() -> int:
 	return _loaded.size()
 
 
+func outlet_count() -> int:
+	return _outlets.size()
+
+
+func set_structure_manager(manager: Node) -> void:
+	_structure_manager = manager
+
+
 ## Returns the bounding rect of loaded chunks in chunk coords (inclusive lo,
 ## exclusive hi). Used by pathfinder to size its AStarGrid2D region.
 func loaded_chunk_bounds() -> Rect2i:
+	if preload_entire_map:
+		return map_chunk_bounds()
 	if _loaded.is_empty():
 		return Rect2i()
 	var first := true
@@ -132,6 +169,8 @@ func loaded_chunk_bounds() -> Rect2i:
 ## Returns the tile id at a global grid coord. If the chunk isn't loaded,
 ## reports TILE_VOID — callers treat that as impassable.
 func get_tile_at(grid: Vector2i) -> int:
+	if not is_grid_in_map(grid):
+		return TerrainGenerator.TILE_VOID
 	var ccoord := Chunk.grid_to_chunk(grid)
 	if not _loaded.has(ccoord):
 		return TerrainGenerator.TILE_VOID
@@ -142,12 +181,20 @@ func get_tile_at(grid: Vector2i) -> int:
 ## Writes a tile id at a global grid coord and emits tile_changed. No-op if
 ## the chunk isn't loaded (mining unloaded terrain is not supported).
 func set_tile_at(grid: Vector2i, t: int) -> void:
+	if not is_grid_in_map(grid):
+		return
 	var ccoord := Chunk.grid_to_chunk(grid)
 	if not _loaded.has(ccoord):
 		return
 	var chunk: Chunk = _loaded[ccoord]
 	var local: Vector2i = Chunk.grid_to_local(grid)
+	var old_tile: int = chunk.get_tile(local)
 	chunk.set_tile(local, t)
+	if old_tile == TerrainGenerator.TILE_OUTLET:
+		_outlets.erase(grid)
+		_outlet_reservations.erase(grid)
+	if t == TerrainGenerator.TILE_OUTLET:
+		_outlets[grid] = true
 	_record_diff(ccoord, local, t)
 	EventBus.tile_changed.emit(grid, t)
 
@@ -172,7 +219,100 @@ func _record_diff(coord: Vector2i, local: Vector2i, t: int) -> void:
 
 func is_walkable(grid: Vector2i) -> bool:
 	var t: int = get_tile_at(grid)
-	return t == TerrainGenerator.TILE_FLOOR or t == TerrainGenerator.TILE_DEBRIS
+	var terrain_walkable: bool = t == TerrainGenerator.TILE_FLOOR \
+		or t == TerrainGenerator.TILE_DEBRIS \
+		or t == TerrainGenerator.TILE_OUTLET \
+		or t == TerrainGenerator.TILE_CONDUIT \
+		or t == TerrainGenerator.TILE_RUST
+	if not terrain_walkable:
+		return false
+	if _structure_manager != null and _structure_manager.has_method("blocks_cell"):
+		return not (_structure_manager.call("blocks_cell", grid) as bool)
+	return true
+
+
+func is_outlet(grid: Vector2i) -> bool:
+	return get_tile_at(grid) == TerrainGenerator.TILE_OUTLET
+
+
+func reserve_outlet(grid: Vector2i, worker: Node) -> bool:
+	if not is_outlet(grid):
+		return false
+	if _outlet_reservations.has(grid) and _outlet_reservations[grid] != worker:
+		return false
+	_outlet_reservations[grid] = worker
+	return true
+
+
+func release_outlet(grid: Vector2i, worker: Node) -> void:
+	if _outlet_reservations.get(grid) == worker:
+		_outlet_reservations.erase(grid)
+
+
+func is_outlet_reserved_by_other(grid: Vector2i, worker: Node) -> bool:
+	return _outlet_reservations.has(grid) and _outlet_reservations[grid] != worker
+
+
+func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar = null, worker: Node = null) -> Vector2i:
+	var best := Vector2i(2147483647, 2147483647)
+	var best_d: int = 0x7fffffff
+	for key in _outlets.keys():
+		var outlet: Vector2i = key as Vector2i
+		if fog != null and not fog.is_explored(outlet):
+			continue
+		if is_outlet_reserved_by_other(outlet, worker):
+			continue
+		var d: int = maxi(absi(outlet.x - from.x), absi(outlet.y - from.y))
+		if d >= best_d:
+			continue
+		if pathfinder != null and not pathfinder.has_path(from, outlet):
+			continue
+		best = outlet
+		best_d = d
+	return best
+
+
+func map_chunk_bounds() -> Rect2i:
+	var size := Vector2i(maxi(1, map_size_chunks.x), maxi(1, map_size_chunks.y))
+	var pos := Vector2i(-size.x / 2, -size.y / 2)
+	return Rect2i(pos, size)
+
+
+func map_grid_bounds() -> Rect2i:
+	var chunk_bounds: Rect2i = map_chunk_bounds()
+	return Rect2i(chunk_bounds.position * Chunk.SIZE, chunk_bounds.size * Chunk.SIZE)
+
+
+func map_world_rect() -> Rect2:
+	var grid_bounds: Rect2i = map_grid_bounds()
+	return Rect2(
+		Vector2(grid_bounds.position * Chunk.TILE_PIXELS),
+		Vector2(grid_bounds.size * Chunk.TILE_PIXELS),
+	)
+
+
+func is_chunk_in_map(coord: Vector2i) -> bool:
+	return map_chunk_bounds().has_point(coord)
+
+
+func is_grid_in_map(grid: Vector2i) -> bool:
+	return map_grid_bounds().has_point(grid)
+
+
+func _index_outlets(chunk: Chunk, coord: Vector2i) -> void:
+	var base: Vector2i = coord * Chunk.SIZE
+	for ly in Chunk.SIZE:
+		for lx in Chunk.SIZE:
+			var local := Vector2i(lx, ly)
+			if chunk.get_tile(local) == TerrainGenerator.TILE_OUTLET:
+				_outlets[base + local] = true
+
+
+func _unindex_outlets(coord: Vector2i) -> void:
+	var base: Vector2i = coord * Chunk.SIZE
+	for ly in Chunk.SIZE:
+		for lx in Chunk.SIZE:
+			_outlets.erase(base + Vector2i(lx, ly))
 
 
 static func _world_to_chunk(world_pos: Vector2) -> Vector2i:

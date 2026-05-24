@@ -11,10 +11,13 @@ extends Node2D
 ##      slot recorded on the zone. Same-kind stacks merge up to MAX_STACK.
 ##
 
-enum Kind { SCRAP, COMPONENT }
+enum Kind { SCRAP, COMPONENT, SUBSTRATE, CIRCUIT, POWER_CELL }
 
 const SCRAP_COLOR := Color(0.85, 0.75, 0.25)
 const COMPONENT_COLOR := Color(0.55, 0.75, 0.95)
+const SUBSTRATE_COLOR := Color(0.7, 0.95, 0.55)
+const CIRCUIT_COLOR := Color(0.45, 1.0, 0.82)
+const POWER_CELL_COLOR := Color(0.95, 0.45, 1.0)
 const SIZE_PX: float = 8.0
 const MAX_STACK: int = 16
 
@@ -53,13 +56,33 @@ func add_to_stack(amount: int) -> int:
 func color() -> Color:
 	match kind:
 		Kind.COMPONENT: return COMPONENT_COLOR
+		Kind.SUBSTRATE: return SUBSTRATE_COLOR
+		Kind.CIRCUIT: return CIRCUIT_COLOR
+		Kind.POWER_CELL: return POWER_CELL_COLOR
 		_: return SCRAP_COLOR
 
 
 static func kind_color(k: int) -> Color:
 	match k:
 		Kind.COMPONENT: return COMPONENT_COLOR
+		Kind.SUBSTRATE: return SUBSTRATE_COLOR
+		Kind.CIRCUIT: return CIRCUIT_COLOR
+		Kind.POWER_CELL: return POWER_CELL_COLOR
 		_: return SCRAP_COLOR
+
+
+static func kind_name(k: int) -> String:
+	match k:
+		Kind.COMPONENT:
+			return "component"
+		Kind.SUBSTRATE:
+			return "substrate"
+		Kind.CIRCUIT:
+			return "circuit"
+		Kind.POWER_CELL:
+			return "power cell"
+		_:
+			return "scrap"
 
 
 func _draw() -> void:

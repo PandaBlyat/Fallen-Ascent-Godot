@@ -32,7 +32,9 @@ func _draw() -> void:
 		if job is MineJob:
 			_draw_cell((job as MineJob).target, MINE_FILL, MINE_BORDER)
 		elif job is BuildJob:
-			_draw_cell((job as BuildJob).target, BUILD_FILL, BUILD_BORDER)
+			var build := job as BuildJob
+			for cell in build.footprint:
+				_draw_cell(cell, BuildBlueprint.ghost_color(build.blueprint_id), BUILD_BORDER)
 
 
 func _draw_cell(t: Vector2i, fill: Color, border: Color) -> void:

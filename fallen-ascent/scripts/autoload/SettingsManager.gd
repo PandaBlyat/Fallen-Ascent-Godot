@@ -16,6 +16,7 @@ enum DisplayMode { WINDOWED, BORDERLESS, FULLSCREEN }
 enum VSyncMode { DISABLED, ENABLED, ADAPTIVE }
 
 const FPS_PRESETS: Array[int] = [30, 60, 120, 144, 165, 240, 0]
+const DEFAULT_WINDOW_SIZE := Vector2i(1280, 720)
 
 var display_mode: int = DisplayMode.WINDOWED
 var vsync_mode: int = VSyncMode.ENABLED
@@ -28,7 +29,9 @@ func _ready() -> void:
 
 
 func set_display_mode(mode: int) -> void:
+	mode = clampi(mode, DisplayMode.WINDOWED, DisplayMode.FULLSCREEN)
 	if mode == display_mode:
+		apply()
 		return
 	display_mode = mode
 	apply()
@@ -37,7 +40,9 @@ func set_display_mode(mode: int) -> void:
 
 
 func set_vsync_mode(mode: int) -> void:
+	mode = clampi(mode, VSyncMode.DISABLED, VSyncMode.ADAPTIVE)
 	if mode == vsync_mode:
+		apply()
 		return
 	vsync_mode = mode
 	apply()
@@ -47,6 +52,7 @@ func set_vsync_mode(mode: int) -> void:
 
 func set_max_fps(fps: int) -> void:
 	if fps == max_fps:
+		apply()
 		return
 	max_fps = fps
 	apply()
@@ -55,16 +61,21 @@ func set_max_fps(fps: int) -> void:
 
 
 func apply() -> void:
-	# Order matters on some platforms: clear fullscreen first, then update
-	# flags, then re-enter the target mode. This avoids the case where
-	# switching from exclusive fullscreen leaves the window in a stale state
-	# with no visible mode change.
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	DisplayServer.window_set_flag(
-		DisplayServer.WINDOW_FLAG_BORDERLESS,
-		display_mode == DisplayMode.BORDERLESS,
-	)
-	DisplayServer.window_set_mode(_to_window_mode(display_mode))
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
+
+	match display_mode:
+		DisplayMode.WINDOWED:
+			DisplayServer.window_set_size(DEFAULT_WINDOW_SIZE)
+			_center_window()
+		DisplayMode.BORDERLESS:
+			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, true)
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		DisplayMode.FULLSCREEN:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+			if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
+				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+
 	DisplayServer.window_set_vsync_mode(_to_vsync_mode(vsync_mode))
 	Engine.max_fps = max(0, max_fps)
 
@@ -73,8 +84,16 @@ func load_from_disk() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(CONFIG_PATH) != OK:
 		return
-	display_mode = int(cfg.get_value(SECTION_DISPLAY, "display_mode", display_mode))
-	vsync_mode = int(cfg.get_value(SECTION_DISPLAY, "vsync_mode", vsync_mode))
+	display_mode = clampi(
+		int(cfg.get_value(SECTION_DISPLAY, "display_mode", display_mode)),
+		DisplayMode.WINDOWED,
+		DisplayMode.FULLSCREEN,
+	)
+	vsync_mode = clampi(
+		int(cfg.get_value(SECTION_DISPLAY, "vsync_mode", vsync_mode)),
+		VSyncMode.DISABLED,
+		VSyncMode.ADAPTIVE,
+	)
 	max_fps = int(cfg.get_value(SECTION_DISPLAY, "max_fps", max_fps))
 
 
@@ -86,17 +105,6 @@ func save_to_disk() -> void:
 	cfg.save(CONFIG_PATH)
 
 
-func _to_window_mode(mode: int) -> int:
-	# BORDERLESS = bordered-less windowed (size unchanged, no decorations).
-	# FULLSCREEN = "windowed fullscreen" / borderless-fullscreen — works
-	# more reliably across platforms than exclusive fullscreen.
-	match mode:
-		DisplayMode.FULLSCREEN:
-			return DisplayServer.WINDOW_MODE_FULLSCREEN
-		_:
-			return DisplayServer.WINDOW_MODE_WINDOWED
-
-
 func _to_vsync_mode(mode: int) -> int:
 	match mode:
 		VSyncMode.DISABLED:
@@ -105,3 +113,10 @@ func _to_vsync_mode(mode: int) -> int:
 			return DisplayServer.VSYNC_ADAPTIVE
 		_:
 			return DisplayServer.VSYNC_ENABLED
+
+
+func _center_window() -> void:
+	var screen: int = DisplayServer.window_get_current_screen()
+	var screen_pos: Vector2i = DisplayServer.screen_get_position(screen)
+	var screen_size: Vector2i = DisplayServer.screen_get_size(screen)
+	DisplayServer.window_set_position(screen_pos + (screen_size - DEFAULT_WINDOW_SIZE) / 2)

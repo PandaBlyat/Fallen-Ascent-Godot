@@ -20,14 +20,14 @@ func _ready() -> void:
 	_display_mode_button.add_item("Windowed", SettingsManager.DisplayMode.WINDOWED)
 	_display_mode_button.add_item("Borderless", SettingsManager.DisplayMode.BORDERLESS)
 	_display_mode_button.add_item("Fullscreen", SettingsManager.DisplayMode.FULLSCREEN)
-	_display_mode_button.select(SettingsManager.display_mode)
+	_select_item_id(_display_mode_button, SettingsManager.display_mode)
 	_display_mode_button.item_selected.connect(_on_display_mode_selected)
 
 	_vsync_button.clear()
 	_vsync_button.add_item("Disabled", SettingsManager.VSyncMode.DISABLED)
 	_vsync_button.add_item("Enabled", SettingsManager.VSyncMode.ENABLED)
 	_vsync_button.add_item("Adaptive", SettingsManager.VSyncMode.ADAPTIVE)
-	_vsync_button.select(SettingsManager.vsync_mode)
+	_select_item_id(_vsync_button, SettingsManager.vsync_mode)
 	_vsync_button.item_selected.connect(_on_vsync_selected)
 
 	_fps_button.clear()
@@ -49,11 +49,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _on_display_mode_selected(index: int) -> void:
-	SettingsManager.set_display_mode(index)
+	SettingsManager.set_display_mode(_display_mode_button.get_item_id(index))
 
 
 func _on_vsync_selected(index: int) -> void:
-	SettingsManager.set_vsync_mode(index)
+	SettingsManager.set_vsync_mode(_vsync_button.get_item_id(index))
 
 
 func _on_fps_selected(index: int) -> void:
@@ -62,3 +62,11 @@ func _on_fps_selected(index: int) -> void:
 
 func _close() -> void:
 	queue_free()
+
+
+func _select_item_id(button: OptionButton, item_id: int) -> void:
+	for i in button.item_count:
+		if button.get_item_id(i) == item_id:
+			button.select(i)
+			return
+	button.select(0)

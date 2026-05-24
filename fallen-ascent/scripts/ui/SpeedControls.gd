@@ -9,6 +9,7 @@ const SPEEDS := [0.0, 1.0, 2.0, 3.0]
 const LABELS := ["||", "1x", "2x", "3x"]
 
 var _buttons: Array[Button] = []
+var _last_play_speed: float = 1.0
 
 
 func _ready() -> void:
@@ -26,7 +27,12 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("speed_pause"):
+	if event.is_action_pressed("pause_toggle"):
+		if GameState.is_paused():
+			GameState.set_game_speed(_last_play_speed)
+		else:
+			GameState.set_game_speed(SPEEDS[0])
+	elif event.is_action_pressed("speed_pause"):
 		GameState.set_game_speed(SPEEDS[0])
 	elif event.is_action_pressed("speed_1x"):
 		GameState.set_game_speed(SPEEDS[1])
@@ -41,5 +47,7 @@ func _on_pressed(idx: int) -> void:
 
 
 func _on_speed_changed(speed: float) -> void:
+	if speed > 0.0:
+		_last_play_speed = speed
 	for i in _buttons.size():
 		_buttons[i].set_pressed_no_signal(is_equal_approx(speed, SPEEDS[i]))

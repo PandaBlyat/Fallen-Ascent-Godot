@@ -55,30 +55,48 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 - [ ] **Worker needs** — power/charge, repair, "sleep" cycle. Sets up the
       AI director that CLAUDE.md flags as a future autoload candidate.
 - [ ] **Combat + hostile entities.** Implies factions, damage, line-of-sight.
-- [ ] **More item kinds for real gameplay.** `Item.Kind.COMPONENT` exists
+- [x] **More item kinds for real gameplay.** `Item.Kind.COMPONENT` exists
       as a placeholder alongside `SCRAP`, but nothing produces components
       yet. Mining could rarely drop one; recipes / build costs that mix
-      kinds would force varied stockpiles.
-- [ ] **Multi-tile structures.** `BuildJob` places single walls today.
+      kinds would force varied stockpiles. **Implemented v1:** substrate,
+      service cores, component drops, extractor production.
+- [x] **Multi-tile structures.** `BuildJob` places single walls today.
       Doors, multi-tile machines, lights, conveyors all want a different
       shape (designate footprint, multiple ingredients, blueprints).
-- [ ] **Construction blueprints / ghost preview.** A faded outline at the
+      **Implemented v1:** wall/door/light/extractor blueprints.
+- [x] **Construction blueprints / ghost preview.** A faded outline at the
       build target before completion would help readability.
-- [ ] **Selection box / multi-worker selection.** Currently the
+- [x] **Selection box / multi-worker selection.** Currently the
       `SelectionController` picks a single worker on left-click. Drag-box
       select would let players issue group orders.
 - [ ] **Direct-order queueing.** A worker issued a manual order today
       abandons it as soon as the player issues a new one. Adding a small
       queue (Shift-right-click appends) would feel more like RimWorld /
       Factorio.
+- [ ] **Power-network depth.** Outlets now provide simple permanent charge
+      points. Later pass should add outlet throughput, local power storage,
+      damaged/disabled outlets, and player-built batteries/relays so power
+      becomes a colony-planning constraint instead of free fuel.
+- [x] **Production loop beyond mine/build.** Components can now drop from
+      mining, but there are no recipes or machines that consume them. Add
+      workbenches, repair parts, doors, lights, and upgrade costs so mining
+      feeds construction choices instead of only wall spam. **Implemented v1:**
+      extractor creates components; door/light/extractor consume mixed inputs.
+- [ ] **AI stress/regression scenarios.** Add scripted tests for cancelling
+      jobs mid-path, deleting stockpiles while workers carry items, partial
+      stack hauling, and forced low-energy charging so worker state bugs do
+      not regress silently.
 
 ## UI
 
-- [ ] **Replace the single debug label with a real HUD** — resource panel,
-      worker list, current designation tool palette as actual buttons.
-- [ ] **Designation tool palette** with on-screen buttons (today: hotkeys
-      M / B / N / X / Esc only).
-- [ ] **Tooltip on hover** showing tile type, occupant, designation status.
+- [x] **Replace the single debug label with a real HUD** — resource panel,
+      worker/job status, current designation tool palette as actual buttons.
+      **Implemented v1:** top status strip plus bottom-left grouped command
+      palette.
+- [x] **Designation tool palette** with on-screen buttons (today: hotkeys
+      M / B / N / X / Esc only). **Implemented v1:** Orders / Zones /
+      Structures tabs backed by editable UI placeholder atlas.
+- [x] **Tooltip on hover** showing tile type, occupant, designation status.
 - [ ] **Audio settings** — master / music / SFX volume sliders in
       `SettingsMenu` once we have audio. Wire to AudioServer bus volumes
       and persist via `SettingsManager` (add a `[audio]` section).
@@ -91,7 +109,12 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       monitor-native list, what to do in fullscreen) needs its own pass.
 - [ ] **Selected-worker info panel.** Now that workers can be selected,
       show their current job / carried item / state so the player has
-      feedback on direct orders.
+      feedback on direct orders. Partial: worker action bubble now shows
+      current action above each active worker.
+- [ ] **Central input / modal stack.** Esc ownership is now patched locally
+      (active designation, selected worker, then settings menu), but future
+      overlays/tools should go through one stack so scene-tree input order
+      cannot decide which system consumes cancel.
 
 ## Tests / tooling
 
@@ -123,19 +146,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       different worker hauls it away. `_begin_build` re-finds the material
       at claim time but doesn't re-find if the chosen item disappears
       between `_begin_build` and `_pickup_for_build`.
-- [ ] **Borderless-fullscreen on Linux/Wayland** may behave differently
-      from X11/Windows. SettingsManager now uses `WINDOW_MODE_FULLSCREEN`
-      for FULLSCREEN; revisit if users report regressions on a specific
-      platform.
-
-changing from fullscreen/wincowed/borderless doesnt do anything.   **FIXED** —
-the previous code set `WINDOW_MODE_EXCLUSIVE_FULLSCREEN` which silently
-no-ops on some platforms; we now reset to windowed before reapplying the
-target mode and use `WINDOW_MODE_FULLSCREEN` (borderless fullscreen).
-
-when doing an action/order and player presses "esc" it opens the settings instead of cancelling action/order.  **HANDLED** — Designator already
-consumes `cancel_mode` when its mode != NONE before PauseOverlay sees it.
-If this still happens, check the input ordering in the scene tree.
+- [ ] **Display-mode edge cases on Linux/Wayland / multi-monitor setups.**
+      SettingsManager now has explicit Windowed, Borderless, and Fullscreen
+      paths, but platform window managers can still differ. Revisit with
+      platform-specific reports.
 
 moving camera around can have extreme stuttering (fps wise)  **PARTIAL FIX** —
 ChunkManager now ignores camera_moved emits inside the same chunk coord,
@@ -143,3 +157,8 @@ and chunks load with a per-frame budget (`max_loads_per_frame`) so a
 boundary crossing spreads across frames. Pathfinder rebuilds are
 incremental when the region didn't change, but a full rebuild still runs
 on every region shift; see the "region-shift optimization" entry above.
+
+Update: current prototype now uses a finite preloaded colony map, so camera
+movement no longer generates chunks or shifts Pathfinder's region. If map
+sizes grow much bigger, revisit async loading screen / chunked pathfinding
+instead of returning to camera-driven infinite streaming.

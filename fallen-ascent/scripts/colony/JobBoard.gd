@@ -13,7 +13,7 @@ signal job_cancelled(job: Job)
 
 var pending: Array[Job] = []
 var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
-var _build_targets: Dictionary = {}  ## Vector2i -> BuildJob, for fast cancel/dedup
+var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
 
 
 func add_mine_job(target: Vector2i) -> MineJob:
@@ -75,12 +75,14 @@ func cancel_haul_to(zone: Node, cell: Vector2i) -> bool:
 	return false
 
 
-func add_build_job(target: Vector2i, material_kind: int = Item.Kind.SCRAP) -> BuildJob:
-	if _build_targets.has(target):
-		return _build_targets[target] as BuildJob
-	var job := BuildJob.new(target, material_kind)
+func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> BuildJob:
+	for cell in BuildBlueprint.footprint(blueprint_id, target):
+		if _build_targets.has(cell):
+			return _build_targets[cell] as BuildJob
+	var job := BuildJob.new(target, blueprint_id)
 	pending.append(job)
-	_build_targets[target] = job
+	for cell in job.footprint:
+		_build_targets[cell] = job
 	job_added.emit(job)
 	return job
 
@@ -89,13 +91,18 @@ func cancel_build_at(target: Vector2i) -> void:
 	if not _build_targets.has(target):
 		return
 	var job: BuildJob = _build_targets[target]
-	_build_targets.erase(target)
+	for cell in job.footprint:
+		_build_targets.erase(cell)
 	pending.erase(job)
 	job_cancelled.emit(job)
 
 
 func has_build_at(target: Vector2i) -> bool:
 	return _build_targets.has(target)
+
+
+func build_job_at(target: Vector2i) -> BuildJob:
+	return _build_targets.get(target) as BuildJob
 
 
 ## Returns the closest unclaimed job from `worker_grid` (Chebyshev), or null.
@@ -121,13 +128,18 @@ func release(job: Job) -> void:
 	job.claimed_by = null
 
 
+func is_active(job: Job) -> bool:
+	return pending.has(job)
+
+
 ## Mark a job done and remove it. Also clears any per-target index.
 func complete(job: Job) -> void:
 	pending.erase(job)
 	if job is MineJob:
 		_mine_targets.erase((job as MineJob).target)
 	elif job is BuildJob:
-		_build_targets.erase((job as BuildJob).target)
+		for cell in (job as BuildJob).footprint:
+			_build_targets.erase(cell)
 	job_completed.emit(job)
 
 
@@ -139,7 +151,7 @@ static func _target_grid_of(job: Job) -> Vector2i:
 	if job is MineJob:
 		return (job as MineJob).target
 	if job is BuildJob:
-		return (job as BuildJob).target
+		return (job as BuildJob).anchor
 	if job is HaulJob:
 		var h := job as HaulJob
 		if h.item != null and h.item.has_method("get_grid"):

@@ -10,6 +10,7 @@ enum Biome {
 	HABITAT,    ## once-inhabited interior; placeholder-friendly biome
 	INDUSTRIAL, ## machinery, denser structures
 	RUINS,      ## collapsed / debris-heavy
+	CORRIDOR,   ## thin passage between districts on the overview map
 }
 
 @export var grid_pos: Vector2i = Vector2i.ZERO
@@ -27,6 +28,7 @@ static func biome_color(b: int) -> Color:
 		Biome.HABITAT:    return Color(0.35, 0.55, 0.60)
 		Biome.INDUSTRIAL: return Color(0.60, 0.45, 0.30)
 		Biome.RUINS:      return Color(0.40, 0.35, 0.40)
+		Biome.CORRIDOR:   return Color(0.22, 0.22, 0.26)
 	return Color.MAGENTA
 
 
@@ -36,4 +38,5 @@ static func biome_name(b: int) -> String:
 		Biome.HABITAT:    return "Habitat"
 		Biome.INDUSTRIAL: return "Industrial"
 		Biome.RUINS:      return "Ruins"
+		Biome.CORRIDOR:   return "Corridor"
 	return "?"

@@ -55,11 +55,16 @@ func set_max_fps(fps: int) -> void:
 
 
 func apply() -> void:
-	DisplayServer.window_set_mode(_to_window_mode(display_mode))
+	# Order matters on some platforms: clear fullscreen first, then update
+	# flags, then re-enter the target mode. This avoids the case where
+	# switching from exclusive fullscreen leaves the window in a stale state
+	# with no visible mode change.
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_set_flag(
 		DisplayServer.WINDOW_FLAG_BORDERLESS,
 		display_mode == DisplayMode.BORDERLESS,
 	)
+	DisplayServer.window_set_mode(_to_window_mode(display_mode))
 	DisplayServer.window_set_vsync_mode(_to_vsync_mode(vsync_mode))
 	Engine.max_fps = max(0, max_fps)
 
@@ -82,9 +87,12 @@ func save_to_disk() -> void:
 
 
 func _to_window_mode(mode: int) -> int:
+	# BORDERLESS = bordered-less windowed (size unchanged, no decorations).
+	# FULLSCREEN = "windowed fullscreen" / borderless-fullscreen — works
+	# more reliably across platforms than exclusive fullscreen.
 	match mode:
 		DisplayMode.FULLSCREEN:
-			return DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+			return DisplayServer.WINDOW_MODE_FULLSCREEN
 		_:
 			return DisplayServer.WINDOW_MODE_WINDOWED
 

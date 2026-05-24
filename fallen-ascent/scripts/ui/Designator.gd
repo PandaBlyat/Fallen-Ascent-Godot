@@ -4,18 +4,23 @@ extends Node2D
 ## Handles designation input on the colony scene. One mode at a time:
 ##   - MINE: right-click a wall to queue (or cancel) a mine job.
 ##   - STOCKPILE: right-drag a rectangle of floor cells to designate storage.
+##   - REMOVE_STOCKPILE: right-click a stockpile cell to delete that zone.
+##   - BUILD_WALL: right-click a floor cell to queue (or cancel) a build-wall
+##     job (consumes 1 scrap when executed).
 ##
 ## Hotkeys (set in project.godot): designate_mine, designate_stockpile,
-## cancel_mode. The right mouse button is read directly via Input — we don't
-## need a dedicated action since drag detection wants raw press/release.
+## designate_remove_stockpile, designate_build, cancel_mode. The right mouse
+## button is read directly via Input — we don't need a dedicated action since
+## drag detection wants raw press/release.
 ##
 
 signal mode_changed(mode: int)
 
-enum Mode { NONE, MINE, STOCKPILE }
+enum Mode { NONE, MINE, STOCKPILE, REMOVE_STOCKPILE, BUILD_WALL }
 
 const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.18)
 const ZONE_PREVIEW_BORDER := Color(0.4, 0.85, 0.5, 0.6)
+const REMOVE_PREVIEW_BORDER := Color(0.95, 0.4, 0.4, 0.8)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -48,6 +53,8 @@ func mode_label() -> String:
 	match _mode:
 		Mode.MINE: return "MINE"
 		Mode.STOCKPILE: return "STOCKPILE"
+		Mode.REMOVE_STOCKPILE: return "REMOVE_STOCKPILE"
+		Mode.BUILD_WALL: return "BUILD WALL"
 		_: return "-"
 
 
@@ -67,6 +74,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("designate_stockpile"):
 		_set_mode(Mode.STOCKPILE if _mode != Mode.STOCKPILE else Mode.NONE)
 		return
+	if event.is_action_pressed("designate_remove_stockpile"):
+		_set_mode(Mode.REMOVE_STOCKPILE if _mode != Mode.REMOVE_STOCKPILE else Mode.NONE)
+		return
+	if event.is_action_pressed("designate_build"):
+		_set_mode(Mode.BUILD_WALL if _mode != Mode.BUILD_WALL else Mode.NONE)
+		return
 	if event.is_action_pressed("cancel_mode"):
 		if _mode != Mode.NONE:
 			_set_mode(Mode.NONE)
@@ -84,6 +97,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			_on_right_press(mb)
 		else:
 			_on_right_release(mb)
+		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging:
 		_drag_end = _world_to_grid(_camera.get_global_mouse_position())
 		queue_redraw()
@@ -99,6 +113,10 @@ func _on_right_press(_mb: InputEventMouseButton) -> void:
 			_drag_start = grid
 			_drag_end = grid
 			queue_redraw()
+		Mode.REMOVE_STOCKPILE:
+			_apply_remove_stockpile_click(grid)
+		Mode.BUILD_WALL:
+			_apply_build_click(grid)
 
 
 func _on_right_release(_mb: InputEventMouseButton) -> void:
@@ -117,6 +135,26 @@ func _apply_mine_click(grid: Vector2i) -> void:
 		return
 	if _chunk_manager.get_tile_at(grid) == TerrainGenerator.TILE_WALL:
 		_job_board.add_mine_job(grid)
+
+
+func _apply_build_click(grid: Vector2i) -> void:
+	if _job_board.has_build_at(grid):
+		_job_board.cancel_build_at(grid)
+		return
+	# Only buildable on floor — building on debris or void doesn't make sense
+	# yet. Also avoid stockpile cells (no UI to remove the zone first).
+	if _chunk_manager.get_tile_at(grid) != TerrainGenerator.TILE_FLOOR:
+		return
+	if _stockpile_manager.zone_at(grid) != null:
+		return
+	_job_board.add_build_job(grid, Item.Kind.SCRAP)
+
+
+func _apply_remove_stockpile_click(grid: Vector2i) -> void:
+	var zone: StockpileZone = _stockpile_manager.zone_at(grid)
+	if zone == null:
+		return
+	_stockpile_manager.remove_zone(zone)
 
 
 func _world_to_grid(world_pos: Vector2) -> Vector2i:

@@ -13,20 +13,32 @@ var _chunk_manager: ChunkManager
 var _astar: AStarGrid2D
 var _region: Rect2i = Rect2i()
 var _rebuild_pending: bool = false
+## Coords (chunk-space) whose cells need solidness re-evaluated next rebuild.
+var _dirty_chunks: Dictionary = {}
 
 
 func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_astar = AStarGrid2D.new()
 	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
-	EventBus.chunk_loaded.connect(_on_chunks_changed)
-	EventBus.chunk_unloaded.connect(_on_chunks_changed)
+	EventBus.chunk_loaded.connect(_on_chunk_loaded)
+	EventBus.chunk_unloaded.connect(_on_chunk_unloaded)
 	EventBus.tile_changed.connect(_on_tile_changed)
 
 
-func _on_chunks_changed(_coord: Vector2i) -> void:
-	# Coalesce: a burst of chunk_loaded events should produce one rebuild,
-	# not N. Schedule once per frame.
+func _on_chunk_loaded(coord: Vector2i) -> void:
+	_dirty_chunks[coord] = true
+	_schedule_rebuild()
+
+
+func _on_chunk_unloaded(coord: Vector2i) -> void:
+	# Mark the cells as solid below in _rebuild; if the region shrinks they
+	# fall out anyway. Either way, rebuild.
+	_dirty_chunks[coord] = true
+	_schedule_rebuild()
+
+
+func _schedule_rebuild() -> void:
 	if _rebuild_pending:
 		return
 	_rebuild_pending = true
@@ -43,18 +55,38 @@ func _rebuild() -> void:
 	_rebuild_pending = false
 	var bounds: Rect2i = _chunk_manager.loaded_chunk_bounds()
 	if bounds.size == Vector2i.ZERO:
+		_dirty_chunks.clear()
 		return
-	_region = Rect2i(
+	var new_region := Rect2i(
 		bounds.position * Chunk.SIZE,
 		bounds.size * Chunk.SIZE,
 	)
-	_astar.region = _region
-	_astar.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
-	_astar.update()
-	for gy in range(_region.position.y, _region.position.y + _region.size.y):
-		for gx in range(_region.position.x, _region.position.x + _region.size.x):
-			var g := Vector2i(gx, gy)
-			_astar.set_point_solid(g, not _chunk_manager.is_walkable(g))
+	# If the region grew or shrank, we have to call astar.update() which
+	# clears all solidness — and then refill every cell. Otherwise we can
+	# just flip cells in newly-loaded chunks (the common case after the
+	# initial fill).
+	var region_changed: bool = new_region != _region
+	if region_changed:
+		_region = new_region
+		_astar.region = _region
+		_astar.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
+		_astar.update()
+		for gy in range(_region.position.y, _region.position.y + _region.size.y):
+			for gx in range(_region.position.x, _region.position.x + _region.size.x):
+				var g := Vector2i(gx, gy)
+				_astar.set_point_solid(g, not _chunk_manager.is_walkable(g))
+	else:
+		# Only newly-loaded chunks contributed new info; refresh those cells.
+		for coord in _dirty_chunks.keys():
+			var c: Vector2i = coord as Vector2i
+			var base := c * Chunk.SIZE
+			for ly in Chunk.SIZE:
+				for lx in Chunk.SIZE:
+					var g := base + Vector2i(lx, ly)
+					if not _region.has_point(g):
+						continue
+					_astar.set_point_solid(g, not _chunk_manager.is_walkable(g))
+	_dirty_chunks.clear()
 
 
 ## Returns pixel-center waypoints from `from` (exclusive) to `to` (inclusive).

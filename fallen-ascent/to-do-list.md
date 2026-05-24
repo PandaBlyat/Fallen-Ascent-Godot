@@ -40,32 +40,44 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       any chunk load/unload.
 - [ ] **Object pool for workers / items / projectiles** as soon as any of
       them exceeds ~100 live instances. Reserve `scripts/pool/`.
+- [ ] **Pathfinder region-shift optimization.** Today, when the camera pans
+      and the AStarGrid2D's bounding region shifts (even by one chunk), the
+      grid is fully rebuilt because `AStarGrid2D.region = ...` then `update()`
+      wipes all solidness. Either grow the region without ever shrinking,
+      or keep our own solidness map and re-apply after `update()` only for
+      cells in the kept range.
 
 ## Gameplay loop expansion
 
-- [ ] **Worker selection + direct orders** (left-click select, right-click
-      command). Job board stays primary; selection is an override layer.
-- [ ] **Designation removal for stockpile zones** (no UI to delete a zone
-      today).
-- [ ] **Stockpile zone re-validation** when underlying tiles change (e.g.
-      a designated floor cell becomes void/wall somehow). Currently
-      `StockpileZone.cells` is frozen at creation.
-- [ ] **Build job (place wall)** — closes the round-trip economy: scrap → wall.
-- [ ] **Multiple item types and stacking.** Today only `Item.Kind.SCRAP`,
-      one item per stockpile cell.
 - [ ] **Job priorities.** Workers currently pick the Chebyshev-nearest
       unclaimed job. Designations need priorities (urgent mine vs. routine
       haul) and per-worker work types.
 - [ ] **Worker needs** — power/charge, repair, "sleep" cycle. Sets up the
       AI director that CLAUDE.md flags as a future autoload candidate.
 - [ ] **Combat + hostile entities.** Implies factions, damage, line-of-sight.
+- [ ] **More item kinds for real gameplay.** `Item.Kind.COMPONENT` exists
+      as a placeholder alongside `SCRAP`, but nothing produces components
+      yet. Mining could rarely drop one; recipes / build costs that mix
+      kinds would force varied stockpiles.
+- [ ] **Multi-tile structures.** `BuildJob` places single walls today.
+      Doors, multi-tile machines, lights, conveyors all want a different
+      shape (designate footprint, multiple ingredients, blueprints).
+- [ ] **Construction blueprints / ghost preview.** A faded outline at the
+      build target before completion would help readability.
+- [ ] **Selection box / multi-worker selection.** Currently the
+      `SelectionController` picks a single worker on left-click. Drag-box
+      select would let players issue group orders.
+- [ ] **Direct-order queueing.** A worker issued a manual order today
+      abandons it as soon as the player issues a new one. Adding a small
+      queue (Shift-right-click appends) would feel more like RimWorld /
+      Factorio.
 
 ## UI
 
 - [ ] **Replace the single debug label with a real HUD** — resource panel,
       worker list, current designation tool palette as actual buttons.
 - [ ] **Designation tool palette** with on-screen buttons (today: hotkeys
-      M / B / Esc only).
+      M / B / N / X / Esc only).
 - [ ] **Tooltip on hover** showing tile type, occupant, designation status.
 - [ ] **Audio settings** — master / music / SFX volume sliders in
       `SettingsMenu` once we have audio. Wire to AudioServer bus volumes
@@ -77,6 +89,9 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 - [ ] **Windowed resolution picker** in `SettingsMenu` — current settings
       ship display-mode + vsync + FPS only; resolution UX (custom vs.
       monitor-native list, what to do in fullscreen) needs its own pass.
+- [ ] **Selected-worker info panel.** Now that workers can be selected,
+      show their current job / carried item / state so the player has
+      feedback on direct orders.
 
 ## Tests / tooling
 
@@ -90,16 +105,41 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 
 - [ ] **`Pathfinder._rebuild` reinitializes the whole AStarGrid2D** even when
       the loaded region only changed by one chunk. Could keep the grid and
-      only flip solidness for newly loaded/unloaded cells.
+      only flip solidness for newly loaded/unloaded cells. (Partial fix
+      landed: same-region rebuilds are now incremental; region changes are
+      still full.)
 - [ ] **Workers may path to a stockpile cell whose tile became unwalkable
-      mid-haul.** `_replan` handles it by dropping in place; verify under
-      stress.
+      mid-haul.** `StockpileManager` now revalidates zones on tile changes,
+      but verify under stress with simultaneous mining + hauling.
 - [ ] **Mining a tile a worker is currently standing on** — set_tile_at
       turns it to floor (no-op for walkability), but if we later add a tile
       type that's walkable-only-for-some, revisit this.
+- [ ] **Two workers can hold the same direct-order job for one frame** if
+      `command_mine`/`command_build` is called while another worker already
+      had it claimed. Today we cancel-then-re-add the designation so the
+      previous claimer drops it via `job_cancelled`. Race-condition-prone
+      if multi-issue happens in one frame.
+- [ ] **`BuildJob.source_item` might become invalid before pickup** if a
+      different worker hauls it away. `_begin_build` re-finds the material
+      at claim time but doesn't re-find if the chosen item disappears
+      between `_begin_build` and `_pickup_for_build`.
+- [ ] **Borderless-fullscreen on Linux/Wayland** may behave differently
+      from X11/Windows. SettingsManager now uses `WINDOW_MODE_FULLSCREEN`
+      for FULLSCREEN; revisit if users report regressions on a specific
+      platform.
 
-changing from fullscreen/wincowed/borderless doesnt do anything.
+changing from fullscreen/wincowed/borderless doesnt do anything.   **FIXED** —
+the previous code set `WINDOW_MODE_EXCLUSIVE_FULLSCREEN` which silently
+no-ops on some platforms; we now reset to windowed before reapplying the
+target mode and use `WINDOW_MODE_FULLSCREEN` (borderless fullscreen).
 
-when doing an action/order and player presses "esc" it opens the settings instead of cancelling action/order. 
+when doing an action/order and player presses "esc" it opens the settings instead of cancelling action/order.  **HANDLED** — Designator already
+consumes `cancel_mode` when its mode != NONE before PauseOverlay sees it.
+If this still happens, check the input ordering in the scene tree.
 
-moving camera around can have extreme stuttering (fps wise)
+moving camera around can have extreme stuttering (fps wise)  **PARTIAL FIX** —
+ChunkManager now ignores camera_moved emits inside the same chunk coord,
+and chunks load with a per-frame budget (`max_loads_per_frame`) so a
+boundary crossing spreads across frames. Pathfinder rebuilds are
+incremental when the region didn't change, but a full rebuild still runs
+on every region shift; see the "region-shift optimization" entry above.

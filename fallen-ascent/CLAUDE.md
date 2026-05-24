@@ -6,7 +6,7 @@
 > in the same category — a real need that you can't address right now —
 > append it there before you finish. The to-do list is how we avoid
 > forgetting things between sessions.
-
+>Install any tools you need to better help you code/edit godot project.
 ## Project overview
 
 Fallen Ascent is a 2D colony sim set inside a vast, BLAME!-inspired megastructure.
@@ -15,7 +15,7 @@ Built with Godot 4.4 (Forward+ renderer), GDScript, targeting PC only. All art
 in the prototype is **placeholder** — flat-colored tiles drawn via a `TileSet`
 of solid-color textures, swapped out for real pixel art later.
 
-Design influences: Kenshi, RimWorld, Dwarf Fortress, Cataclysm: DDA.
+Design influences: Kenshi, RimWorld, Dwarf Fortress, Cataclysm: DDA and factorio.
 Far-future stretch: a Kenshi-style RPG mode controlling a single entity.
 
 **Optimization is priority #1.** Every system is chosen with later scaling in

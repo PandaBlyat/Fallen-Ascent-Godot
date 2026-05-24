@@ -9,6 +9,8 @@ Format: `[area] short description — why it matters / first hint at how`.
 
 ---
 
+world map/colony map generation is just randomly patchy blobs.  It should be like a megastructure like Blame! almost like a maze with many shortcuts and rooms etc etc  (let's use placeholder art using code). 
+
 ## Rendering & assets
 
 - [ ] **Swap `draw_rect` chunks for `TileMapLayer`.** Current `Chunk._draw`
@@ -95,3 +97,8 @@ Format: `[area] short description — why it matters / first hint at how`.
 - [ ] **Mining a tile a worker is currently standing on** — set_tile_at
       turns it to floor (no-op for walkability), but if we later add a tile
       type that's walkable-only-for-some, revisit this.
+
+changing from fullscreen/wincowed/borderless doesnt do anything.
+
+when doing an action/order and player presses "esc" it opens the settings instead of cancelling action/order. 
+

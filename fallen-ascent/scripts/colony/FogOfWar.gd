@@ -9,6 +9,7 @@ const WORKER_SIGHT_RADIUS: int = 7
 const REFRESH_SECONDS: float = 0.18
 const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 0.994)
 const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.55)
+const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -180,48 +181,9 @@ func _reveal_into(target: Dictionary, center: Vector2i, radius: int) -> void:
 			var d := g - center
 			if d.x * d.x + d.y * d.y > r2:
 				continue
-			if not _has_line_of_sight(center, g):
+			if not LineOfSight.has_los(_chunk_manager, center, g):
 				continue
 			target[g] = true
-
-
-func _has_line_of_sight(from: Vector2i, to: Vector2i) -> bool:
-	if from == to:
-		return true
-	var x0: int = from.x
-	var y0: int = from.y
-	var x1: int = to.x
-	var y1: int = to.y
-	var dx: int = absi(x1 - x0)
-	var dy: int = -absi(y1 - y0)
-	var sx: int = 1 if x0 < x1 else -1
-	var sy: int = 1 if y0 < y1 else -1
-	var err: int = dx + dy
-	var x: int = x0
-	var y: int = y0
-	while true:
-		if x == x1 and y == y1:
-			return true
-		var e2: int = 2 * err
-		if e2 >= dy:
-			err += dy
-			x += sx
-		if e2 <= dx:
-			err += dx
-			y += sy
-		var cell := Vector2i(x, y)
-		if cell == to:
-			return true
-		if _blocks_sight(cell):
-			return false
-	return true
-
-
-func _blocks_sight(grid: Vector2i) -> bool:
-	var tile: int = _chunk_manager.get_tile_at(grid)
-	return tile == TerrainGenerator.TILE_WALL \
-		or tile == TerrainGenerator.TILE_SERVICE_CORE \
-		or tile == TerrainGenerator.TILE_RICH_WALL
 
 
 func _draw() -> void:

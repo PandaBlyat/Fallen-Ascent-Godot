@@ -13,6 +13,8 @@ extends Node2D
 @export var designator_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var structure_manager_path: NodePath
+@export var neutrals_root_path: NodePath
+@export var hostiles_root_path: NodePath
 
 const SELECT_RADIUS_PX: float = 10.0
 const DRAG_THRESHOLD_PX: float = 6.0
@@ -29,6 +31,8 @@ var _pathfinder: Pathfinder
 var _designator: Designator
 var _fog: FogOfWar
 var _structure_manager: StructureManager
+var _neutrals_root: Node2D
+var _hostiles_root: Node2D
 var _selected: Array[Worker] = []
 var _dragging: bool = false
 var _drag_start_screen: Vector2 = Vector2.ZERO
@@ -47,6 +51,8 @@ func _ready() -> void:
 	_designator = get_node(designator_path) as Designator
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
+	_neutrals_root = get_node_or_null(neutrals_root_path) as Node2D
+	_hostiles_root = get_node_or_null(hostiles_root_path) as Node2D
 
 
 func _process(delta: float) -> void:
@@ -112,21 +118,37 @@ func _finish_drag(screen_pos: Vector2) -> void:
 	var is_box: bool = (_drag_end_screen - _drag_start_screen).length() >= DRAG_THRESHOLD_PX
 	if is_box:
 		_select_many(_workers_in_rect(_drag_start_world, _drag_end_world))
+		EventBus.bot_inspected.emit(null, 0)
 	else:
 		var workers: Array[Worker] = _worker_under(_drag_end_world)
 		if not workers.is_empty():
 			_select_many(workers)
 			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
-		elif _try_select_structure(_drag_end_world):
-			_select_many([])
+			EventBus.bot_inspected.emit(null, 0)
 		else:
-			_select_many([])
-			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+			var npc: Node2D = _npc_under(_drag_end_world)
+			if npc != null:
+				_select_many([])
+				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				var faction_id: int = int(npc.call("faction")) if npc.has_method("faction") else 0
+				EventBus.bot_inspected.emit(npc, faction_id)
+			elif _try_select_structure(_drag_end_world):
+				_select_many([])
+				EventBus.bot_inspected.emit(null, 0)
+			else:
+				_select_many([])
+				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.bot_inspected.emit(null, 0)
 	queue_redraw()
 
 
 func _handle_right_click(shift_held: bool) -> void:
 	var world_pos: Vector2 = _camera.get_global_mouse_position()
+	var hostile_target: Node2D = _hostile_under(world_pos)
+	if hostile_target != null:
+		_command_group_attack(hostile_target)
+		_show_order_highlight(hostile_target.call("current_grid") as Vector2i)
+		return
 	var grid: Vector2i = Vector2i(
 		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
 		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
@@ -255,6 +277,53 @@ static func _is_walkable_order_tile(tile: int) -> bool:
 		or tile == TerrainGenerator.TILE_CONDUIT \
 		or tile == TerrainGenerator.TILE_RUST \
 		or tile == TerrainGenerator.TILE_TELEPORTER
+
+
+func _npc_under(world_pos: Vector2) -> Node2D:
+	var best: Node2D = null
+	var best_d: float = SELECT_RADIUS_PX
+	for root in [_hostiles_root, _neutrals_root]:
+		if root == null:
+			continue
+		for child in root.get_children():
+			if not is_instance_valid(child):
+				continue
+			if child.has_method("is_alive") and not bool(child.call("is_alive")):
+				continue
+			if not (child is Node2D):
+				continue
+			var d: float = ((child as Node2D).position - world_pos).length()
+			if d <= best_d:
+				best = child as Node2D
+				best_d = d
+	return best
+
+
+func _hostile_under(world_pos: Vector2) -> Node2D:
+	if _hostiles_root == null:
+		return null
+	var best: Node2D = null
+	var best_d: float = SELECT_RADIUS_PX
+	for child in _hostiles_root.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.has_method("is_alive") and not bool(child.call("is_alive")):
+			continue
+		if not (child is Node2D):
+			continue
+		var d: float = ((child as Node2D).position - world_pos).length()
+		if d <= best_d:
+			best = child as Node2D
+			best_d = d
+	return best
+
+
+func _command_group_attack(target: Node2D) -> void:
+	for worker in _selected.duplicate():
+		if worker == null or not is_instance_valid(worker):
+			continue
+		if worker.has_method("command_attack"):
+			worker.call("command_attack", target)
 
 
 func _worker_under(world_pos: Vector2) -> Array[Worker]:

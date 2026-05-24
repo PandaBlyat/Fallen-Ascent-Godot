@@ -61,7 +61,7 @@ func _spawn_initial_workers() -> void:
 func spawn_item_at(grid: Vector2i) -> void:
 	var item: Item = ITEM_SCRIPT.new() as Item
 	items_root.add_child(item)
-	item.setup(grid, Item.Kind.SCRAP)
+	item.setup(grid, Item.Kind.SCRAP, 1)
 	stockpile_manager.on_item_spawned(item)
 	_refresh_debug()
 
@@ -92,7 +92,7 @@ func _refresh_debug() -> void:
 	var workers: int = workers_root.get_child_count() if workers_root != null else 0
 	var loose_items: int = items_root.get_child_count() if items_root != null else 0
 	var stored: int = stockpile_manager.total_stored() if stockpile_manager != null else 0
-	debug_label.text = "chunks:%d cam_chunk:%s speed:%.1fx | workers:%d jobs:%d loose:%d scrap:%d" % [
+	debug_label.text = "chunks:%d cam_chunk:%s speed:%.1fx | workers:%d jobs:%d loose:%d stored:%d" % [
 		chunk_manager.loaded_count(),
 		cam_chunk,
 		GameState.game_speed,
@@ -106,4 +106,4 @@ func _refresh_debug() -> void:
 func _refresh_mode_label() -> void:
 	if mode_label == null or designator == null:
 		return
-	mode_label.text = "mode: %s   [M] mine   [B] stockpile   [Esc] cancel" % designator.mode_label()
+	mode_label.text = "mode: %s   [M] mine   [B] stockpile   [N] build   [X] remove zone   [Esc] cancel   |   LMB select  RMB order" % designator.mode_label()

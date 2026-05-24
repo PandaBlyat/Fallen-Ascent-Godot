@@ -16,6 +16,8 @@ extends Node
 ##   tile_changed(grid, new_tile)     - emitted by ChunkManager after a tile is
 ##                                      mutated via set_tile_at. Payload: global
 ##                                      grid coord (Vector2i) + new tile id.
+##   worker_selected(worker)          - emitted by SelectionController when the
+##                                      player selects a worker (null clears).
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -28,4 +30,5 @@ signal camera_moved(world_pos: Vector2, zoom: Vector2)
 signal chunk_loaded(chunk_coord: Vector2i)
 signal chunk_unloaded(chunk_coord: Vector2i)
 signal tile_changed(grid: Vector2i, new_tile: int)
+signal worker_selected(worker: Node)
 @warning_ignore_restore("unused_signal")

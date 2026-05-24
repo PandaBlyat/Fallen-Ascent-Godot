@@ -16,6 +16,7 @@ extends Node2D
 
 @export var view_radius: int = 4                  ## chunks loaded around camera
 @export var unload_padding: int = 1               ## hysteresis, in chunks
+@export var max_loads_per_frame: int = 2          ## stagger spawns to smooth FPS
 
 var _site_seed: int = 0
 var _noise: FastNoiseLite
@@ -23,6 +24,10 @@ var _loaded: Dictionary = {}                      ## Vector2i -> Chunk
 ## Session-lifetime diff cache: chunk_coord -> { local_coord -> tile_id }.
 ## Lets mined cells survive unload/reload until a real save system lands.
 var _diffs: Dictionary = {}
+var _last_cam_chunk: Vector2i = Vector2i(0x7fffffff, 0x7fffffff)
+var _load_queue: Array[Vector2i] = []
+var _load_pending: Dictionary = {}                ## Vector2i -> true (in _load_queue)
+var _initial_loaded: bool = false                 ## first batch loads sync
 
 
 func setup(site_seed: int) -> void:
@@ -35,23 +40,53 @@ func _ready() -> void:
 
 
 func _on_camera_moved(world_pos: Vector2, _zoom: Vector2) -> void:
+	# Camera_moved fires roughly every pixel of motion; chunk streaming only
+	# needs to react when the camera crosses a chunk boundary.
 	var cam_chunk: Vector2i = _world_to_chunk(world_pos)
+	if cam_chunk == _last_cam_chunk:
+		return
+	_last_cam_chunk = cam_chunk
 	_load_around(cam_chunk)
+	if not _initial_loaded:
+		# Drain synchronously so worker spawn / pathfinder have terrain.
+		_drain_queue(_load_queue.size())
+		_initial_loaded = true
 	_unload_outside(cam_chunk)
 
 
 func _load_around(center: Vector2i) -> void:
-	for dy in range(-view_radius, view_radius + 1):
-		for dx in range(-view_radius, view_radius + 1):
-			var coord := Vector2i(center.x + dx, center.y + dy)
-			if _loaded.has(coord):
-				continue
-			var chunk: Chunk = Chunk.new()
-			add_child(chunk)
-			chunk.populate(coord, _noise)
-			_apply_diffs(chunk, coord)
-			_loaded[coord] = chunk
-			EventBus.chunk_loaded.emit(coord)
+	# Enqueue any not-yet-loaded chunks; the actual spawn happens in _process
+	# with a per-frame budget. Innermost chunks first so the camera area
+	# materializes before the periphery.
+	for r in range(view_radius + 1):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if maxi(absi(dx), absi(dy)) != r:
+					continue
+				var coord := Vector2i(center.x + dx, center.y + dy)
+				if _loaded.has(coord) or _load_pending.has(coord):
+					continue
+				_load_queue.append(coord)
+				_load_pending[coord] = true
+
+
+func _process(_delta: float) -> void:
+	_drain_queue(max_loads_per_frame)
+
+
+func _drain_queue(budget: int) -> void:
+	while budget > 0 and not _load_queue.is_empty():
+		var coord: Vector2i = _load_queue.pop_front()
+		_load_pending.erase(coord)
+		if _loaded.has(coord):
+			continue
+		var chunk: Chunk = Chunk.new()
+		add_child(chunk)
+		chunk.populate(coord, _noise)
+		_apply_diffs(chunk, coord)
+		_loaded[coord] = chunk
+		EventBus.chunk_loaded.emit(coord)
+		budget -= 1
 
 
 func _unload_outside(center: Vector2i) -> void:

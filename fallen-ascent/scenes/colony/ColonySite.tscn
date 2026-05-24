@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=14 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" path="res://scripts/ui/Designator.gd" id="8_designator"]
 [ext_resource type="Script" path="res://scripts/ui/MineOverlay.gd" id="9_mineoverlay"]
 [ext_resource type="Script" path="res://scripts/ui/PauseOverlay.gd" id="10_pause"]
+[ext_resource type="Script" path="res://scripts/colony/SelectionController.gd" id="11_select"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
@@ -37,6 +38,13 @@ camera_path = NodePath("../Camera")
 chunk_manager_path = NodePath("../ChunkManager")
 job_board_path = NodePath("../JobBoard")
 stockpile_manager_path = NodePath("../StockpileManager")
+
+[node name="SelectionController" type="Node2D" parent="."]
+script = ExtResource("11_select")
+camera_path = NodePath("../Camera")
+workers_root_path = NodePath("../Workers")
+chunk_manager_path = NodePath("../ChunkManager")
+designator_path = NodePath("../Designator")
 
 [node name="JobBoard" type="Node" parent="."]
 script = ExtResource("5_jobboard")

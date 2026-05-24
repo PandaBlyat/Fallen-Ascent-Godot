@@ -11,6 +11,7 @@ extends Node2D
 @export var chunk_manager_path: NodePath
 @export var pathfinder_path: NodePath
 @export var designator_path: NodePath
+@export var job_board_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var structure_manager_path: NodePath
 @export var neutrals_root_path: NodePath
@@ -31,6 +32,7 @@ var _workers_root: Node2D
 var _chunk_manager: ChunkManager
 var _pathfinder: Pathfinder
 var _designator: Designator
+var _job_board: JobBoard
 var _fog: FogOfWar
 var _structure_manager: StructureManager
 var _neutrals_root: Node2D
@@ -43,6 +45,7 @@ var _drag_start_world: Vector2 = Vector2.ZERO
 var _drag_end_world: Vector2 = Vector2.ZERO
 var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_highlight_timer: float = 0.0
+var _order_highlight_target: Node2D = null
 var _attack_hover_target: Node2D = null
 
 
@@ -52,6 +55,7 @@ func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_pathfinder = get_node(pathfinder_path) as Pathfinder
 	_designator = get_node(designator_path) as Designator
+	_job_board = get_node_or_null(job_board_path) as JobBoard
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
 	_neutrals_root = get_node_or_null(neutrals_root_path) as Node2D
@@ -64,6 +68,7 @@ func _process(delta: float) -> void:
 	_order_highlight_timer = maxf(0.0, _order_highlight_timer - delta)
 	if _order_highlight_timer <= 0.0:
 		_order_highlight_grid = Pathfinder.UNREACHABLE
+		_order_highlight_target = null
 	queue_redraw()
 
 
@@ -159,13 +164,19 @@ func _handle_right_click(shift_held: bool) -> void:
 	var attack_target: Node2D = _attackable_under(world_pos)
 	if attack_target != null:
 		_command_group_attack(attack_target)
-		_show_order_highlight(attack_target.call("current_grid") as Vector2i)
+		_show_entity_order_highlight(attack_target)
 		return
 	var grid: Vector2i = Vector2i(
 		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
 		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
 	)
 	if _fog != null and not _fog.is_explored(grid):
+		return
+	var build: BuildJob = _job_board.build_job_at(grid) if _job_board != null else null
+	if build != null:
+		var worker: Worker = selected_worker()
+		if worker != null and is_instance_valid(worker) and worker.command_take_build_job(build):
+			_show_order_highlight(build.anchor)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
 	if tile == TerrainGenerator.TILE_WALL \
@@ -217,6 +228,14 @@ func _command_group_move(grid: Vector2i) -> bool:
 
 func _show_order_highlight(grid: Vector2i) -> void:
 	_order_highlight_grid = grid
+	_order_highlight_target = null
+	_order_highlight_timer = ORDER_HIGHLIGHT_SECONDS
+	queue_redraw()
+
+
+func _show_entity_order_highlight(target: Node2D) -> void:
+	_order_highlight_grid = Pathfinder.UNREACHABLE
+	_order_highlight_target = target
 	_order_highlight_timer = ORDER_HIGHLIGHT_SECONDS
 	queue_redraw()
 
@@ -476,11 +495,10 @@ func _select_many(workers: Array[Worker]) -> void:
 func _draw() -> void:
 	var designator_idle: bool = _designator == null or _designator.current_mode() == Designator.Mode.NONE
 	if designator_idle and _attack_hover_target != null and is_instance_valid(_attack_hover_target):
-		var g: Vector2i = _attack_hover_target.call("current_grid") as Vector2i
-		var origin := Vector2(g.x * Chunk.TILE_PIXELS, g.y * Chunk.TILE_PIXELS)
-		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
-		draw_rect(rect, ATTACK_HOVER_FILL)
-		draw_rect(rect, ATTACK_HOVER_BORDER, false, 1.5)
+		_draw_entity_highlight(_attack_hover_target, ATTACK_HOVER_FILL, ATTACK_HOVER_BORDER, 1.0)
+	if _order_highlight_target != null and is_instance_valid(_order_highlight_target):
+		var alpha_target: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
+		_draw_entity_highlight(_order_highlight_target, ORDER_HIGHLIGHT_FILL, ORDER_HIGHLIGHT_BORDER, alpha_target)
 	if _order_highlight_grid != Pathfinder.UNREACHABLE:
 		var alpha: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
 		var origin := Vector2(_order_highlight_grid.x * Chunk.TILE_PIXELS, _order_highlight_grid.y * Chunk.TILE_PIXELS)
@@ -496,3 +514,10 @@ func _draw() -> void:
 		var drag_rect := Rect2(drag_origin, size)
 		draw_rect(drag_rect, DRAG_FILL)
 		draw_rect(drag_rect, DRAG_BORDER, false, 1.0)
+
+
+func _draw_entity_highlight(target: Node2D, fill: Color, border: Color, alpha: float) -> void:
+	var center: Vector2 = target.position
+	var radius: float = SELECT_RADIUS_PX + 3.0
+	draw_circle(center, radius, Color(fill.r, fill.g, fill.b, fill.a * alpha))
+	draw_arc(center, radius, 0.0, TAU, 32, Color(border.r, border.g, border.b, border.a * alpha), 1.7)

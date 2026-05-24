@@ -19,6 +19,8 @@ const SUBSTRATE_COLOR := Color(0.7, 0.95, 0.55)
 const CIRCUIT_COLOR := Color(0.45, 1.0, 0.82)
 const POWER_CELL_COLOR := Color(0.95, 0.45, 1.0)
 const SIZE_PX: float = 8.0
+const STACK_FONT_SIZE: int = 10
+const STACK_OUTLINE_SIZE: int = 2
 const MAX_STACK: int = 16
 const ITEM_ATLAS_PATH := "res://resources/items/placeholder_items_atlas.png"
 const ITEM_REGION_SIZE := Vector2(16, 16)
@@ -121,6 +123,9 @@ func _draw() -> void:
 	if count > 1:
 		var font: Font = ThemeDB.fallback_font
 		var label: String = str(count)
-		var size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 8)
-		draw_string(font, Vector2(-size.x * 0.5, size.y * 0.3), label,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color.BLACK)
+		var text_size := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, STACK_FONT_SIZE)
+		var pos := Vector2(-text_size.x * 0.5, text_size.y * 0.32)
+		draw_string_outline(font, pos, label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, STACK_FONT_SIZE, STACK_OUTLINE_SIZE, Color.BLACK)
+		draw_string(font, pos, label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, STACK_FONT_SIZE, Color.WHITE)

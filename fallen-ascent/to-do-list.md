@@ -21,6 +21,11 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       flat-color 16×16 cells so the `TileMapLayer` swap has data to point at.
 - [ ] **Real pixel-art tileset + worker/item sprites.** All current visuals
       are flat-color placeholders.
+- [ ] **Static world-prop spawner/layer.** Placeholder atlas now exists at
+      `resources/objects/placeholder_static_objects_atlas.png`, but there is
+      no separate static object placement/rendering layer yet. Add one before
+      tables, broken consoles, machine husks, and similar props become real
+      map entities.
 
 ## Persistence
 

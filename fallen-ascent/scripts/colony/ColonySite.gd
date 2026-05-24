@@ -92,14 +92,14 @@ func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP) -> void:
 	stockpile_manager.on_item_spawned(item)
 
 
-func can_place_blueprint(blueprint_id: int, anchor: Vector2i) -> bool:
-	return structure_manager != null and structure_manager.can_place_blueprint(blueprint_id, anchor)
+func can_place_blueprint(blueprint_id: int, anchor: Vector2i, rotation: int = 0) -> bool:
+	return structure_manager != null and structure_manager.can_place_blueprint(blueprint_id, anchor, rotation)
 
 
-func build_structure(blueprint_id: int, anchor: Vector2i) -> void:
+func build_structure(blueprint_id: int, anchor: Vector2i, rotation: int = 0) -> void:
 	if structure_manager == null:
 		return
-	structure_manager.build_structure(blueprint_id, anchor)
+	structure_manager.build_structure(blueprint_id, anchor, rotation)
 
 
 func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:

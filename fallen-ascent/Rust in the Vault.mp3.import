@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://bai3qbuxeeibt"
+path="res://.godot/imported/Rust in the Vault.mp3-93462eb882653f89105456a9c05fc444.mp3str"
+
+[deps]
+
+source_file="res://Rust in the Vault.mp3"
+dest_files=["res://.godot/imported/Rust in the Vault.mp3-93462eb882653f89105456a9c05fc444.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4

@@ -279,6 +279,13 @@ func random_linked_teleporter(from: Vector2i) -> Vector2i:
 	return Pathfinder.UNREACHABLE
 
 
+func teleporter_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for cell in _teleporters:
+		out.append(cell)
+	return out
+
+
 func reserve_outlet(grid: Vector2i, worker: Node) -> bool:
 	if not is_outlet(grid):
 		return false

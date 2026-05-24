@@ -41,7 +41,7 @@ func create_dock_room(cells: Array[Vector2i]) -> Dictionary:
 			continue
 		if _cell_to_room.has(cell):
 			continue
-		if _chunk_manager != null and not _chunk_manager.is_grid_in_map(cell):
+		if not _can_designate_room_cell(cell):
 			continue
 		seen[cell] = true
 		unique_cells.append(cell)
@@ -86,6 +86,20 @@ func room_at(grid: Vector2i) -> Dictionary:
 	return _cell_to_room.get(grid, {})
 
 
+func room_status_at(grid: Vector2i) -> String:
+	var room: Dictionary = room_at(grid)
+	if room.is_empty():
+		return ""
+	var name: String = "Dock room" if int(room["kind"]) == Kind.DOCK_ROOM else "Room"
+	var valid: bool = is_room_valid(room)
+	var assigned: Node = room.get("assigned_to") as Node
+	if not valid:
+		return name + ": invalid (" + invalid_reason(room) + ")"
+	if assigned != null and is_instance_valid(assigned) and assigned.has_method("display_name"):
+		return name + ": assigned to " + (assigned.call("display_name") as String)
+	return name + ": unassigned"
+
+
 func rooms() -> Array[Dictionary]:
 	return _rooms
 
@@ -98,6 +112,31 @@ func is_room_valid(room: Dictionary) -> bool:
 	if int(room["kind"]) == Kind.DOCK_ROOM:
 		return _room_has_dock(room)
 	return true
+
+
+func invalid_reason(room: Dictionary) -> String:
+	if room.is_empty():
+		return "missing room"
+	if (room["cells"] as Array).size() < MIN_ROOM_CELLS:
+		return "too small"
+	if int(room["kind"]) == Kind.DOCK_ROOM and not _room_has_dock(room):
+		return "needs dock"
+	return "unknown"
+
+
+func _can_designate_room_cell(cell: Vector2i) -> bool:
+	if _chunk_manager != null:
+		if not _chunk_manager.is_grid_in_map(cell):
+			return false
+		if _chunk_manager.is_walkable(cell):
+			return true
+	if _structure_manager == null:
+		return false
+	var structure: Dictionary = _structure_manager.structure_at(cell)
+	if structure.is_empty():
+		return false
+	var id: int = int(structure["id"])
+	return id == BuildBlueprint.Id.DOCK or id == BuildBlueprint.Id.MAINTENANCE_DOCK
 
 
 func _room_has_dock(room: Dictionary) -> bool:

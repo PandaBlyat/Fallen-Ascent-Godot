@@ -94,25 +94,40 @@ static func description(id: int) -> String:
 			return ""
 
 
-static func footprint(id: int, anchor: Vector2i) -> Array[Vector2i]:
-	var cells: Array[Vector2i] = []
+static func footprint(id: int, anchor: Vector2i, rotation: int = 0) -> Array[Vector2i]:
+	var offsets: Array[Vector2i] = []
 	match id:
 		Id.EXTRACTOR:
-			cells.append(anchor)
-			cells.append(anchor + Vector2i(1, 0))
-			cells.append(anchor + Vector2i(0, 1))
-			cells.append(anchor + Vector2i(1, 1))
+			offsets.append(Vector2i.ZERO)
+			offsets.append(Vector2i(1, 0))
+			offsets.append(Vector2i(0, 1))
+			offsets.append(Vector2i(1, 1))
 		Id.FABRICATOR, Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.CALIBRATION_SHRINE:
-			cells.append(anchor)
-			cells.append(anchor + Vector2i(1, 0))
+			offsets.append(Vector2i.ZERO)
+			offsets.append(Vector2i(1, 0))
 		Id.MAINTENANCE_DOCK:
-			cells.append(anchor)
-			cells.append(anchor + Vector2i(1, 0))
-			cells.append(anchor + Vector2i(0, 1))
-			cells.append(anchor + Vector2i(1, 1))
+			offsets.append(Vector2i.ZERO)
+			offsets.append(Vector2i(1, 0))
+			offsets.append(Vector2i(0, 1))
+			offsets.append(Vector2i(1, 1))
 		_:
-			cells.append(anchor)
+			offsets.append(Vector2i.ZERO)
+	var cells: Array[Vector2i] = []
+	for offset in offsets:
+		cells.append(anchor + _rotate_offset(offset, rotation))
 	return cells
+
+
+static func _rotate_offset(offset: Vector2i, rotation: int) -> Vector2i:
+	match posmod(rotation, 4):
+		1:
+			return Vector2i(-offset.y, offset.x)
+		2:
+			return Vector2i(-offset.x, -offset.y)
+		3:
+			return Vector2i(offset.y, -offset.x)
+		_:
+			return offset
 
 
 static func ingredients(id: int) -> Dictionary:

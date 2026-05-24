@@ -8,6 +8,7 @@ extends Node2D
 
 const FILL_COLOR := Color(0.25, 0.65, 0.35, 0.25)
 const BORDER_COLOR := Color(0.4, 0.85, 0.5, 0.5)
+const MAX_STACK_PER_CELL: int = 16
 
 # Reservation dict keys.
 const R_KIND: String = "kind"
@@ -32,20 +33,61 @@ func contains_cell(grid: Vector2i) -> bool:
 	return _cell_set.has(grid)
 
 
-## Picks a cell that can accept a stack of `kind`:
-##   1. A free cell.
-##   2. A cell holding a non-reserved same-kind stack with room < MAX_STACK.
+## Picks a cell that can accept `amount` of `kind`:
+##   1. A same-kind stack with enough room.
+##   2. A free cell.
 ## Returns null if no slot is suitable.
-func first_free_cell_for(kind: int) -> Variant:
-	# Prefer empty cells (no fragmentation): keeps stacks visible per cell.
+func first_free_cell_for(kind: int, amount: int = 1) -> Variant:
+	var empty_cell: Variant = null
 	for c in cells:
 		if not occupant.has(c):
+			if empty_cell == null:
+				empty_cell = c
+			continue
+		var room: int = room_at(c, kind)
+		if room >= amount:
 			return c
-	for c in cells:
-		var v: Variant = occupant.get(c)
-		if v is Item and (v as Item).kind == kind and (v as Item).count < Item.MAX_STACK:
-			return c
+	if empty_cell != null:
+		return empty_cell
 	return null
+
+
+func room_at(cell: Vector2i, kind: int) -> int:
+	var v: Variant = occupant.get(cell)
+	if v == null:
+		return MAX_STACK_PER_CELL
+	if v is Item:
+		var item := v as Item
+		if item.kind != kind:
+			return 0
+		return maxi(0, MAX_STACK_PER_CELL - item.count)
+	if v is Dictionary:
+		var d := v as Dictionary
+		var existing: Item = d.get(R_EXISTING) as Item
+		if existing != null and is_instance_valid(existing):
+			if existing.kind != kind:
+				return 0
+			return maxi(0, MAX_STACK_PER_CELL - existing.count)
+		if int(d.get(R_KIND, -1)) == kind:
+			return MAX_STACK_PER_CELL
+	return 0
+
+
+func capacity() -> int:
+	return cells.size() * MAX_STACK_PER_CELL
+
+
+func stored_count_for_kind(kind: int) -> int:
+	var n: int = 0
+	for v in occupant.values():
+		var item: Item = null
+		if v is Item:
+			item = v as Item
+		elif v is Dictionary:
+			item = (v as Dictionary).get(R_EXISTING) as Item
+		if item != null and is_instance_valid(item) and item.kind == kind:
+			n += item.count
+	return n
 
 
 func reserve(cell: Vector2i, kind: int) -> void:
@@ -78,8 +120,9 @@ func reserved_kind_at(cell: Vector2i) -> int:
 
 
 ## Place a stack into `cell`. If a matching-kind stack already lives there,
-## merge counts (capped at MAX_STACK) and free the incoming Item. The
-## returned Item is the live occupant.
+## merge counts (capped at MAX_STACK_PER_CELL). Overflow remains on the
+## incoming Item so the caller can drop or rematch it. The returned Item is
+## the live occupant.
 func place(item: Item, cell: Vector2i) -> Item:
 	# Pull the previous existing (from reservation) so we can decide to merge.
 	var prev: Variant = occupant.get(cell)
@@ -93,9 +136,11 @@ func place(item: Item, cell: Vector2i) -> Item:
 	if existing != null and is_instance_valid(existing) and existing.kind == item.kind:
 		var overflow: int = existing.add_to_stack(item.count)
 		item.count = overflow
-		if item.get_parent() != null:
+		if overflow <= 0 and item.get_parent() != null:
 			item.get_parent().remove_child(item)
-		item.queue_free()
+			item.queue_free()
+		else:
+			item.queue_redraw()
 		occupant[cell] = existing
 		return existing
 

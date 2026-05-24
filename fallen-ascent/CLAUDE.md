@@ -27,6 +27,8 @@ tile is added, also add a flat-color placeholder entry for it:
 - Single-tile terrain goes in `resources/tiles/placeholder_atlas.png`.
 - Multi-tile structures or object references go in
   `resources/tiles/placeholder_atlas_multi_tile.png`.
+- Static world props that are not terrain, items, UI icons, or entities go in
+  `resources/objects/placeholder_static_objects_atlas.png`.
 - Loose items and materials go in `resources/items/placeholder_items_atlas.png`.
 - UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
 - If terrain atlas cells change, update `resources/tiles/placeholder_tiles.tres`

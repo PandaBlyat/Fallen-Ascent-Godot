@@ -51,6 +51,11 @@ const NEUTRAL_REGION := Rect2(Vector2(16, 0), Vector2(16, 16))
 const PALETTE_WIDTH: float = 580.0
 const PALETTE_HEIGHT: float = 200.0
 const TOP_STRIP_HEIGHT: float = 44.0
+const WORKER_LIST_WIDTH: float = 260.0
+const WORKER_LIST_HEIGHT: float = 126.0
+const SELECTION_PANEL_WIDTH: float = 680.0
+const SELECTION_PANEL_HEIGHT: float = 330.0
+const WORKER_CARD_WIDTH: float = 230.0
 const INSPECT_CARD_WIDTH: float = 300.0
 const INSPECT_CARD_HEIGHT: float = 150.0
 
@@ -186,14 +191,14 @@ func _build_layout() -> void:
 	var npc_panel := PanelContainer.new()
 	npc_panel.name = "NpcStrip"
 	npc_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	npc_panel.anchor_left = 0.0
+	npc_panel.anchor_left = 0.5
 	npc_panel.anchor_top = 0.0
-	npc_panel.anchor_right = 0.0
+	npc_panel.anchor_right = 0.5
 	npc_panel.anchor_bottom = 0.0
-	npc_panel.offset_left = 12.0
-	npc_panel.offset_top = 70.0
-	npc_panel.offset_right = 204.0
-	npc_panel.offset_bottom = 208.0
+	npc_panel.offset_left = -WORKER_LIST_WIDTH * 0.5
+	npc_panel.offset_top = 62.0
+	npc_panel.offset_right = WORKER_LIST_WIDTH * 0.5
+	npc_panel.offset_bottom = 62.0 + WORKER_LIST_HEIGHT
 	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	add_child(npc_panel)
 
@@ -261,14 +266,10 @@ func _build_layout() -> void:
 	_selection_panel.name = "SelectionPanel"
 	_selection_panel.visible = false
 	_selection_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	_selection_panel.anchor_left = 1.0
-	_selection_panel.anchor_top = 1.0
-	_selection_panel.anchor_right = 1.0
-	_selection_panel.anchor_bottom = 1.0
-	_selection_panel.offset_left = -670.0
-	_selection_panel.offset_top = -282.0
-	_selection_panel.offset_right = -16.0
-	_selection_panel.offset_bottom = -16.0
+	_selection_panel.anchor_left = 0.0
+	_selection_panel.anchor_top = 0.0
+	_selection_panel.anchor_right = 0.0
+	_selection_panel.anchor_bottom = 0.0
 	_selection_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
 	add_child(_selection_panel)
 
@@ -288,7 +289,7 @@ func _build_layout() -> void:
 
 	_selection_box = HBoxContainer.new()
 	_selection_box.alignment = BoxContainer.ALIGNMENT_BEGIN
-	_selection_box.add_theme_constant_override("separation", 10)
+	_selection_box.add_theme_constant_override("separation", 14)
 	selection_scroll.add_child(_selection_box)
 
 	# NPC Inspect Card - centered above the command palette.
@@ -319,6 +320,8 @@ func _build_layout() -> void:
 	inspect_margin.add_child(_inspect_box)
 
 	_recenter_top_strip()
+	_position_selection_panel()
+	resized.connect(_position_selection_panel)
 
 
 func _recenter_top_strip() -> void:
@@ -331,6 +334,26 @@ func _recenter_top_strip() -> void:
 		return
 	_top_strip.offset_left = -w * 0.5
 	_top_strip.offset_right = w * 0.5
+
+
+func _position_selection_panel() -> void:
+	if _selection_panel == null:
+		return
+	var viewport_size: Vector2 = get_viewport_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	var left: float = viewport_size.x * 0.5 + PALETTE_WIDTH * 0.5 + 12.0
+	var available_right: float = viewport_size.x - left - 12.0
+	var width: float = clampf(available_right, 300.0, SELECTION_PANEL_WIDTH)
+	if width < 300.0:
+		width = minf(SELECTION_PANEL_WIDTH, viewport_size.x - 24.0)
+		left = maxf(12.0, viewport_size.x - width - 12.0)
+	var bottom: float = viewport_size.y - 16.0
+	var top: float = maxf(64.0, bottom - SELECTION_PANEL_HEIGHT)
+	_selection_panel.offset_left = left
+	_selection_panel.offset_top = top
+	_selection_panel.offset_right = left + width
+	_selection_panel.offset_bottom = bottom
 
 
 func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
@@ -648,15 +671,25 @@ func _build_worker_cards() -> void:
 	var shown: int = mini(live_workers.size(), 3)
 	for i in range(shown):
 		var worker: Worker = live_workers[i]
+		var card_panel := PanelContainer.new()
+		card_panel.custom_minimum_size = Vector2(WORKER_CARD_WIDTH, 0)
+		card_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		card_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
+		_selection_box.add_child(card_panel)
+
+		var margin := MarginContainer.new()
+		margin.add_theme_constant_override("margin_left", 10)
+		margin.add_theme_constant_override("margin_top", 9)
+		margin.add_theme_constant_override("margin_right", 10)
+		margin.add_theme_constant_override("margin_bottom", 10)
+		card_panel.add_child(margin)
+
 		var card := VBoxContainer.new()
-		card.custom_minimum_size = Vector2(196, 0)
-		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		card.add_theme_constant_override("separation", 3)
-		_selection_box.add_child(card)
-		_add_card_title(card, worker.display_name())
-		_add_card_line(card, "state", worker.state_label())
-		_add_card_line(card, "job", worker.job_label())
-		_add_card_line(card, "carry", worker.carried_label())
+		card.add_theme_constant_override("separation", 7)
+		margin.add_child(card)
+
+		_add_worker_header(card, worker)
+		_add_worker_summary(card, worker)
 		_add_meter(card, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
 		_add_meter(card, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
 		_add_meter(card, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
@@ -664,15 +697,115 @@ func _build_worker_cards() -> void:
 		var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
 		_add_meter(card, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
 		var needs: Array[String] = worker.unsatisfied_needs()
+		_add_section_label(card, "needs")
 		if needs.is_empty():
-			_add_card_line(card, "needs", "satisfied", COLOR_METER_GOOD)
+			_add_status_banner(card, "satisfied", COLOR_METER_GOOD)
 		else:
-			_add_card_line(card, "needs", ", ".join(needs), Color(1.0, 0.5, 0.35))
-		for limb_line in worker.limb_status_lines():
-			_add_card_line(card, "limb", limb_line)
+			_add_status_banner(card, ", ".join(needs), Color(1.0, 0.5, 0.35))
+		_add_limb_grid(card, worker)
 		_add_history_panel(card, worker)
 	if live_workers.size() > 3:
 		_add_card_line(_selection_box, "more", "%d selected" % live_workers.size())
+
+
+func _add_worker_header(parent: Control, worker: Worker) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+
+	var portrait := TextureRect.new()
+	portrait.texture = _bot_icon()
+	portrait.custom_minimum_size = Vector2(28, 28)
+	portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	row.add_child(portrait)
+
+	var name_box := VBoxContainer.new()
+	name_box.add_theme_constant_override("separation", 0)
+	name_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_box)
+
+	var name_label := Label.new()
+	name_label.text = worker.display_name()
+	name_label.add_theme_font_size_override("font_size", 15)
+	name_label.add_theme_color_override("font_color", Color.WHITE)
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_box.add_child(name_label)
+
+	var state_label := Label.new()
+	state_label.text = worker.state_label()
+	state_label.add_theme_font_size_override("font_size", 11)
+	state_label.add_theme_color_override("font_color", COLOR_ACCENT_CYAN)
+	state_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_box.add_child(state_label)
+
+
+func _add_worker_summary(parent: Control, worker: Worker) -> void:
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	parent.add_child(grid)
+	_add_metric_chip(grid, "job", worker.job_label(), COLOR_ACCENT_AMBER)
+	_add_metric_chip(grid, "carry", worker.carried_label(), COLOR_TEXT_LIGHT)
+
+
+func _add_metric_chip(parent: Control, key: String, value: String, color: Color) -> void:
+	var chip := PanelContainer.new()
+	chip.custom_minimum_size = Vector2(96, 38)
+	chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	chip.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.075, 0.085, 0.88), Color(0.24, 0.30, 0.33, 0.62), 4.0, false))
+	parent.add_child(chip)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	chip.add_child(box)
+
+	var key_label := Label.new()
+	key_label.text = key
+	key_label.add_theme_font_size_override("font_size", 9)
+	key_label.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	box.add_child(key_label)
+
+	var value_label := Label.new()
+	value_label.text = value
+	value_label.add_theme_font_size_override("font_size", 11)
+	value_label.add_theme_color_override("font_color", color)
+	value_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	box.add_child(value_label)
+
+
+func _add_section_label(parent: Control, text_value: String) -> void:
+	var label := Label.new()
+	label.text = text_value
+	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	parent.add_child(label)
+
+
+func _add_status_banner(parent: Control, text_value: String, color: Color) -> void:
+	var label := Label.new()
+	label.text = text_value
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", color)
+	parent.add_child(label)
+
+
+func _add_limb_grid(parent: Control, worker: Worker) -> void:
+	_add_section_label(parent, "limbs")
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 3)
+	parent.add_child(grid)
+	for limb_line in worker.limb_status_lines():
+		var label := Label.new()
+		label.text = limb_line
+		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		grid.add_child(label)
 
 
 func _build_structure_card() -> void:
@@ -720,11 +853,20 @@ func _add_card_line(parent: Control, key: String, value: String, color: Color = 
 
 
 func _add_meter(parent: Control, label_text: String, ratio: float, fill: Color) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	parent.add_child(row)
 	var label := Label.new()
-	label.text = "%s %d%%" % [label_text, int(roundf(clampf(ratio, 0.0, 1.0) * 100.0))]
+	label.text = label_text
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
-	parent.add_child(label)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	var value := Label.new()
+	value.text = "%d%%" % int(roundf(clampf(ratio, 0.0, 1.0) * 100.0))
+	value.add_theme_font_size_override("font_size", 11)
+	value.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	row.add_child(value)
 	var bar := ProgressBar.new()
 	bar.min_value = 0.0
 	bar.max_value = 1.0
@@ -756,14 +898,14 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 	parent.add_child(title)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(178, HISTORY_VISIBLE_ROWS * 16)
+	scroll.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 32.0, HISTORY_VISIBLE_ROWS * 16)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	parent.add_child(scroll)
 
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(178, 0)
+	box.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 42.0, 0)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 2)
 	scroll.add_child(box)
@@ -773,7 +915,7 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 		var label := Label.new()
 		label.text = entry
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.custom_minimum_size = Vector2(168, 0)
+		label.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 52.0, 0)
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.add_theme_font_size_override("font_size", 10)
 		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)

@@ -105,11 +105,11 @@ func cancel_haul_to(zone: Node, cell: Vector2i) -> bool:
 	return false
 
 
-func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> BuildJob:
-	for cell in BuildBlueprint.footprint(blueprint_id, target):
+func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL, rotation: int = 0) -> BuildJob:
+	for cell in BuildBlueprint.footprint(blueprint_id, target, rotation):
 		if _build_targets.has(cell):
 			return _build_targets[cell] as BuildJob
-	var job := BuildJob.new(target, blueprint_id)
+	var job := BuildJob.new(target, blueprint_id, rotation)
 	pending.append(job)
 	for cell in job.footprint:
 		_build_targets[cell] = job
@@ -135,14 +135,27 @@ func build_job_at(target: Vector2i) -> BuildJob:
 	return _build_targets.get(target) as BuildJob
 
 
+func force_claim(job: Job, worker: Node) -> bool:
+	if job == null or worker == null or not is_active(job):
+		return false
+	if job.claimed_by != null and job.claimed_by != worker:
+		job.claimed_by = null
+		job_cancelled.emit(job)
+	job.claimed_by = worker
+	return true
+
+
 ## Returns the closest unclaimed job from `worker_grid` (Chebyshev), or null.
 ## Marks the returned job as claimed by `worker`.
 func claim_next_for(worker: Node, worker_grid: Vector2i) -> Job:
 	var best: Job = null
 	var best_dist: int = 0x7fffffff
 	var best_priority: int = 0x7fffffff
+	var now_msec: int = Time.get_ticks_msec()
 	for job in pending:
 		if job.claimed_by != null:
+			continue
+		if job is BuildJob and (job as BuildJob).blocked_until_msec > now_msec:
 			continue
 		var t: Vector2i = _target_grid_of(job)
 		var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))

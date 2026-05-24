@@ -80,12 +80,15 @@ const MOOD_BASELINE: float = 80.0
 const MOOD_RECOVERY_PER_SEC: float = 0.4         ## drift back to baseline when needs satisfied
 const MOOD_NEED_DECAY_PER_SEC: float = 0.6       ## per-need extra decay while unsatisfied
 const MOOD_LOW_THRESHOLD: float = 35.0
+const CROWD_SLOW_SECONDS: float = 1.0
+const CROWD_SLOW_MULTIPLIER: float = 0.55
 const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
 const TELEPORT_COOLDOWN_SECONDS: float = 1.0
 const SCRAPE_RUST_DURATION: float = 1.4
 const IDLE_SAMPLE_LIMIT: int = 48
 const ACTION_HISTORY_LIMIT: int = 96
 const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -24.0)
+const BLOCKED_ACTION_SECONDS: float = 2.0
 const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
 
 var _state: int = State.IDLE
@@ -100,6 +103,8 @@ var _charge_target: Vector2i = Vector2i.ZERO
 var _has_charge_reservation: bool = false
 var _manual_charging: bool = false
 var _action_text: String = ""
+var _blocked_action_text: String = ""
+var _blocked_action_timer: float = 0.0
 var _condition: float = CONDITION_MAX
 var _mental_tiredness: float = 0.0
 var _social: float = 50.0
@@ -127,6 +132,8 @@ var _knockback_remaining: float = 0.0
 var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
 var _dead: bool = false
+var _crowd_slow_remaining: float = 0.0
+var _crowd_contacts: Dictionary = {}
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -498,8 +505,12 @@ func _process(delta: float) -> void:
 	if _stun_remaining > 0.0:
 		_stun_remaining = maxf(0.0, _stun_remaining - delta)
 		return
+	if _crowd_slow_remaining > 0.0:
+		_crowd_slow_remaining = maxf(0.0, _crowd_slow_remaining - delta)
 	if _teleport_cooldown > 0.0:
 		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
+	if _blocked_action_timer > 0.0:
+		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
 	_update_energy(delta)
 	_update_body_stats(delta)
 	if _state != State.FIGHTING and _should_seek_charge():
@@ -785,7 +796,7 @@ func _begin_socialize() -> bool:
 	var target: Vector2i = _adjacent_chat_cell_near(partner.current_grid(), current_grid())
 	if target == Pathfinder.UNREACHABLE:
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _social_path_to_partner(partner, target)
 	if path.is_empty() and current_grid() != target:
 		return false
 	var duration: float = randf_range(2.0, 4.5)
@@ -807,7 +818,7 @@ func accept_chat_invite(partner: Worker, target: Vector2i, duration: float) -> b
 		return false
 	if not _chunk_manager.is_walkable(target):
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		return false
 	_suspend_for_chat()
@@ -830,8 +841,6 @@ func _adjacent_chat_cell_near(center: Vector2i, from: Vector2i) -> Vector2i:
 	for off in OFFSETS:
 		var candidate: Vector2i = center + off
 		if not _chunk_manager.is_walkable(candidate):
-			continue
-		if candidate != from and not _pathfinder.has_path(from, candidate):
 			continue
 		var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
 		if d < best_d:
@@ -898,10 +907,63 @@ func _nearest_partner() -> Worker:
 			absi(worker.current_grid().x - current_grid().x),
 			absi(worker.current_grid().y - current_grid().y),
 		)
-		if d < best_d and _pathfinder.has_path(current_grid(), worker.current_grid()):
+		if d < best_d and _can_socialize_with(worker):
 			best = worker
 			best_d = d
 	return best
+
+
+func _can_socialize_with(partner: Worker) -> bool:
+	var target: Vector2i = _adjacent_chat_cell_near(partner.current_grid(), current_grid())
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	if current_grid() == target:
+		return true
+	return not _social_path_to_partner(partner, target).is_empty()
+
+
+func _social_path_to_partner(partner: Worker, target: Vector2i) -> PackedVector2Array:
+	var direct: PackedVector2Array = _find_explored_path(current_grid(), target)
+	if not direct.is_empty() or current_grid() == target:
+		return direct
+	return _teleporter_path_toward(partner.current_grid())
+
+
+func _teleporter_path_toward(_partner_grid: Vector2i) -> PackedVector2Array:
+	if _chunk_manager == null or not _chunk_manager.has_method("teleporter_cells"):
+		return PackedVector2Array()
+	var best_path: PackedVector2Array = PackedVector2Array()
+	var best_d: int = 0x7fffffff
+	var teleporters: Array[Vector2i] = _chunk_manager.call("teleporter_cells") as Array[Vector2i]
+	for teleporter in teleporters:
+		if _fog != null and not _fog.is_explored(teleporter):
+			continue
+		var path: PackedVector2Array = _find_explored_path(current_grid(), teleporter)
+		if path.is_empty() and current_grid() != teleporter:
+			continue
+		var d: int = maxi(absi(teleporter.x - current_grid().x), absi(teleporter.y - current_grid().y))
+		if d < best_d:
+			best_path = path
+			best_d = d
+	return best_path
+
+
+func _find_explored_path(from: Vector2i, to: Vector2i) -> PackedVector2Array:
+	if _pathfinder == null:
+		return PackedVector2Array()
+	var path: PackedVector2Array = _pathfinder.find_path(from, to)
+	if path.is_empty():
+		return path
+	if _fog == null:
+		return path
+	for waypoint in path:
+		var grid := Vector2i(
+			int(floor(waypoint.x / Chunk.TILE_PIXELS)),
+			int(floor(waypoint.y / Chunk.TILE_PIXELS)),
+		)
+		if not _fog.is_explored(grid):
+			return PackedVector2Array()
+	return path
 
 
 func _begin_mine(job: MineJob) -> void:
@@ -975,6 +1037,7 @@ func _begin_build(job: BuildJob) -> void:
 	# of that kind from loose items or stockpiles, claim it as source.
 	var source: Item = _find_material_for_build(job)
 	if source == null:
+		_note_missing_build_material(job)
 		_release_and_idle()
 		return
 	job.source_item = source
@@ -1001,6 +1064,8 @@ func _find_material_for_build(job: BuildJob) -> Item:
 			var it := child as Item
 			if it == null or it.reserved_by != null or it.kind != job.material_kind:
 				continue
+			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+				continue
 			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
 			if d < best_d:
 				best = it
@@ -1015,6 +1080,8 @@ func _find_material_for_build(job: BuildJob) -> Item:
 				if occ is Item:
 					var it2 := occ as Item
 					if it2.reserved_by == null and it2.kind == job.material_kind:
+						if cell != origin and not _pathfinder.has_path(origin, cell):
+							continue
 						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
 						if d2 < best_d:
 							best = it2
@@ -1050,8 +1117,17 @@ func _pickup_for_haul() -> void:
 func _pickup_for_build() -> void:
 	var build := _job as BuildJob
 	if build == null or build.source_item == null or not is_instance_valid(build.source_item):
-		_abandon_job()
-		return
+		if build == null:
+			_abandon_job()
+			return
+		build.source_item = null
+		var replacement: Item = _find_material_for_build(build)
+		if replacement == null:
+			_note_missing_build_material(build)
+			_release_and_idle()
+			return
+		build.source_item = replacement
+		replacement.reserved_by = self
 	var item := build.source_item as Item
 	# If the source was in a stockpile cell, free that occupant slot.
 	var src_parent: Node = item.get_parent()
@@ -1132,18 +1208,33 @@ func _drop_item() -> void:
 	if zone == null or not is_instance_valid(zone) or not zone.contains_cell(haul.dropoff):
 		_drop_in_place()
 		return
+	zone.unreserve(haul.dropoff)
+	var delivered: Item = _carried
+	var room: int = zone.room_at(haul.dropoff, delivered.kind)
+	if room <= 0:
+		_drop_in_place()
+		return
 	remove_child(_carried)
 	zone.add_child(_carried)
 	_carried.visible = true
 	_carried.set_grid(haul.dropoff)
-	zone.unreserve(haul.dropoff)
-	var placed: Item = zone.place(_carried, haul.dropoff)
+	var placed: Item = zone.place(delivered, haul.dropoff)
+	var overflow: Item = null
+	if is_instance_valid(delivered) and delivered != placed and delivered.count > 0:
+		overflow = delivered
+		zone.remove_child(overflow)
+		_items_root.add_child(overflow)
+		overflow.visible = true
+		overflow.set_grid(current_grid())
+		overflow.reserved_by = null
 	placed.reserved_by = null
 	_carried = null
 	_remember("stored %s at %d,%d" % [Item.stack_label(placed.kind, placed.count), haul.dropoff.x, haul.dropoff.y])
 	_finish_job()
 	if _stockpile_manager != null:
 		_stockpile_manager.stockpile_changed.emit()
+		if overflow != null:
+			_stockpile_manager.on_item_spawned(overflow)
 
 
 func _drop_in_place() -> void:
@@ -1212,7 +1303,7 @@ func _complete_build(build: BuildJob) -> void:
 	if build.blueprint_id == BuildBlueprint.Id.WALL:
 		_chunk_manager.set_tile_at(build.anchor, TerrainGenerator.TILE_WALL)
 	elif _colony_site != null and _colony_site.has_method("build_structure"):
-		_colony_site.call("build_structure", build.blueprint_id, build.anchor)
+		_colony_site.call("build_structure", build.blueprint_id, build.anchor, build.rotation)
 	_remember("built %s at %d,%d" % [
 		BuildBlueprint.display_name(build.blueprint_id),
 		build.anchor.x,
@@ -1246,6 +1337,13 @@ func _release_and_idle() -> void:
 	_idle_cooldown = IDLE_RETRY_SECONDS
 	_clear_activity()
 	_clear_resume()
+
+
+func _note_missing_build_material(job: BuildJob) -> void:
+	job.block_briefly()
+	var item_name: String = Item.kind_name(job.material_kind)
+	_show_blocked_action("Lacks " + item_name)
+	_remember("lacks %s for %s" % [item_name, BuildBlueprint.display_name(job.blueprint_id)])
 
 
 func _abandon_job(release_claim: bool = true) -> void:
@@ -1328,6 +1426,12 @@ func _clear_resume() -> void:
 	_resume_path = PackedVector2Array()
 	_resume_path_index = 0
 	_resume_carried = null
+
+
+func _show_blocked_action(text: String) -> void:
+	_blocked_action_text = text
+	_blocked_action_timer = BLOCKED_ACTION_SECONDS
+	queue_redraw()
 
 
 func _replan() -> void:
@@ -1483,6 +1587,22 @@ func command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL)
 	_begin_build(job)
 
 
+func command_take_build_job(job: BuildJob) -> bool:
+	if job == null or _job_board == null or not _job_board.is_active(job):
+		return false
+	_abandon_job()
+	if not _job_board.force_claim(job, self):
+		return false
+	_job = job
+	_remember("ordered to build %s at %d,%d" % [
+		BuildBlueprint.display_name(job.blueprint_id),
+		job.anchor.x,
+		job.anchor.y,
+	])
+	_begin_build(job)
+	return true
+
+
 func command_charge(target: Vector2i) -> bool:
 	if not _chunk_manager.is_outlet(target):
 		return false
@@ -1499,7 +1619,8 @@ func _advance_path(delta: float) -> bool:
 		return true
 	if _path_index >= _path.size():
 		return true
-	var step: float = MOVE_SPEED_PX_PER_SEC * delta
+	var speed_mult: float = CROWD_SLOW_MULTIPLIER if _crowd_slow_remaining > 0.0 else 1.0
+	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
 		var to_target: Vector2 = target - position
@@ -1511,7 +1632,35 @@ func _advance_path(delta: float) -> bool:
 		else:
 			position += to_target / dist * step
 			step = 0.0
+	_update_crowding_contacts()
 	return _path_index >= _path.size()
+
+
+func apply_crowding_slow() -> void:
+	_crowd_slow_remaining = CROWD_SLOW_SECONDS
+
+
+func _update_crowding_contacts() -> void:
+	var parent_node: Node = get_parent()
+	if parent_node == null:
+		return
+	var here: Vector2i = current_grid()
+	var seen: Dictionary = {}
+	for sibling in parent_node.get_children():
+		var other := sibling as Worker
+		if other == null or other == self or not is_instance_valid(other):
+			continue
+		if other.current_grid() != here:
+			continue
+		seen[other] = true
+		if _crowd_contacts.has(other):
+			continue
+		_crowd_contacts[other] = true
+		apply_crowding_slow()
+		other.apply_crowding_slow()
+	for other in _crowd_contacts.keys():
+		if not seen.has(other):
+			_crowd_contacts.erase(other)
 
 
 func _update_energy(delta: float) -> void:
@@ -1617,13 +1766,29 @@ func _check_teleporter() -> void:
 	_remember("teleported from %d,%d to %d,%d" % [here.x, here.y, target.x, target.y])
 	if _job == null:
 		if _state == State.MOVING_TO_SOCIALIZE or _state == State.SOCIALIZING:
-			_resume_after_chat()
+			if not _repath_socialize_after_teleport():
+				_resume_after_chat()
 		else:
 			_state = State.IDLE
 			_idle_cooldown = IDLE_RETRY_SECONDS
 	else:
 		_replan()
 	queue_redraw()
+
+
+func _repath_socialize_after_teleport() -> bool:
+	if _activity_partner == null or not is_instance_valid(_activity_partner):
+		return false
+	var target: Vector2i = _adjacent_chat_cell_near(_activity_partner.current_grid(), current_grid())
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_SOCIALIZE
+	return true
 
 
 func _should_seek_charge() -> bool:
@@ -1666,54 +1831,57 @@ func _begin_charge(outlet: Vector2i) -> bool:
 
 func _refresh_action_text() -> void:
 	var next_text: String = ""
-	match _state:
-		State.MOVING_TO_WORK:
-			next_text = "Moving to rust" if _is_scrape_job(_job) else "Moving to mine"
-		State.WORKING:
-			next_text = "Scraping rust" if _is_scrape_job(_job) else "Mining"
-		State.MOVING_TO_PICKUP:
-			if _job is BuildJob:
-				next_text = "Getting " + Item.kind_name((_job as BuildJob).material_kind)
-			elif _job is HaulJob:
-				next_text = "Getting item"
-		State.CARRYING, State.MOVING_TO_DROP:
-			if _carried != null:
-				next_text = "Hauling " + Item.kind_name(_carried.kind)
-			else:
-				next_text = "Hauling"
-		State.MOVING_TO_BUILD_SITE:
-			next_text = "Delivering"
-		State.BUILDING:
-			if _job is BuildJob:
-				next_text = "Building " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
-			else:
-				next_text = "Building"
-		State.MOVING_FREEFORM:
-			next_text = "Moving"
-		State.MOVING_TO_CHARGE:
-			next_text = "Moving to charge"
-		State.CHARGING:
-			next_text = "Charging"
-		State.ROAMING:
-			next_text = "Roaming"
-		State.WANDERING:
-			next_text = "Wandering"
-		State.MOVING_TO_REST:
-			next_text = "Moving to dock"
-		State.RESTING:
-			next_text = "Resting"
-		State.MOVING_TO_REPAIR:
-			next_text = "Moving to repair"
-		State.REPAIRING:
-			next_text = "Repairing"
-		State.MOVING_TO_SOCIALIZE:
-			next_text = "Moving to chat"
-		State.SOCIALIZING:
-			next_text = "Chatting"
-		State.FIGHTING:
-			next_text = "Fighting"
-		State.DEAD:
-			next_text = ""
+	if _blocked_action_timer > 0.0:
+		next_text = _blocked_action_text
+	else:
+		match _state:
+			State.MOVING_TO_WORK:
+				next_text = "Moving to rust" if _is_scrape_job(_job) else "Moving to mine"
+			State.WORKING:
+				next_text = "Scraping rust" if _is_scrape_job(_job) else "Mining"
+			State.MOVING_TO_PICKUP:
+				if _job is BuildJob:
+					next_text = "Getting " + Item.kind_name((_job as BuildJob).material_kind)
+				elif _job is HaulJob:
+					next_text = "Getting item"
+			State.CARRYING, State.MOVING_TO_DROP:
+				if _carried != null:
+					next_text = "Hauling " + Item.kind_name(_carried.kind)
+				else:
+					next_text = "Hauling"
+			State.MOVING_TO_BUILD_SITE:
+				next_text = "Delivering"
+			State.BUILDING:
+				if _job is BuildJob:
+					next_text = "Building " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
+				else:
+					next_text = "Building"
+			State.MOVING_FREEFORM:
+				next_text = "Moving"
+			State.MOVING_TO_CHARGE:
+				next_text = "Moving to charge"
+			State.CHARGING:
+				next_text = "Charging"
+			State.ROAMING:
+				next_text = "Roaming"
+			State.WANDERING:
+				next_text = "Wandering"
+			State.MOVING_TO_REST:
+				next_text = "Moving to dock"
+			State.RESTING:
+				next_text = "Resting"
+			State.MOVING_TO_REPAIR:
+				next_text = "Moving to repair"
+			State.REPAIRING:
+				next_text = "Repairing"
+			State.MOVING_TO_SOCIALIZE:
+				next_text = "Moving to chat"
+			State.SOCIALIZING:
+				next_text = "Chatting"
+			State.FIGHTING:
+				next_text = "Fighting"
+			State.DEAD:
+				next_text = ""
 	if _action_text == next_text:
 		return
 	_action_text = next_text

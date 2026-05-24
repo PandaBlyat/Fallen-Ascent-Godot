@@ -39,9 +39,9 @@ func _ready() -> void:
 		_chunk_manager.set_structure_manager(self)
 
 
-func can_place_blueprint(id: int, anchor: Vector2i) -> bool:
+func can_place_blueprint(id: int, anchor: Vector2i, rotation: int = 0) -> bool:
 	var has_outlet: bool = false
-	for cell in BuildBlueprint.footprint(id, anchor):
+	for cell in BuildBlueprint.footprint(id, anchor, rotation):
 		if not _chunk_manager.is_grid_in_map(cell):
 			return false
 		if _cell_to_structure.has(cell):
@@ -62,11 +62,12 @@ func can_place_blueprint(id: int, anchor: Vector2i) -> bool:
 	return true
 
 
-func build_structure(id: int, anchor: Vector2i) -> void:
-	var cells: Array[Vector2i] = BuildBlueprint.footprint(id, anchor)
+func build_structure(id: int, anchor: Vector2i, rotation: int = 0) -> void:
+	var cells: Array[Vector2i] = BuildBlueprint.footprint(id, anchor, rotation)
 	var structure: Dictionary = {
 		"id": id,
 		"anchor": anchor,
+		"rotation": posmod(rotation, 4),
 		"cells": cells,
 		"timer": 0.0,
 		"blocked": "",

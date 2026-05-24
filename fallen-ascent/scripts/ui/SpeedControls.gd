@@ -7,6 +7,12 @@ extends HBoxContainer
 
 const SPEEDS := [0.0, 1.0, 2.0, 3.0]
 const LABELS := ["||", "1x", "2x", "3x"]
+const TOOLTIPS := [
+	"Pause\nKey: 0 or Space",
+	"Normal speed\nKey: 1",
+	"Fast speed\nKey: 2",
+	"Max speed\nKey: 3",
+]
 const COLOR_BG := Color(0.045, 0.052, 0.06, 0.88)
 const COLOR_BG_HOVER := Color(0.14, 0.16, 0.18, 0.94)
 const COLOR_ACTIVE := Color(0.25, 0.20, 0.12, 1.0)
@@ -19,13 +25,14 @@ var _last_play_speed: float = 1.0
 
 
 func _ready() -> void:
-	add_theme_constant_override("separation", 4)
+	add_theme_constant_override("separation", 6)
 	for i in SPEEDS.size():
 		var b: Button = Button.new()
 		b.text = LABELS[i]
+		b.tooltip_text = TOOLTIPS[i]
 		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(44, 32)
-		b.add_theme_font_size_override("font_size", 12)
+		b.custom_minimum_size = Vector2(60, 44)
+		b.add_theme_font_size_override("font_size", 16)
 		b.add_theme_stylebox_override("normal", _button_style(COLOR_BG, COLOR_BORDER))
 		b.add_theme_stylebox_override("hover", _button_style(COLOR_BG_HOVER, COLOR_ACCENT))
 		b.add_theme_stylebox_override("pressed", _button_style(COLOR_ACTIVE, COLOR_ACCENT))
@@ -77,4 +84,6 @@ func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
 	style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4
 	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 12.0
+	style.content_margin_right = 12.0
 	return style

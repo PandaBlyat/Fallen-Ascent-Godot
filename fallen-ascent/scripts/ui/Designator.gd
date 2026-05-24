@@ -59,6 +59,7 @@ var _dragging: bool = false
 var _drag_start: Vector2i = Vector2i.ZERO
 var _drag_end: Vector2i = Vector2i.ZERO
 var _hover_grid: Vector2i = Vector2i.ZERO
+var _build_rotation: int = 0
 
 
 func _ready() -> void:
@@ -152,6 +153,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if cancel_active():
 			get_viewport().set_input_as_handled()
 		return
+	if event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and not key.echo and key.physical_keycode == KEY_R and _is_build_mode():
+			_build_rotation = posmod(_build_rotation + 1, 4)
+			queue_redraw()
+			get_viewport().set_input_as_handled()
+			return
 
 	if event is InputEventMouseMotion:
 		_hover_grid = _world_to_grid(_camera.get_global_mouse_position())
@@ -248,9 +256,9 @@ func _apply_build_click(grid: Vector2i, blueprint_id: int) -> void:
 	if _job_board.has_build_at(grid):
 		_job_board.cancel_build_at(grid)
 		return
-	if _structure_manager == null or not _structure_manager.can_place_blueprint(blueprint_id, grid):
+	if _structure_manager == null or not _structure_manager.can_place_blueprint(blueprint_id, grid, _build_rotation):
 		return
-	_job_board.add_build_job(grid, blueprint_id)
+	_job_board.add_build_job(grid, blueprint_id, _build_rotation)
 
 
 func _apply_remove_stockpile_click(grid: Vector2i) -> void:
@@ -360,11 +368,11 @@ func _draw() -> void:
 
 func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
 	var valid: bool = _structure_manager != null \
-		and _structure_manager.can_place_blueprint(blueprint_id, anchor) \
+		and _structure_manager.can_place_blueprint(blueprint_id, anchor, _build_rotation) \
 		and (_fog == null or _fog.is_explored(anchor))
 	var fill: Color = BuildBlueprint.ghost_color(blueprint_id) if valid else Color(0.95, 0.2, 0.2, 0.38)
 	var border: Color = Color(fill.r, fill.g, fill.b, 0.9)
-	for cell in BuildBlueprint.footprint(blueprint_id, anchor):
+	for cell in BuildBlueprint.footprint(blueprint_id, anchor, _build_rotation):
 		var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(rect, fill)

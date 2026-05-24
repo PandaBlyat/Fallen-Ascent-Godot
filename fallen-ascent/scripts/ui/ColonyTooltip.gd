@@ -12,9 +12,11 @@ extends Label
 @export var workers_root_path: NodePath
 @export var structure_manager_path: NodePath
 @export var fog_of_war_path: NodePath
+@export var room_manager_path: NodePath
 
 const TOOLTIP_OFFSET := Vector2(14, 14)
 const EDGE_PADDING := 12.0
+const HOVER_DWELL_SECONDS: float = 0.5
 
 var _camera: Camera2D
 var _chunk_manager: ChunkManager
@@ -24,7 +26,10 @@ var _items_root: Node2D
 var _workers_root: Node2D
 var _structure_manager: StructureManager
 var _fog: FogOfWar
+var _room_manager: Node
 var _last_grid: Vector2i = Vector2i(2147483647, 2147483647)
+var _hover_grid: Vector2i = Vector2i(2147483647, 2147483647)
+var _hover_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -43,10 +48,11 @@ func _ready() -> void:
 	_workers_root = get_node(workers_root_path) as Node2D
 	_structure_manager = get_node(structure_manager_path) as StructureManager
 	_fog = get_node(fog_of_war_path) as FogOfWar
+	_room_manager = get_node_or_null(room_manager_path)
 	EventBus.visibility_changed.connect(_on_visibility_changed)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var mouse_screen: Vector2 = get_viewport().get_mouse_position()
 	var desired := mouse_screen + TOOLTIP_OFFSET
 	var viewport_size := get_viewport_rect().size
@@ -55,7 +61,17 @@ func _process(_delta: float) -> void:
 		maxf(EDGE_PADDING, minf(desired.y, viewport_size.y - size.y - EDGE_PADDING)),
 	)
 	var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
-	if grid == _last_grid:
+	if grid != _hover_grid:
+		_hover_grid = grid
+		_hover_timer = 0.0
+		_last_grid = Vector2i(2147483647, 2147483647)
+		visible = false
+		return
+	_hover_timer += delta
+	if _hover_timer < HOVER_DWELL_SECONDS:
+		visible = false
+		return
+	if grid == _last_grid and visible:
 		return
 	_last_grid = grid
 	_refresh(grid)
@@ -87,7 +103,11 @@ func _refresh(grid: Vector2i) -> void:
 	if not job_line.is_empty():
 		lines.append(job_line)
 	if _stockpile_manager != null and _stockpile_manager.zone_at(grid) != null:
-		lines.append("Stockpile")
+		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
+		lines.append("Stockpile: %d/%d" % [zone.stored_count(), zone.capacity()])
+	var room_line: String = _room_line_at(grid)
+	if not room_line.is_empty():
+		lines.append(room_line)
 	text = _join_lines(lines)
 
 
@@ -132,8 +152,18 @@ func _job_line_at(grid: Vector2i) -> String:
 		return "Job: mine"
 	var build: BuildJob = _job_board.build_job_at(grid)
 	if build != null:
-		return "Job: build " + BuildBlueprint.display_name(build.blueprint_id)
+		var line: String = "Job: build " + BuildBlueprint.display_name(build.blueprint_id)
+		var missing: String = build.missing_items_text()
+		if missing != "none":
+			line += "\nStill needs: " + missing
+		return line
 	return ""
+
+
+func _room_line_at(grid: Vector2i) -> String:
+	if _room_manager == null or not _room_manager.has_method("room_status_at"):
+		return ""
+	return _room_manager.call("room_status_at", grid) as String
 
 
 static func _world_to_grid(world_pos: Vector2) -> Vector2i:

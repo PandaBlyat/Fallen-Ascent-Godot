@@ -7,19 +7,22 @@ extends Job
 
 var anchor: Vector2i = Vector2i.ZERO
 var blueprint_id: int = BuildBlueprint.Id.WALL
+var rotation: int = 0
 var footprint: Array[Vector2i] = []
 var ingredients: Dictionary = {}
 var delivered: Dictionary = {}
 var material_kind: int = Item.Kind.SCRAP
 var source_item: Node = null              ## Item being consumed; assigned at claim time
 var progress: float = 0.0
+var blocked_until_msec: int = 0
 
 
-func _init(t: Vector2i = Vector2i.ZERO, blueprint: int = BuildBlueprint.Id.WALL) -> void:
+func _init(t: Vector2i = Vector2i.ZERO, blueprint: int = BuildBlueprint.Id.WALL, rot: int = 0) -> void:
 	kind = Kind.BUILD
 	anchor = t
 	blueprint_id = blueprint
-	footprint = BuildBlueprint.footprint(blueprint_id, anchor)
+	rotation = posmod(rot, 4)
+	footprint = BuildBlueprint.footprint(blueprint_id, anchor, rotation)
 	ingredients = BuildBlueprint.ingredients(blueprint_id)
 	material_kind = next_missing_kind()
 
@@ -51,3 +54,19 @@ func accept_delivered(kind_id: int, amount: int = 1) -> void:
 
 func build_duration() -> float:
 	return BuildBlueprint.build_duration(blueprint_id)
+
+
+func missing_items_text() -> String:
+	var parts: Array[String] = []
+	for key in ingredients.keys():
+		var k: int = int(key)
+		var missing: int = int(ingredients[k]) - int(delivered.get(k, 0))
+		if missing > 0:
+			parts.append("%s x%d" % [Item.kind_name(k), missing])
+	if parts.is_empty():
+		return "none"
+	return ", ".join(parts)
+
+
+func block_briefly(seconds: float = 2.0) -> void:
+	blocked_until_msec = Time.get_ticks_msec() + int(seconds * 1000.0)

@@ -17,11 +17,13 @@ signal stockpile_changed()
 @export var job_board_path: NodePath
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
+@export var max_pending_haul_jobs: int = 96
 
 var _job_board: JobBoard
 var _chunk_manager: ChunkManager
 var _items_root: Node2D
 var zones: Array[StockpileZone] = []
+var _rematch_queued: bool = false
 
 
 func _ready() -> void:
@@ -29,6 +31,9 @@ func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_items_root = get_node(items_root_path) as Node2D
 	EventBus.tile_changed.connect(_on_tile_changed)
+	if _job_board != null:
+		_job_board.job_completed.connect(_on_job_changed)
+		_job_board.job_cancelled.connect(_on_job_changed)
 
 
 func create_zone(rect_cells: Array[Vector2i]) -> void:
@@ -44,7 +49,7 @@ func create_zone(rect_cells: Array[Vector2i]) -> void:
 	zones.append(zone)
 	zone_added.emit(zone)
 	stockpile_changed.emit()
-	_match_loose_items()
+	_schedule_match_loose_items()
 
 
 ## Returns the zone covering `grid` or null.
@@ -79,7 +84,7 @@ func remove_zone(zone: StockpileZone) -> void:
 	zone_removed.emit(zone)
 	zone.queue_free()
 	stockpile_changed.emit()
-	_match_loose_items()
+	_schedule_match_loose_items()
 
 
 func _cell_in_any_zone(grid: Vector2i) -> bool:
@@ -91,9 +96,12 @@ func _cell_in_any_zone(grid: Vector2i) -> bool:
 
 ## Iterate loose items and post a HaulJob for each that has an open slot.
 func _match_loose_items() -> void:
+	_rematch_queued = false
 	if _items_root == null:
 		return
 	for child in _items_root.get_children():
+		if _pending_haul_count() >= max_pending_haul_jobs:
+			return
 		var item := child as Item
 		if item == null or item.reserved_by != null:
 			continue
@@ -105,8 +113,14 @@ func on_item_spawned(item: Item) -> void:
 
 
 func _try_post_haul_for(item: Item) -> void:
+	if item == null or not is_instance_valid(item) or item.reserved_by != null:
+		return
+	if _pending_haul_count() >= max_pending_haul_jobs:
+		_schedule_match_loose_items()
+		return
+	var haul_amount: int = mini(item.count, Worker.MAX_CARRY_STACK)
 	for zone in zones:
-		var cell_v: Variant = zone.first_free_cell_for(item.kind)
+		var cell_v: Variant = zone.first_free_cell_for(item.kind, haul_amount)
 		if cell_v == null:
 			continue
 		var cell: Vector2i = cell_v
@@ -114,6 +128,28 @@ func _try_post_haul_for(item: Item) -> void:
 		item.reserved_by = self
 		_job_board.add_haul_job(item, zone, cell)
 		return
+
+
+func _pending_haul_count() -> int:
+	if _job_board == null:
+		return 0
+	var count: int = 0
+	for job in _job_board.pending:
+		if job is HaulJob:
+			count += 1
+	return count
+
+
+func _schedule_match_loose_items() -> void:
+	if _rematch_queued:
+		return
+	_rematch_queued = true
+	call_deferred("_match_loose_items")
+
+
+func _on_job_changed(job: Job) -> void:
+	if job is HaulJob:
+		_schedule_match_loose_items()
 
 
 func total_stored() -> int:

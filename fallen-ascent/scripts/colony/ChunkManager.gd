@@ -20,6 +20,9 @@ extends Node2D
 var _site_seed: int = 0
 var _noise: FastNoiseLite
 var _loaded: Dictionary = {}                      ## Vector2i -> Chunk
+## Session-lifetime diff cache: chunk_coord -> { local_coord -> tile_id }.
+## Lets mined cells survive unload/reload until a real save system lands.
+var _diffs: Dictionary = {}
 
 
 func setup(site_seed: int) -> void:
@@ -46,6 +49,7 @@ func _load_around(center: Vector2i) -> void:
 			var chunk: Chunk = Chunk.new()
 			add_child(chunk)
 			chunk.populate(coord, _noise)
+			_apply_diffs(chunk, coord)
 			_loaded[coord] = chunk
 			EventBus.chunk_loaded.emit(coord)
 
@@ -107,8 +111,28 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 	if not _loaded.has(ccoord):
 		return
 	var chunk: Chunk = _loaded[ccoord]
-	chunk.set_tile(Chunk.grid_to_local(grid), t)
+	var local: Vector2i = Chunk.grid_to_local(grid)
+	chunk.set_tile(local, t)
+	_record_diff(ccoord, local, t)
 	EventBus.tile_changed.emit(grid, t)
+
+
+## Replays any cached diffs onto a freshly-populated chunk so mining
+## persists across unload/reload during a session. Uses chunk.set_tile
+## directly (not set_tile_at) to avoid re-emitting tile_changed for
+## already-known mutations.
+func _apply_diffs(chunk: Chunk, coord: Vector2i) -> void:
+	if not _diffs.has(coord):
+		return
+	var per_chunk: Dictionary = _diffs[coord]
+	for local in per_chunk.keys():
+		chunk.set_tile(local as Vector2i, per_chunk[local] as int)
+
+
+func _record_diff(coord: Vector2i, local: Vector2i, t: int) -> void:
+	var per_chunk: Dictionary = _diffs.get(coord, {})
+	per_chunk[local] = t
+	_diffs[coord] = per_chunk
 
 
 func is_walkable(grid: Vector2i) -> bool:

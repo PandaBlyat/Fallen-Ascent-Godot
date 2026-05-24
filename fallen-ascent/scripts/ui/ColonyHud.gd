@@ -31,18 +31,27 @@ const ICON_MAINTENANCE_DOCK := ICON_CHARGE_PAD
 const ICON_CALIBRATION_SHRINE := ICON_SENSOR
 
 # Colors for UI accents and states
-const COLOR_BG_DARK := Color(0.045, 0.052, 0.06, 0.88)
-const COLOR_BG_RAISED := Color(0.10, 0.115, 0.13, 0.92)
-const COLOR_BORDER_DEFAULT := Color(0.33, 0.36, 0.39, 0.62)
+const COLOR_BG_DARK := Color(0.055, 0.072, 0.088, 0.94)
+const COLOR_BG_RAISED := Color(0.10, 0.125, 0.145, 0.96)
+const COLOR_BORDER_DEFAULT := Color(0.22, 0.48, 0.55, 0.55)
 const COLOR_ACCENT_AMBER := Color(0.96, 0.58, 0.16, 1.0)
-const COLOR_ACCENT_MUTED := Color(0.55, 0.60, 0.64, 0.42)
-const COLOR_TEXT_LIGHT := Color(0.90, 0.93, 0.91, 1.0)
-const COLOR_TEXT_MUTED := Color(0.67, 0.70, 0.68, 1.0)
+const COLOR_ACCENT_CYAN := Color(0.42, 0.85, 0.92, 1.0)
+const COLOR_ACCENT_MUTED := Color(0.40, 0.52, 0.58, 0.55)
+const COLOR_TEXT_LIGHT := Color(0.92, 0.96, 0.97, 1.0)
+const COLOR_TEXT_MUTED := Color(0.68, 0.75, 0.78, 1.0)
 const COLOR_METER_GOOD := Color(0.3, 0.9, 0.55)
 const COLOR_METER_LOW := Color(1.0, 0.78, 0.2)
+const COLOR_FACTION_HOSTILE := Color(0.96, 0.36, 0.34, 1.0)
+const COLOR_FACTION_NEUTRAL := Color(0.97, 0.78, 0.32, 1.0)
 const HISTORY_VISIBLE_ROWS: int = 4
 const ENTITY_ATLAS_PATH := "res://resources/entities/placeholder_entities_atlas.png"
 const BOT_REGION := Rect2(Vector2.ZERO, Vector2(16, 16))
+const NEUTRAL_REGION := Rect2(Vector2(16, 0), Vector2(16, 16))
+const PALETTE_WIDTH: float = 580.0
+const PALETTE_HEIGHT: float = 200.0
+const TOP_STRIP_HEIGHT: float = 44.0
+const INSPECT_CARD_WIDTH: float = 300.0
+const INSPECT_CARD_HEIGHT: float = 150.0
 
 @export var designator_path: NodePath
 @export var job_board_path: NodePath
@@ -76,6 +85,11 @@ var _npc_strip: BoxContainer
 var _selected_workers: Array[Worker] = []
 var _selected_structure_id: int = -1
 var _selected_structure_anchor: Vector2i = Vector2i.ZERO
+var _top_strip: PanelContainer
+var _inspect_panel: PanelContainer
+var _inspect_box: VBoxContainer
+var _inspected_node: Node = null
+var _inspected_faction: int = 0
 
 
 func _ready() -> void:
@@ -113,21 +127,27 @@ func _connect_signals() -> void:
 		_stockpile_manager.stockpile_changed.connect(_refresh_status)
 	EventBus.workers_selected.connect(_on_workers_selected)
 	EventBus.structure_selected.connect(_on_structure_selected)
+	EventBus.bot_inspected.connect(_on_bot_inspected)
+	EventBus.combatant_died.connect(_on_combatant_died)
 
 
 func _build_layout() -> void:
-	# Top Strip Container
+	# Top Strip Container - centered horizontally, auto-sizes to badges.
 	var top_strip := PanelContainer.new()
 	top_strip.name = "TopStrip"
 	top_strip.mouse_filter = Control.MOUSE_FILTER_STOP
-	top_strip.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0))
-	top_strip.anchor_left = 0.0
-	top_strip.anchor_right = 1.0
-	top_strip.offset_left = 12.0
+	top_strip.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	top_strip.anchor_left = 0.5
+	top_strip.anchor_right = 0.5
+	top_strip.anchor_top = 0.0
+	top_strip.anchor_bottom = 0.0
 	top_strip.offset_top = 10.0
-	top_strip.offset_right = -236.0
-	top_strip.offset_bottom = 50.0
+	top_strip.offset_bottom = 10.0 + TOP_STRIP_HEIGHT
+	top_strip.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	top_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_top_strip = top_strip
 	add_child(top_strip)
+	top_strip.resized.connect(_recenter_top_strip)
 
 	var top_margin := MarginContainer.new()
 	top_margin.add_theme_constant_override("margin_left", 10)
@@ -170,10 +190,10 @@ func _build_layout() -> void:
 	npc_panel.anchor_right = 0.0
 	npc_panel.anchor_bottom = 0.0
 	npc_panel.offset_left = 12.0
-	npc_panel.offset_top = 60.0
+	npc_panel.offset_top = 70.0
 	npc_panel.offset_right = 204.0
-	npc_panel.offset_bottom = 198.0
-	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	npc_panel.offset_bottom = 208.0
+	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	add_child(npc_panel)
 
 	var npc_margin := MarginContainer.new()
@@ -195,19 +215,19 @@ func _build_layout() -> void:
 	_npc_strip.add_theme_constant_override("separation", 6)
 	npc_scroll.add_child(_npc_strip)
 
-	# Command Palette Panel
+	# Command Palette Panel - centered horizontally at bottom.
 	var palette := PanelContainer.new()
 	palette.name = "CommandPalette"
 	palette.mouse_filter = Control.MOUSE_FILTER_STOP
-	palette.anchor_left = 0.0
+	palette.anchor_left = 0.5
 	palette.anchor_top = 1.0
-	palette.anchor_right = 0.0
+	palette.anchor_right = 0.5
 	palette.anchor_bottom = 1.0
-	palette.offset_left = 16.0
-	palette.offset_top = -202.0
-	palette.offset_right = 548.0
+	palette.offset_left = -PALETTE_WIDTH * 0.5
+	palette.offset_top = -PALETTE_HEIGHT - 16.0
+	palette.offset_right = PALETTE_WIDTH * 0.5
 	palette.offset_bottom = -16.0
-	palette.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
+	palette.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	add_child(palette)
 
 	var palette_margin := MarginContainer.new()
@@ -268,6 +288,47 @@ func _build_layout() -> void:
 	_selection_box.alignment = BoxContainer.ALIGNMENT_BEGIN
 	_selection_box.add_theme_constant_override("separation", 10)
 	selection_scroll.add_child(_selection_box)
+
+	# NPC Inspect Card - centered above the command palette.
+	_inspect_panel = PanelContainer.new()
+	_inspect_panel.name = "InspectCard"
+	_inspect_panel.visible = false
+	_inspect_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_inspect_panel.anchor_left = 0.5
+	_inspect_panel.anchor_top = 1.0
+	_inspect_panel.anchor_right = 0.5
+	_inspect_panel.anchor_bottom = 1.0
+	_inspect_panel.offset_left = -INSPECT_CARD_WIDTH * 0.5
+	_inspect_panel.offset_top = -PALETTE_HEIGHT - 16.0 - INSPECT_CARD_HEIGHT - 10.0
+	_inspect_panel.offset_right = INSPECT_CARD_WIDTH * 0.5
+	_inspect_panel.offset_bottom = -PALETTE_HEIGHT - 16.0 - 10.0
+	_inspect_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	add_child(_inspect_panel)
+
+	var inspect_margin := MarginContainer.new()
+	inspect_margin.add_theme_constant_override("margin_left", 12)
+	inspect_margin.add_theme_constant_override("margin_top", 10)
+	inspect_margin.add_theme_constant_override("margin_right", 12)
+	inspect_margin.add_theme_constant_override("margin_bottom", 10)
+	_inspect_panel.add_child(inspect_margin)
+
+	_inspect_box = VBoxContainer.new()
+	_inspect_box.add_theme_constant_override("separation", 4)
+	inspect_margin.add_child(_inspect_box)
+
+	_recenter_top_strip()
+
+
+func _recenter_top_strip() -> void:
+	if _top_strip == null:
+		return
+	var w: float = _top_strip.size.x
+	if w <= 0.0:
+		w = _top_strip.get_combined_minimum_size().x
+	if w <= 0.0:
+		return
+	_top_strip.offset_left = -w * 0.5
+	_top_strip.offset_right = w * 0.5
 
 
 func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
@@ -392,8 +453,11 @@ func _on_workers_selected(workers: Array[Worker]) -> void:
 	_selected_workers = workers
 	if not _selected_workers.is_empty():
 		_selected_structure_id = -1
+		_inspected_node = null
+		_inspected_faction = 0
 	_refresh_status()
 	_refresh_selection_panel()
+	_refresh_inspect_card()
 
 
 func _on_structure_selected(id: int, anchor: Vector2i) -> void:
@@ -401,7 +465,26 @@ func _on_structure_selected(id: int, anchor: Vector2i) -> void:
 	_selected_structure_anchor = anchor
 	if id >= 0:
 		_selected_workers.clear()
+		_inspected_node = null
+		_inspected_faction = 0
 	_refresh_selection_panel()
+	_refresh_inspect_card()
+
+
+func _on_bot_inspected(node: Node, faction: int) -> void:
+	_inspected_node = node
+	_inspected_faction = faction
+	if node != null:
+		_selected_workers.clear()
+		_selected_structure_id = -1
+		_refresh_selection_panel()
+	_refresh_inspect_card()
+
+
+func _on_combatant_died(node: Node, _faction: int) -> void:
+	if node == _inspected_node:
+		_inspected_node = null
+		_refresh_inspect_card()
 
 
 func _refresh_all() -> void:
@@ -433,6 +516,7 @@ func _refresh_status() -> void:
 			label.text = "%s %d" % [Item.kind_name(int(kind)), int(counts.get(kind, 0))]
 	_refresh_npc_strip()
 	_refresh_selection_panel()
+	_refresh_inspect_card()
 
 
 func _resource_counts() -> Dictionary:
@@ -473,6 +557,67 @@ func _tracked_item_kinds() -> Array[int]:
 
 func _build_tooltip(blueprint_id: int) -> String:
 	return BuildBlueprint.tooltip_text(blueprint_id)
+
+
+func _refresh_inspect_card() -> void:
+	if _inspect_panel == null or _inspect_box == null:
+		return
+	for child in _inspect_box.get_children():
+		_inspect_box.remove_child(child)
+		child.queue_free()
+	if _inspected_node == null or not is_instance_valid(_inspected_node):
+		_inspect_panel.visible = false
+		return
+	_inspect_panel.visible = true
+	var faction_color: Color = COLOR_FACTION_NEUTRAL if _inspected_faction == 1 else COLOR_FACTION_HOSTILE
+	var faction_text: String = "neutral" if _inspected_faction == 1 else "hostile"
+
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 8)
+	_inspect_box.add_child(title_row)
+
+	var portrait := TextureRect.new()
+	portrait.texture = _npc_portrait()
+	portrait.modulate = faction_color if _inspected_faction == 2 else Color.WHITE
+	portrait.custom_minimum_size = Vector2(24, 24)
+	portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	title_row.add_child(portrait)
+
+	var name_label := Label.new()
+	name_label.text = _inspected_node.call("display_name") as String if _inspected_node.has_method("display_name") else str(_inspected_node.name)
+	name_label.add_theme_font_size_override("font_size", 16)
+	name_label.add_theme_color_override("font_color", Color.WHITE)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(name_label)
+
+	var faction_label := Label.new()
+	faction_label.text = faction_text
+	faction_label.add_theme_font_size_override("font_size", 12)
+	faction_label.add_theme_color_override("font_color", faction_color)
+	title_row.add_child(faction_label)
+
+	var stats_value: CombatStats = _inspected_node.call("combat_stats") as CombatStats if _inspected_node.has_method("combat_stats") else null
+	if stats_value != null:
+		_add_meter(_inspect_box, "hp %d / %d" % [int(roundf(stats_value.hp)), int(roundf(stats_value.max_hp))], stats_value.hp_ratio(), Color(0.95, 0.30, 0.30))
+		_add_card_line(_inspect_box, "damage", "%d-%d" % [int(stats_value.damage_min), int(stats_value.damage_max)])
+
+	if _inspected_node.has_method("state_label"):
+		_add_card_line(_inspect_box, "state", _inspected_node.call("state_label") as String)
+	if _inspected_node.has_method("current_target"):
+		var target_node: Node = _inspected_node.call("current_target") as Node
+		if target_node != null and is_instance_valid(target_node):
+			var target_name: String = target_node.call("display_name") as String if target_node.has_method("display_name") else str(target_node.name)
+			_add_card_line(_inspect_box, "target", target_name)
+
+
+func _npc_portrait() -> Texture2D:
+	if _entity_atlas == null:
+		return null
+	var icon := AtlasTexture.new()
+	icon.atlas = _entity_atlas
+	icon.region = NEUTRAL_REGION
+	return icon
 
 
 func _refresh_selection_panel() -> void:

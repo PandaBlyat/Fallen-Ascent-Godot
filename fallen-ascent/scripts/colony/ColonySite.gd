@@ -18,6 +18,7 @@ const INITIAL_NEUTRALS: int = 30
 @onready var items_root: Node2D = $Items
 @onready var workers_root: Node2D = $Workers
 @onready var neutrals_root: Node2D = $Neutrals
+@onready var hostiles_root: Node2D = $Hostiles
 @onready var designator: Designator = $Designator
 @onready var fog_of_war: FogOfWar = $FogOfWar
 
@@ -74,7 +75,7 @@ func _spawn_neutral_bots(count: int) -> void:
 			continue
 		var bot := NEUTRAL_BOT_SCRIPT.new() as NeutralBot
 		bot.name = "Neutral_%02d" % (spawned + 1)
-		bot.setup(chunk_manager, pathfinder)
+		bot.setup(chunk_manager, pathfinder, hostiles_root)
 		bot.position = Chunk.grid_to_pixel_center(cell)
 		neutrals_root.add_child(bot)
 		spawned += 1

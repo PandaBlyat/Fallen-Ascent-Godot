@@ -30,7 +30,17 @@ enum State {
 	REPAIRING,
 	MOVING_TO_SOCIALIZE,
 	SOCIALIZING,
+	FIGHTING,
+	DEAD,
 }
+
+const CombatStatsScript: Script = preload("res://scripts/combat/CombatStats.gd")
+const CombatService: Script = preload("res://scripts/combat/CombatService.gd")
+const COMBAT_HP_MAX: float = 100.0
+const COMBAT_REPATH_INTERVAL: float = 0.5
+const COMBAT_LOST_TIMEOUT: float = 3.0
+const KNOCKBACK_DURATION: float = 0.12
+const FACTION_COLONY: int = 0
 
 const MOVE_SPEED_PX_PER_SEC: float = 48.0
 const ARRIVE_EPSILON_PX: float = 1.0
@@ -100,6 +110,14 @@ var _resume_state: int = State.IDLE
 var _resume_path: PackedVector2Array = PackedVector2Array()
 var _resume_path_index: int = 0
 var _resume_carried: Item = null
+var stats: CombatStats
+var _combat_target: Node2D = null
+var _combat_repath_cooldown: float = 0.0
+var _last_combat_contact_at: float = 0.0
+var _knockback_remaining: float = 0.0
+var _knockback_vec: Vector2 = Vector2.ZERO
+var _stun_remaining: float = 0.0
+var _dead: bool = false
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -134,11 +152,148 @@ func setup(
 func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 	_init_limbs()
+	stats = CombatStatsScript.new() as CombatStats
+	stats.max_hp = COMBAT_HP_MAX
+	stats.hp = COMBAT_HP_MAX
+	stats.damage_min = 8.0
+	stats.damage_max = 14.0
+	stats.attack_cooldown_seconds = 0.9
+	stats.attack_range_tiles = 1
+	stats.knockback_px = 6.0
+	stats.stun_on_hit_seconds = 0.15
 	if _job_board != null:
 		_job_board.job_added.connect(_on_job_added)
 		_job_board.job_cancelled.connect(_on_job_cancelled)
 	EventBus.tile_changed.connect(_on_tile_changed)
 	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
+
+
+func is_alive() -> bool:
+	return not _dead and stats != null and stats.is_alive()
+
+
+func faction() -> int:
+	return FACTION_COLONY
+
+
+func combat_stats() -> CombatStats:
+	return stats
+
+
+func current_target() -> Node:
+	return _combat_target
+
+
+func take_damage(amount: float, attacker: Node) -> void:
+	if _dead or stats == null:
+		return
+	stats.hp = maxf(0.0, stats.hp - amount)
+	_damage_limb(amount / 1.6)
+	_last_combat_contact_at = _now_seconds()
+	if attacker is Node2D and is_instance_valid(attacker):
+		if _state != State.FIGHTING:
+			_abandon_job()
+			_enter_fighting(attacker as Node2D)
+			_remember("attacked, fighting back")
+	queue_redraw()
+	if stats.hp <= 0.0:
+		_die()
+
+
+func apply_knockback(vec: Vector2, stun_seconds: float) -> void:
+	if _dead:
+		return
+	_knockback_vec = vec
+	_knockback_remaining = KNOCKBACK_DURATION
+	_stun_remaining = maxf(_stun_remaining, stun_seconds)
+
+
+func command_attack(target: Node2D) -> bool:
+	if _dead or target == null or not is_instance_valid(target):
+		return false
+	if target.has_method("is_alive") and not bool(target.call("is_alive")):
+		return false
+	_abandon_job()
+	_enter_fighting(target)
+	_remember("ordered to attack %s" % _target_label(target))
+	return true
+
+
+func _enter_fighting(target: Node2D) -> void:
+	_combat_target = target
+	_state = State.FIGHTING
+	_combat_repath_cooldown = 0.0
+	_last_combat_contact_at = _now_seconds()
+	_repath_to_combat_target()
+
+
+func _repath_to_combat_target() -> void:
+	if _combat_target == null or _pathfinder == null or _chunk_manager == null:
+		return
+	var target_grid: Vector2i = (_combat_target as Node2D).call("current_grid") as Vector2i
+	var stand: Vector2i = _pathfinder.walkable_neighbor_of(target_grid)
+	if stand == Pathfinder.UNREACHABLE:
+		_path = PackedVector2Array()
+		_path_index = 0
+		return
+	if stand == current_grid():
+		_path = PackedVector2Array()
+		_path_index = 0
+		return
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	if path.is_empty():
+		return
+	_path = path
+	_path_index = 0
+
+
+func _target_alive() -> bool:
+	if _combat_target == null or not is_instance_valid(_combat_target):
+		return false
+	if _combat_target.has_method("is_alive"):
+		return bool(_combat_target.call("is_alive"))
+	return true
+
+
+func _target_label(node: Node) -> String:
+	if node != null and is_instance_valid(node):
+		return str(node.name)
+	return "target"
+
+
+func _die() -> void:
+	if _dead:
+		return
+	_dead = true
+	_state = State.DEAD
+	_path = PackedVector2Array()
+	_path_index = 0
+	if _carried != null:
+		var here := current_grid()
+		remove_child(_carried)
+		_items_root.add_child(_carried)
+		_carried.visible = true
+		_carried.set_grid(here)
+		_carried.reserved_by = null
+		if _stockpile_manager != null:
+			_stockpile_manager.on_item_spawned(_carried)
+		_carried = null
+	if _job != null and _job_board != null and _job_board.is_active(_job):
+		_job_board.release(_job)
+	_job = null
+	_release_charge_reservation()
+	EventBus.combatant_died.emit(self, FACTION_COLONY)
+	queue_redraw()
+	var fade := Timer.new()
+	fade.one_shot = true
+	fade.wait_time = 0.5
+	add_child(fade)
+	fade.timeout.connect(queue_free)
+	fade.start()
+
+
+func _now_seconds() -> float:
+	return Time.get_ticks_msec() / 1000.0
 
 
 func current_grid() -> Vector2i:
@@ -247,6 +402,10 @@ func state_label() -> String:
 			return "moving to chat"
 		State.SOCIALIZING:
 			return "chatting"
+		State.FIGHTING:
+			return "fighting"
+		State.DEAD:
+			return "down"
 		_:
 			return "unknown"
 
@@ -277,11 +436,22 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 
 
 func _process(delta: float) -> void:
+	if _dead:
+		return
+	if _knockback_remaining > 0.0:
+		var step: float = delta / KNOCKBACK_DURATION
+		position += _knockback_vec * step
+		_knockback_remaining = maxf(0.0, _knockback_remaining - delta)
+		queue_redraw()
+		return
+	if _stun_remaining > 0.0:
+		_stun_remaining = maxf(0.0, _stun_remaining - delta)
+		return
 	if _teleport_cooldown > 0.0:
 		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
 	_update_energy(delta)
 	_update_body_stats(delta)
-	if _should_seek_charge():
+	if _state != State.FIGHTING and _should_seek_charge():
 		_begin_auto_charge()
 		return
 	match _state:
@@ -387,8 +557,44 @@ func _process(delta: float) -> void:
 				if _activity_partner != null and is_instance_valid(_activity_partner):
 					_remember("finished chat with %s" % _activity_partner.display_name())
 				_resume_after_chat()
+		State.FIGHTING:
+			_process_fighting(delta)
 	_check_teleporter()
 	_refresh_action_text()
+
+
+func _process_fighting(delta: float) -> void:
+	if not _target_alive():
+		_combat_target = null
+		_state = State.IDLE
+		_idle_cooldown = 0.0
+		_path = PackedVector2Array()
+		_path_index = 0
+		return
+	var now: float = _now_seconds()
+	var target_grid: Vector2i = (_combat_target as Node2D).call("current_grid") as Vector2i
+	var cheb: int = maxi(absi(target_grid.x - current_grid().x), absi(target_grid.y - current_grid().y))
+	if cheb <= stats.attack_range_tiles:
+		_path = PackedVector2Array()
+		_path_index = 0
+		var swung: bool = CombatService.try_attack(self, _combat_target, stats, now)
+		if swung:
+			_last_combat_contact_at = now
+		return
+	_combat_repath_cooldown -= delta
+	if _path.is_empty() or _path_index >= _path.size() or _combat_repath_cooldown <= 0.0:
+		_repath_to_combat_target()
+		_combat_repath_cooldown = COMBAT_REPATH_INTERVAL
+	if _advance_path(delta):
+		_path = PackedVector2Array()
+		_path_index = 0
+		_combat_repath_cooldown = 0.0
+	if now - _last_combat_contact_at >= COMBAT_LOST_TIMEOUT:
+		_combat_target = null
+		_state = State.IDLE
+		_idle_cooldown = 0.0
+		_path = PackedVector2Array()
+		_path_index = 0
 
 
 func _try_claim_job() -> bool:
@@ -1265,7 +1471,7 @@ func _update_energy(delta: float) -> void:
 		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
 		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE:
 			drain = ENERGY_MOVE_DRAIN_PER_SEC
-		State.WORKING, State.BUILDING:
+		State.WORKING, State.BUILDING, State.FIGHTING:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
 		State.CHARGING, State.RESTING:
 			drain = 0.0
@@ -1422,6 +1628,10 @@ func _refresh_action_text() -> void:
 			next_text = "Moving to chat"
 		State.SOCIALIZING:
 			next_text = "Chatting"
+		State.FIGHTING:
+			next_text = "Fighting"
+		State.DEAD:
+			next_text = ""
 	if _action_text == next_text:
 		return
 	_action_text = next_text
@@ -1446,6 +1656,10 @@ func _draw() -> void:
 	draw_rect(Rect2(bar_pos, bar_size), BATTERY_BG)
 	var fill_color: Color = BATTERY_LOW if _energy <= ENERGY_LOW else BATTERY_GOOD
 	draw_rect(Rect2(bar_pos, Vector2(bar_size.x * (_energy / ENERGY_MAX), bar_size.y)), fill_color)
+	if stats != null and stats.hp < stats.max_hp:
+		var hp_pos := Vector2(-BODY_RADIUS, BODY_RADIUS + 6.0)
+		draw_rect(Rect2(hp_pos, bar_size), BATTERY_BG)
+		draw_rect(Rect2(hp_pos, Vector2(bar_size.x * stats.hp_ratio(), bar_size.y)), Color(0.95, 0.30, 0.30))
 
 
 func _draw_action_bubble() -> void:

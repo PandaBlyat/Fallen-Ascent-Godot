@@ -25,6 +25,19 @@ extends Node
 ##                                      or changes static objects.
 ##   visibility_changed(bounds)       - emitted after FogOfWar changes sight.
 ##                                      Payload: changed grid bounds only.
+##   bot_inspected(node, faction)     - emitted by SelectionController when the
+##                                      player single-clicks a neutral/hostile.
+##                                      Payload: Node (NeutralBot or HostileBot)
+##                                      or null to clear; int faction id
+##                                      (1=neutral, 2=hostile).
+##   combat_hit(attacker, target, dmg)- emitted after a successful melee swing.
+##                                      Payload: Node, Node, float.
+##   combatant_died(node, faction)    - emitted just before a downed combatant
+##                                      is queue_freed. Payload: Node, int
+##                                      faction id (0=colony, 1=neutral,
+##                                      2=hostile).
+##   hostile_spawned(node)            - emitted by HostileSpawner after a new
+##                                      hostile is added to the tree.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -42,4 +55,8 @@ signal workers_selected(workers: Array)
 signal structure_selected(id: int, anchor: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
+signal bot_inspected(node: Node, faction: int)
+signal combat_hit(attacker: Node, target: Node, damage: float)
+signal combatant_died(node: Node, faction: int)
+signal hostile_spawned(node: Node)
 @warning_ignore_restore("unused_signal")

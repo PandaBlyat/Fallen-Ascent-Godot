@@ -44,6 +44,12 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       avoid duplicate path queries, but hundreds of ambient bots should move
       through a manager with batched thinking and `MultiMeshInstance2D` or
       another shared render path instead of one drawing `Node2D` per bot.
+- [ ] **Combat follow-ups.** Object pool for hostiles once cap raised above
+      ~30; ranged weapons (currently melee only); corpse → scrap drops on
+      death; targeted hit zones replacing the random-limb roll inside
+      `Worker._damage_limb`; a `CombatDirector` autoload to globally
+      throttle attack resolution; spatial grid for perception scans;
+      faction designer for tunable hostile waves.
 - [ ] **Pathfinder region-shift optimization.** Today, when the camera pans
       and the AStarGrid2D's bounding region shifts (even by one chunk), the
       grid is fully rebuilt because `AStarGrid2D.region = ...` then `update()`
@@ -75,7 +81,14 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       **Implemented v1:** Repair Bench, Parts Loom, Maintenance Dock, and
       Calibration Shrine definitions; Parts Loom and Maintenance Dock consume
       inputs during production/upkeep, Repair Bench consumes repair materials.
-- [ ] **Combat + hostile entities.** Implies factions, damage, line-of-sight.
+- [x] **Combat + hostile entities.** Melee, knockback, stun, reactive worker
+      defense, hostile spawner with cap, neutral flee+retaliate.
+      **Implemented v1:** `CombatStats` Resource + `CombatService` static
+      melee resolver; `HostileBot` + `HostileSpawner` (cap 12, interval ~20s,
+      ≥30 tiles from origin); `LineOfSight` util shared with FogOfWar;
+      neutrals raycast every 0.35–0.55s and flee; workers add `FIGHTING`
+      state + `command_attack` direct order; click hostile/neutral opens
+      bottom-center inspect card.
 - [x] **More item kinds for real gameplay.** `Item.Kind.COMPONENT` exists
       as a placeholder alongside `SCRAP`, but nothing produces components
       yet. Mining could rarely drop one; recipes / build costs that mix

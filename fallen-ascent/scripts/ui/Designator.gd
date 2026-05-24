@@ -27,16 +27,20 @@ enum Mode {
 	BUILD_PARTS_LOOM,
 	BUILD_MAINTENANCE_DOCK,
 	BUILD_CALIBRATION_SHRINE,
+	BUILD_MEDITATION_PAD,
+	BUILD_SENTIENCE_CRADLE,
 	DESIGNATE_DOCK_ROOM,
+	DESIGNATE_MEDITATION_CHAMBER,
+	DESIGNATE_MECHANIC_ROOM,
 	REMOVE_ROOM,
 }
 
-const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.18)
-const ZONE_PREVIEW_BORDER := Color(0.4, 0.85, 0.5, 0.6)
-const ORDER_PREVIEW_FILL := Color(0.85, 0.72, 0.35, 0.16)
-const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.65)
-const ROOM_PREVIEW_FILL := Color(0.45, 0.62, 0.98, 0.18)
-const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.7)
+const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.09)
+const ZONE_PREVIEW_BORDER := Color(0.4, 0.85, 0.5, 0.40)
+const ORDER_PREVIEW_FILL := Color(0.85, 0.72, 0.35, 0.08)
+const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.40)
+const ROOM_PREVIEW_FILL := Color(0.45, 0.62, 0.98, 0.09)
+const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.45)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -99,9 +103,13 @@ func mode_label() -> String:
 		Mode.BUILD_DOCK: return "BUILD DOCK"
 		Mode.BUILD_REPAIR_BENCH: return "BUILD REPAIR BENCH"
 		Mode.BUILD_PARTS_LOOM: return "BUILD PARTS LOOM"
-		Mode.BUILD_MAINTENANCE_DOCK: return "BUILD MAINTENANCE DOCK"
+		Mode.BUILD_MAINTENANCE_DOCK: return "BUILD MECHANIC DOCK"
 		Mode.BUILD_CALIBRATION_SHRINE: return "BUILD CALIBRATION SHRINE"
+		Mode.BUILD_MEDITATION_PAD: return "BUILD MEDITATION PAD"
+		Mode.BUILD_SENTIENCE_CRADLE: return "BUILD SENTIENCE CRADLE"
 		Mode.DESIGNATE_DOCK_ROOM: return "DOCK ROOM"
+		Mode.DESIGNATE_MEDITATION_CHAMBER: return "MEDITATION CHAMBER"
+		Mode.DESIGNATE_MECHANIC_ROOM: return "MECHANIC ROOM"
 		Mode.REMOVE_ROOM: return "REMOVE ROOM"
 		_: return "-"
 
@@ -189,7 +197,9 @@ func _on_right_press() -> void:
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
 		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE, \
-		Mode.DESIGNATE_DOCK_ROOM, Mode.REMOVE_ROOM:
+		Mode.BUILD_MEDITATION_PAD, Mode.BUILD_SENTIENCE_CRADLE, \
+		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_MEDITATION_CHAMBER, \
+		Mode.DESIGNATE_MECHANIC_ROOM, Mode.REMOVE_ROOM:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -220,6 +230,10 @@ func _on_right_release() -> void:
 					_apply_remove_stockpile_click(cell)
 			Mode.DESIGNATE_DOCK_ROOM:
 				_apply_dock_room(cells)
+			Mode.DESIGNATE_MEDITATION_CHAMBER:
+				_apply_meditation_chamber(cells)
+			Mode.DESIGNATE_MECHANIC_ROOM:
+				_apply_mechanic_room(cells)
 			Mode.REMOVE_ROOM:
 				for cell in cells:
 					_apply_remove_room(cell)
@@ -276,6 +290,18 @@ func _apply_dock_room(cells: Array[Vector2i]) -> void:
 	_room_manager.call("create_dock_room", cells)
 
 
+func _apply_meditation_chamber(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_meditation_chamber"):
+		return
+	_room_manager.call("create_meditation_chamber", cells)
+
+
+func _apply_mechanic_room(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_mechanic_room"):
+		return
+	_room_manager.call("create_mechanic_room", cells)
+
+
 func _apply_remove_room(grid: Vector2i) -> void:
 	if _room_manager == null or not _room_manager.has_method("remove_room_at"):
 		return
@@ -306,6 +332,10 @@ func _blueprint_for_mode() -> int:
 			return BuildBlueprint.Id.MAINTENANCE_DOCK
 		Mode.BUILD_CALIBRATION_SHRINE:
 			return BuildBlueprint.Id.CALIBRATION_SHRINE
+		Mode.BUILD_MEDITATION_PAD:
+			return BuildBlueprint.Id.MEDITATION_PAD
+		Mode.BUILD_SENTIENCE_CRADLE:
+			return BuildBlueprint.Id.SENTIENCE_CRADLE
 		_:
 			return BuildBlueprint.Id.WALL
 
@@ -322,7 +352,9 @@ func _is_build_mode() -> bool:
 		or _mode == Mode.BUILD_REPAIR_BENCH \
 		or _mode == Mode.BUILD_PARTS_LOOM \
 		or _mode == Mode.BUILD_MAINTENANCE_DOCK \
-		or _mode == Mode.BUILD_CALIBRATION_SHRINE
+		or _mode == Mode.BUILD_CALIBRATION_SHRINE \
+		or _mode == Mode.BUILD_MEDITATION_PAD \
+		or _mode == Mode.BUILD_SENTIENCE_CRADLE
 
 
 func _world_to_grid(world_pos: Vector2) -> Vector2i:
@@ -357,11 +389,13 @@ func _draw() -> void:
 		if _mode == Mode.STOCKPILE:
 			fill = ZONE_PREVIEW_FILL
 			border = ZONE_PREVIEW_BORDER
-		elif _mode == Mode.DESIGNATE_DOCK_ROOM:
+		elif _mode == Mode.DESIGNATE_DOCK_ROOM \
+				or _mode == Mode.DESIGNATE_MEDITATION_CHAMBER \
+				or _mode == Mode.DESIGNATE_MECHANIC_ROOM:
 			fill = ROOM_PREVIEW_FILL
 			border = ROOM_PREVIEW_BORDER
 		draw_rect(r, fill)
-		draw_rect(r, border, false, 1.0)
+		draw_rect(r, border, false, 0.8)
 	if _is_build_mode():
 		_draw_build_ghost(_blueprint_for_mode(), _hover_grid)
 
@@ -370,10 +404,11 @@ func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
 	var valid: bool = _structure_manager != null \
 		and _structure_manager.can_place_blueprint(blueprint_id, anchor, _build_rotation) \
 		and (_fog == null or _fog.is_explored(anchor))
-	var fill: Color = BuildBlueprint.ghost_color(blueprint_id) if valid else Color(0.95, 0.2, 0.2, 0.38)
-	var border: Color = Color(fill.r, fill.g, fill.b, 0.9)
+	var raw_fill: Color = BuildBlueprint.ghost_color(blueprint_id) if valid else Color(0.95, 0.2, 0.2, 0.38)
+	var fill: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, raw_fill.a * 0.55)
+	var border: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, 0.55)
 	for cell in BuildBlueprint.footprint(blueprint_id, anchor, _build_rotation):
 		var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(rect, fill)
-		draw_rect(rect, border, false, 1.0)
+		draw_rect(rect, border, false, 0.8)

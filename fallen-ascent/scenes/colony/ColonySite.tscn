@@ -40,6 +40,12 @@ script = ExtResource("12_structures")
 chunk_manager_path = NodePath("../ChunkManager")
 items_root_path = NodePath("../Items")
 stockpile_manager_path = NodePath("../StockpileManager")
+workers_root_path = NodePath("../Workers")
+job_board_path = NodePath("../JobBoard")
+pathfinder_path = NodePath("../Pathfinder")
+fog_of_war_path = NodePath("../FogOfWar")
+room_manager_path = NodePath("../RoomManager")
+colony_site_path = NodePath("..")
 
 [node name="RoomManager" type="Node2D" parent="."]
 script = ExtResource("17_rooms")

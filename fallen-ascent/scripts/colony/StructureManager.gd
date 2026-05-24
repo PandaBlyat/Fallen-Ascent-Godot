@@ -18,14 +18,28 @@ const REPAIR_BENCH_COLOR := Color(0.95, 0.52, 0.38, 0.95)
 const PARTS_LOOM_COLOR := Color(0.58, 0.95, 0.82, 0.95)
 const MAINTENANCE_DOCK_COLOR := Color(0.98, 0.82, 0.42, 0.95)
 const CALIBRATION_SHRINE_COLOR := Color(0.72, 0.58, 1.0, 0.95)
+const MEDITATION_PAD_COLOR := Color(0.62, 0.78, 1.0, 0.95)
+const SENTIENCE_CRADLE_COLOR := Color(0.95, 0.88, 0.55, 0.95)
 
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
 @export var stockpile_manager_path: NodePath
+@export var workers_root_path: NodePath
+@export var job_board_path: NodePath
+@export var pathfinder_path: NodePath
+@export var fog_of_war_path: NodePath
+@export var room_manager_path: NodePath
+@export var colony_site_path: NodePath
 
 var _chunk_manager: ChunkManager
 var _items_root: Node2D
 var _stockpile_manager: StockpileManager
+var _workers_root: Node2D
+var _job_board: JobBoard
+var _pathfinder: Pathfinder
+var _fog: FogOfWar
+var _room_manager: Node
+var _colony_site: Node
 var _cell_to_structure: Dictionary = {}          ## Vector2i -> Dictionary
 var _structures: Array[Dictionary] = []
 var _accum: float = 0.0
@@ -35,6 +49,12 @@ func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_items_root = get_node(items_root_path) as Node2D
 	_stockpile_manager = get_node(stockpile_manager_path) as StockpileManager
+	_workers_root = get_node_or_null(workers_root_path) as Node2D
+	_job_board = get_node_or_null(job_board_path) as JobBoard
+	_pathfinder = get_node_or_null(pathfinder_path) as Pathfinder
+	_fog = get_node_or_null(fog_of_war_path) as FogOfWar
+	_room_manager = get_node_or_null(room_manager_path)
+	_colony_site = get_node_or_null(colony_site_path)
 	if _chunk_manager != null:
 		_chunk_manager.set_structure_manager(self)
 
@@ -110,7 +130,7 @@ func structure_status_by_anchor(anchor: Vector2i) -> Dictionary:
 func consume_repair_materials() -> bool:
 	if _consume_recipe({Item.Kind.SCRAP: 1}):
 		return true
-	return _consume_recipe({Item.Kind.COMPONENT: 1})
+	return _consume_recipe({Item.Kind.MECHANISM: 1})
 
 
 func nearest_structure_anchor(ids: Array, from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
@@ -158,7 +178,8 @@ func blocks_cell(grid: Vector2i) -> bool:
 		or id == BuildBlueprint.Id.FABRICATOR \
 		or id == BuildBlueprint.Id.REPAIR_BENCH \
 		or id == BuildBlueprint.Id.PARTS_LOOM \
-		or id == BuildBlueprint.Id.MAINTENANCE_DOCK
+		or id == BuildBlueprint.Id.MAINTENANCE_DOCK \
+		or id == BuildBlueprint.Id.SENTIENCE_CRADLE
 
 
 func reveal_sources() -> Array[Dictionary]:
@@ -192,6 +213,10 @@ func _process(delta: float) -> void:
 		structure["timer"] = float(structure["timer"]) + tick
 		if float(structure["timer"]) < interval:
 			continue
+		if id == BuildBlueprint.Id.SENTIENCE_CRADLE:
+			if not _try_complete_cradle(structure, interval):
+				continue
+			continue
 		if not _consume_recipe(BuildBlueprint.production_inputs(id)):
 			structure["timer"] = interval
 			structure["blocked"] = "missing input: " + BuildBlueprint.ingredients_text_from(BuildBlueprint.production_inputs(id))
@@ -204,6 +229,42 @@ func _process(delta: float) -> void:
 				continue
 		structure["timer"] = 0.0
 		structure["blocked"] = ""
+
+
+func _try_complete_cradle(structure: Dictionary, interval: float) -> bool:
+	# Verify there is somewhere to land a bot before consuming inputs — saves the
+	# refined parts from being spent on a cycle that can't deliver.
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	var spawn_target: Vector2i = _cradle_spawn_cell(structure)
+	if spawn_target == Pathfinder.UNREACHABLE:
+		structure["timer"] = interval
+		structure["blocked"] = "no spawn cell adjacent"
+		return false
+	if not _consume_recipe(BuildBlueprint.production_inputs(BuildBlueprint.Id.SENTIENCE_CRADLE)):
+		structure["timer"] = interval
+		structure["blocked"] = "missing input: " + BuildBlueprint.ingredients_text_from(BuildBlueprint.production_inputs(BuildBlueprint.Id.SENTIENCE_CRADLE))
+		return false
+	var worker: Worker = WorkerSpawner.spawn_one_at(
+		anchor, _chunk_manager, _job_board, _pathfinder,
+		_stockpile_manager, _items_root, _workers_root,
+		_colony_site, _fog, self, _room_manager,
+	)
+	if worker == null:
+		structure["timer"] = interval
+		structure["blocked"] = "spawn failed"
+		return false
+	EventBus.worker_spawned_from_cradle.emit(worker)
+	structure["timer"] = 0.0
+	structure["blocked"] = ""
+	return true
+
+
+func _cradle_spawn_cell(structure: Dictionary) -> Vector2i:
+	# Reuse the output-cell helper as a first try, then any walkable adjacent cell.
+	var fallback: Vector2i = _first_output_cell(structure)
+	if fallback != Pathfinder.UNREACHABLE:
+		return fallback
+	return _walkable_neighbor_of_cells(structure["cells"] as Array)
 
 
 func _spawn_item_from(structure: Dictionary, kind: int) -> bool:
@@ -254,11 +315,11 @@ func _walkable_neighbor_of_cells(cells: Array) -> Vector2i:
 func _roll_output(id: int) -> int:
 	match id:
 		BuildBlueprint.Id.EXTRACTOR:
-			return Item.Kind.COMPONENT if randf() < 0.65 else Item.Kind.SUBSTRATE
+			return Item.Kind.MECHANISM if randf() < 0.65 else Item.Kind.PLATING
 		BuildBlueprint.Id.FABRICATOR:
-			return Item.Kind.POWER_CELL if randf() < 0.25 else Item.Kind.CIRCUIT
+			return Item.Kind.CHARGE_CELL if randf() < 0.25 else Item.Kind.DATACORE
 		BuildBlueprint.Id.PARTS_LOOM:
-			return Item.Kind.POWER_CELL if randf() < 0.18 else Item.Kind.COMPONENT
+			return Item.Kind.CHARGE_CELL if randf() < 0.18 else Item.Kind.MECHANISM
 		_:
 			return -1
 
@@ -364,5 +425,9 @@ static func _color_for(id: int) -> Color:
 			return MAINTENANCE_DOCK_COLOR
 		BuildBlueprint.Id.CALIBRATION_SHRINE:
 			return CALIBRATION_SHRINE_COLOR
+		BuildBlueprint.Id.MEDITATION_PAD:
+			return MEDITATION_PAD_COLOR
+		BuildBlueprint.Id.SENTIENCE_CRADLE:
+			return SENTIENCE_CRADLE_COLOR
 		_:
 			return Color.WHITE

@@ -33,6 +33,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       should store **diffs** vs. regenerated chunks, not raw chunks. Currently
       a mined wall reverts to wall when the chunk unloads and reloads — fine
       for the prototype loop, not fine for a real run.
+- [ ] **Persist TechManager state** (wisdom + unlocked techs) when the save
+      system is built. Use the ConfigFile pattern from SettingsManager as
+      the interim shape: a `[research]` section with `wisdom` and an array
+      of unlocked tech ids.
 - [ ] **Chunk-diff cache.** A `Dictionary[Vector2i, Dictionary[Vector2i, int]]`
       (chunk → local → tile) inside `ChunkManager` so mined cells persist
       across unload/reload during a session, even before the save system.
@@ -61,6 +65,29 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       wipes all solidness. Either grow the region without ever shrinking,
       or keep our own solidness map and re-apply after `update()` only for
       cells in the kept range.
+
+## Tech tree & economy follow-ups
+
+- [ ] **Real art for new placeholder structures.** Meditation Pad and
+      Sentience Cradle currently reuse the existing flat-color squares in
+      the multi-tile atlas; the wisdom badge and tech-tab icon also reuse
+      existing UI atlas cells. Author dedicated cells in
+      `resources/tiles/placeholder_atlas_multi_tile.png` and
+      `resources/ui/placeholder_ui_atlas.png` when the visual identity firms
+      up. (Per CLAUDE.md placeholder-atlas rule.)
+- [ ] **Battery Bank** (Power Grid III) and **Long-range Scanner**
+      (Sensors II) are stubs — nodes exist in the tech tree with wisdom
+      cost but no BuildBlueprint id wired. Add the structures + recipes
+      next pass.
+- [ ] **Mechanic Room limb-heal worker behavior.** See the rooms section.
+- [ ] **Tune the wisdom curve.** The 0.6 / sec base rate (+25% with Focused
+      Mind) plus 8-14 s sessions was eyeballed. Once a real playthrough
+      exists, tune session lengths, base rate, and tech costs together so
+      Refining II + Power Grid II + Mechanic Dock + Sentience Forge lands
+      around the intended several-hour mark.
+- [ ] **Wisdom decay / mood gate.** Currently meditating is free and
+      always positive. Consider a fatigue mechanic (consecutive sessions
+      yield less) once players are exploiting it.
 
 ## Gameplay loop expansion
 
@@ -151,9 +178,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       open compact card panels. Worker cards show stats/state/current job;
       structure cards show production output, interval, current timer progress,
       blocked output state, and required inputs once crafting is added.
-- [ ] **Audio settings** — master / music / SFX volume sliders in
-      `SettingsMenu` once we have audio. Wire to AudioServer bus volumes
-      and persist via `SettingsManager` (add a `[audio]` section).
+- [x] **Audio settings** — master / music / SFX volume sliders in
+      `SettingsMenu`. Wired to AudioServer Master/Music/SFX buses and
+      persisted via `SettingsManager` (`[audio]` section in
+      `user://settings.cfg`).
 - [ ] **Keybinding rebinder** — UI to remap actions in `project.godot`'s
       InputMap at runtime, saved per-action to `user://settings.cfg`.
 - [ ] **Return to Main Menu** action — from ColonySite / WorldMap, route
@@ -181,13 +209,20 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 ## Rooms / Mood (v1 landed, more to do)
 
 - [ ] **Room enclosure check.** `RoomManager.is_room_valid` currently only
-      enforces a minimum cell count and the presence of a Dock (or Maint Dock)
-      inside. Rimworld-style enclosure detection (walls on every external
-      border, no leak to outside floor) is not implemented. Right now any
-      painted floor area with a Dock counts as a valid room.
-- [ ] **Multiple room kinds.** Only DOCK_ROOM exists. Future kinds:
-      workshop, mess, recreation. Add to `RoomManager.Kind` and add a tab
-      button per kind.
+      enforces a minimum cell count and the presence of the required
+      structure (Dock / Meditation Pad / Mechanic Dock) inside. Rimworld-style
+      enclosure detection (walls on every external border, no leak to outside
+      floor) is not implemented. Affects DOCK_ROOM, MEDITATION_CHAMBER, and
+      MECHANIC_ROOM. The MECHANIC_ROOM design intends strict enclosure;
+      defer enclosure to a follow-up flood-fill pass.
+- [ ] **Mechanic Room limb-heal effect.** The room + Mechanic Dock gating now
+      exists, but assigned worker behavior to heal occupants' limbs is not
+      wired. Worker should poll occupants periodically and apply
+      `_repair_limbs` to whoever sits inside the room.
+- [x] **Multiple room kinds.** Only DOCK_ROOM existed; added MEDITATION_CHAMBER
+      and MECHANIC_ROOM. Each kind validates against a specific required
+      structure. Future kinds (workshop, mess, recreation) can follow the
+      same pattern in `RoomManager.Kind`.
 - [ ] **Per-worker assigned dock visualization.** The HUD shows "needs:
       satisfied" / "needs dock room" but doesn't draw a link from the worker
       to their owned room.

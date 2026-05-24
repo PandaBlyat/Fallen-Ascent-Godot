@@ -10,14 +10,18 @@ extends Node2D
 ##   4. Dropped: reparented to the StockpileZone, visible again, occupant
 ##      slot recorded on the zone. Same-kind stacks merge up to MAX_STACK.
 ##
+## Tier story (read left→right: raw → structural → mechanical → digital → energy):
+##   SCRAP, PLATING, MECHANISM, DATACORE, CHARGE_CELL.
+## Wisdom is intentionally NOT here — it is an abstract counter on TechManager.
+##
 
-enum Kind { SCRAP, COMPONENT, SUBSTRATE, CIRCUIT, POWER_CELL }
+enum Kind { SCRAP, MECHANISM, PLATING, DATACORE, CHARGE_CELL }
 
 const SCRAP_COLOR := Color(0.85, 0.75, 0.25)
-const COMPONENT_COLOR := Color(0.55, 0.75, 0.95)
-const SUBSTRATE_COLOR := Color(0.7, 0.95, 0.55)
-const CIRCUIT_COLOR := Color(0.45, 1.0, 0.82)
-const POWER_CELL_COLOR := Color(0.95, 0.45, 1.0)
+const MECHANISM_COLOR := Color(0.55, 0.75, 0.95)
+const PLATING_COLOR := Color(0.7, 0.95, 0.55)
+const DATACORE_COLOR := Color(0.45, 1.0, 0.82)
+const CHARGE_CELL_COLOR := Color(0.95, 0.45, 1.0)
 const SIZE_PX: float = 8.0
 const STACK_FONT_SIZE: int = 10
 const STACK_OUTLINE_SIZE: int = 2
@@ -65,48 +69,48 @@ func add_to_stack(amount: int) -> int:
 
 func color() -> Color:
 	match kind:
-		Kind.COMPONENT: return COMPONENT_COLOR
-		Kind.SUBSTRATE: return SUBSTRATE_COLOR
-		Kind.CIRCUIT: return CIRCUIT_COLOR
-		Kind.POWER_CELL: return POWER_CELL_COLOR
+		Kind.MECHANISM: return MECHANISM_COLOR
+		Kind.PLATING: return PLATING_COLOR
+		Kind.DATACORE: return DATACORE_COLOR
+		Kind.CHARGE_CELL: return CHARGE_CELL_COLOR
 		_: return SCRAP_COLOR
 
 
 static func kind_color(k: int) -> Color:
 	match k:
-		Kind.COMPONENT: return COMPONENT_COLOR
-		Kind.SUBSTRATE: return SUBSTRATE_COLOR
-		Kind.CIRCUIT: return CIRCUIT_COLOR
-		Kind.POWER_CELL: return POWER_CELL_COLOR
+		Kind.MECHANISM: return MECHANISM_COLOR
+		Kind.PLATING: return PLATING_COLOR
+		Kind.DATACORE: return DATACORE_COLOR
+		Kind.CHARGE_CELL: return CHARGE_CELL_COLOR
 		_: return SCRAP_COLOR
 
 
 static func kind_name(k: int) -> String:
 	match k:
-		Kind.COMPONENT:
-			return "component"
-		Kind.SUBSTRATE:
-			return "substrate"
-		Kind.CIRCUIT:
-			return "circuit"
-		Kind.POWER_CELL:
-			return "power cell"
+		Kind.MECHANISM:
+			return "mechanism"
+		Kind.PLATING:
+			return "plating"
+		Kind.DATACORE:
+			return "datacore"
+		Kind.CHARGE_CELL:
+			return "charge cell"
 		_:
 			return "scrap"
 
 
 static func kind_description(k: int) -> String:
 	match k:
-		Kind.COMPONENT:
-			return "precision actuator and frame part"
-		Kind.SUBSTRATE:
-			return "raw structural feedstock"
-		Kind.CIRCUIT:
-			return "logic board for machines and calibration"
-		Kind.POWER_CELL:
-			return "portable charge reservoir"
+		Kind.MECHANISM:
+			return "moving-part assembly: actuators, joints, frame links"
+		Kind.PLATING:
+			return "refined structural sheet"
+		Kind.DATACORE:
+			return "logic / data substrate for sensors and machine cognition"
+		Kind.CHARGE_CELL:
+			return "portable stored power"
 		_:
-			return "salvaged base material"
+			return "loose salvaged metal"
 
 
 static func stack_label(k: int, amount: int) -> String:

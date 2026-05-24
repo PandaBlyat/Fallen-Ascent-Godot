@@ -30,6 +30,8 @@ enum State {
 	REPAIRING,
 	MOVING_TO_SOCIALIZE,
 	SOCIALIZING,
+	MOVING_TO_MEDITATE,
+	MEDITATING,
 	FIGHTING,
 	DEAD,
 }
@@ -47,7 +49,7 @@ const ARRIVE_EPSILON_PX: float = 1.0
 const IDLE_RETRY_SECONDS: float = 0.5
 const BODY_RADIUS: float = 5.0
 const BODY_COLOR := Color(0.85, 0.85, 0.95)
-const SELECTION_COLOR := Color(1.0, 0.95, 0.4, 0.9)
+const SELECTION_COLOR := Color(1.0, 0.95, 0.4, 0.55)
 const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
 const MAX_CARRY_STACK: int = 4
 const ENERGY_MAX: float = 100.0
@@ -90,6 +92,8 @@ const ACTION_HISTORY_LIMIT: int = 96
 const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -24.0)
 const BLOCKED_ACTION_SECONDS: float = 2.0
 const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
+const WISDOM_PER_SEC: float = 0.6
+const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
 
 var _state: int = State.IDLE
 var _job: Job = null
@@ -115,6 +119,7 @@ var _activity_target: Vector2i = Vector2i.ZERO
 var _activity_partner: Worker = null
 var _entity_atlas: Texture2D
 var _action_history: Array[String] = []
+var _wisdom_carry: float = 0.0
 var _history_index: int = 0
 var _limbs: Dictionary = {}
 var _teleport_cooldown: float = 0.0
@@ -473,6 +478,10 @@ func state_label() -> String:
 			return "moving to chat"
 		State.SOCIALIZING:
 			return "chatting"
+		State.MOVING_TO_MEDITATE:
+			return "moving to meditate"
+		State.MEDITATING:
+			return "meditating"
 		State.FIGHTING:
 			return "fighting"
 		State.DEAD:
@@ -632,6 +641,27 @@ func _process(delta: float) -> void:
 				if _activity_partner != null and is_instance_valid(_activity_partner):
 					_remember("finished chat with %s" % _activity_partner.display_name())
 				_resume_after_chat()
+		State.MOVING_TO_MEDITATE:
+			if _advance_path(delta):
+				_state = State.MEDITATING
+				_activity_timer = randf_range(8.0, 14.0)
+				_wisdom_carry = 0.0
+				_remember("began meditating")
+		State.MEDITATING:
+			_activity_timer -= delta
+			var rate: float = WISDOM_PER_SEC
+			if TechManager != null and TechManager.is_unlocked(TechDatabase.FOCUSED_MIND):
+				rate *= WISDOM_FOCUSED_MULTIPLIER
+			_wisdom_carry += rate * delta
+			# Small mood lift while meditating.
+			_mood = clampf(_mood + 0.4 * delta, 0.0, MOOD_MAX)
+			if _activity_timer <= 0.0:
+				if TechManager != null and _wisdom_carry > 0.0:
+					TechManager.add_wisdom(_wisdom_carry)
+					_remember("gained %.1f wisdom" % _wisdom_carry)
+				_wisdom_carry = 0.0
+				_state = State.IDLE
+				_idle_cooldown = randf_range(0.6, 2.0)
 		State.FIGHTING:
 			_process_fighting(delta)
 	_check_teleporter()
@@ -718,15 +748,19 @@ func _choose_idle_behavior() -> void:
 	if _mental_tiredness >= 55.0 and _begin_structure_activity([BuildBlueprint.Id.DOCK], State.MOVING_TO_REST):
 		return
 	var roll: float = randf()
-	if roll < 0.18:
+	if roll < 0.12:
+		# Meditation: low-priority wisdom generator. Skipped silently if no pad exists.
+		if not _begin_structure_activity([BuildBlueprint.Id.MEDITATION_PAD], State.MOVING_TO_MEDITATE):
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.26:
 		_idle_cooldown = randf_range(1.2, 4.0)
-	elif roll < 0.36:
+	elif roll < 0.42:
 		if not _begin_roam(false):
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.52:
+	elif roll < 0.56:
 		if not _begin_roam(true):
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.66:
+	elif roll < 0.68:
 		var outlet: Vector2i = _chunk_manager.nearest_outlet(current_grid(), _pathfinder, _fog, self)
 		if outlet != Pathfinder.UNREACHABLE and _energy < ENERGY_MAX:
 			_begin_charge(outlet)
@@ -1280,21 +1314,21 @@ func _complete_mine(mine: MineJob) -> void:
 	if _colony_site != null and _colony_site.has_method("spawn_item_at"):
 		_colony_site.call("spawn_item_at", mine.target, Item.Kind.SCRAP)
 		if randf() < 0.45:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.SUBSTRATE)
+			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
 		if mined_tile == TerrainGenerator.TILE_SERVICE_CORE:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.SUBSTRATE)
+			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
 			if randf() < 0.7:
-				_colony_site.call("spawn_item_at", mine.target, Item.Kind.COMPONENT)
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
 			if randf() < 0.35:
-				_colony_site.call("spawn_item_at", mine.target, Item.Kind.CIRCUIT)
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.DATACORE)
 			if randf() < 0.15:
-				_colony_site.call("spawn_item_at", mine.target, Item.Kind.POWER_CELL)
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.CHARGE_CELL)
 		elif mined_tile == TerrainGenerator.TILE_RICH_WALL:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.SUBSTRATE)
+			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
 			if randf() < 0.35:
-				_colony_site.call("spawn_item_at", mine.target, Item.Kind.CIRCUIT)
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.DATACORE)
 		elif randf() < 0.08:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.COMPONENT)
+			_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
 	_remember("mined %d,%d" % [mine.target.x, mine.target.y])
 	_finish_job()
 
@@ -1459,7 +1493,8 @@ func _replan() -> void:
 				or _state == State.WANDERING \
 				or _state == State.MOVING_TO_REST \
 				or _state == State.MOVING_TO_REPAIR \
-				or _state == State.MOVING_TO_SOCIALIZE) and _path.size() > 0:
+				or _state == State.MOVING_TO_SOCIALIZE \
+				or _state == State.MOVING_TO_MEDITATE) and _path.size() > 0:
 			# Try to re-path to the final waypoint.
 			var dest_pixel: Vector2 = _path[_path.size() - 1]
 			var dest: Vector2i = Vector2i(
@@ -1689,11 +1724,12 @@ func _update_energy(delta: float) -> void:
 		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
 		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
 		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
-		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE:
+		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE, \
+		State.MOVING_TO_MEDITATE:
 			drain = ENERGY_MOVE_DRAIN_PER_SEC
 		State.WORKING, State.BUILDING, State.FIGHTING:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
-		State.CHARGING, State.RESTING:
+		State.CHARGING, State.RESTING, State.MEDITATING:
 			drain = 0.0
 	_energy = clampf(_energy - drain * delta, 0.0, ENERGY_MAX)
 	queue_redraw()
@@ -1705,7 +1741,8 @@ func _update_body_stats(delta: float) -> void:
 		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
 		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
 		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
-		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE:
+		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE, \
+		State.MOVING_TO_MEDITATE:
 			condition_decay = CONDITION_MOVE_DECAY_PER_SEC * delta
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
 		State.WORKING, State.BUILDING:
@@ -1713,6 +1750,9 @@ func _update_body_stats(delta: float) -> void:
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_WORK_RISE_PER_SEC * delta)
 		State.RESTING:
 			pass
+		State.MEDITATING:
+			# Meditation slowly lowers mental exhaustion as a side benefit.
+			_mental_tiredness = maxf(0.0, _mental_tiredness - REST_RECOVERY_PER_SEC * 0.4 * delta)
 		_:
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
 	# Social slowly decays unless actively chatting.
@@ -1898,6 +1938,10 @@ func _refresh_action_text() -> void:
 				next_text = "Moving to chat"
 			State.SOCIALIZING:
 				next_text = "Chatting"
+			State.MOVING_TO_MEDITATE:
+				next_text = "Moving to meditate"
+			State.MEDITATING:
+				next_text = "Meditating"
 			State.FIGHTING:
 				next_text = "Fighting"
 			State.DEAD:
@@ -1914,7 +1958,7 @@ func _draw() -> void:
 	_draw_action_bubble()
 	if _selected:
 		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
-		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.5)
+		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.0)
 	if _entity_atlas != null:
 		draw_texture_rect_region(_entity_atlas, Rect2(Vector2(-8, -8), Vector2(16, 16)), BOT_REGION)
 	else:

@@ -30,6 +30,8 @@ const ICON_REPAIR_BENCH := ICON_FABRICATOR
 const ICON_PARTS_LOOM := ICON_FABRICATOR
 const ICON_MAINTENANCE_DOCK := ICON_CHARGE_PAD
 const ICON_CALIBRATION_SHRINE := ICON_SENSOR
+const ICON_MEDITATION_PAD := ICON_SENSOR
+const ICON_SENTIENCE_CRADLE := ICON_FABRICATOR
 
 # Colors for UI accents and states
 const COLOR_BG_DARK := Color(0.055, 0.072, 0.088, 0.94)
@@ -85,8 +87,11 @@ var _command_grid: GridContainer
 var _active_label: Label
 var _workers_label: Label
 var _jobs_label: Label
+var _wisdom_label: Label
 var _resource_labels: Dictionary = {}            ## int -> Label
 var _command_buttons: Dictionary = {}            ## int -> Button
+var _tech_tree_panel: CanvasLayer = null
+const TECH_TREE_SCENE: PackedScene = preload("res://scenes/ui/TechTreePanel.tscn")
 var _selection_panel: PanelContainer
 var _selection_box: HBoxContainer
 var _npc_strip: BoxContainer
@@ -141,6 +146,8 @@ func _connect_signals() -> void:
 	EventBus.build_job_selected.connect(_on_build_job_selected)
 	EventBus.bot_inspected.connect(_on_bot_inspected)
 	EventBus.combatant_died.connect(_on_combatant_died)
+	EventBus.wisdom_changed.connect(_on_wisdom_changed)
+	EventBus.tech_unlocked.connect(_on_tech_unlocked)
 
 
 func _build_layout() -> void:
@@ -193,6 +200,27 @@ func _build_layout() -> void:
 		var badge := _badge_container(label)
 		status_row.add_child(badge)
 		_resource_labels[kind] = label
+
+	# Wisdom (research currency). Color-tinted lavender to read as abstract.
+	_wisdom_label = _status_label("wisdom 0")
+	_wisdom_label.add_theme_color_override("font_color", Color(0.82, 0.78, 1.0))
+	status_row.add_child(_badge_container(_wisdom_label))
+
+	status_row.add_child(_separator())
+
+	var tech_button := Button.new()
+	tech_button.text = "Technology"
+	tech_button.focus_mode = Control.FOCUS_NONE
+	tech_button.custom_minimum_size = Vector2(110, 28)
+	tech_button.add_theme_font_size_override("font_size", 12)
+	tech_button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+	tech_button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+	tech_button.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.14, 0.20, 1.0), COLOR_ACCENT_AMBER))
+	tech_button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	tech_button.add_theme_color_override("font_color", Color(0.82, 0.78, 1.0))
+	tech_button.add_theme_color_override("font_hover_color", Color.WHITE)
+	tech_button.pressed.connect(_open_tech_tree)
+	status_row.add_child(tech_button)
 
 	var npc_panel := PanelContainer.new()
 	npc_panel.name = "NpcStrip"
@@ -399,11 +427,13 @@ func _set_tab(tab: StringName) -> void:
 	_command_buttons.clear()
 
 	for command in _commands_for_tab(tab):
+		var build_id: int = int(command.get("build_id", -1))
 		_add_command_button(
 			int(command["mode"]),
 			command["label"] as String,
 			command["tooltip"] as String,
 			command["icon"] as Vector2i,
+			build_id,
 		)
 	_refresh_mode_buttons()
 
@@ -418,22 +448,26 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 		TAB_ROOMS:
 			return [
 				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
-				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its dock room need satisfier.", "icon": ICON_REMOVE},
+				{"mode": Designator.Mode.DESIGNATE_MEDITATION_CHAMBER, "label": "Meditate", "tooltip": "Meditation Chamber\nMust contain a Meditation Pad.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
+				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nGates limb-heal services for room occupants (heal effect lands later).", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
+				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
 			return [
-				{"mode": Designator.Mode.BUILD_WALL, "label": "Wall", "tooltip": _build_tooltip(BuildBlueprint.Id.WALL), "icon": ICON_WALL},
-				{"mode": Designator.Mode.BUILD_DOOR, "label": "Door", "tooltip": _build_tooltip(BuildBlueprint.Id.DOOR), "icon": ICON_DOOR},
-				{"mode": Designator.Mode.BUILD_LIGHT, "label": "Light", "tooltip": _build_tooltip(BuildBlueprint.Id.LIGHT), "icon": ICON_LIGHT},
-				{"mode": Designator.Mode.BUILD_EXTRACTOR, "label": "Extractor", "tooltip": _build_tooltip(BuildBlueprint.Id.EXTRACTOR), "icon": ICON_EXTRACTOR},
-				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR},
-				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD},
-				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR},
-				{"mode": Designator.Mode.BUILD_DOCK, "label": "Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.DOCK), "icon": ICON_DOCK},
-				{"mode": Designator.Mode.BUILD_REPAIR_BENCH, "label": "Repair", "tooltip": _build_tooltip(BuildBlueprint.Id.REPAIR_BENCH), "icon": ICON_REPAIR_BENCH},
-				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Parts Loom", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM},
-				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Maint Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK},
-				{"mode": Designator.Mode.BUILD_CALIBRATION_SHRINE, "label": "Calibrate", "tooltip": _build_tooltip(BuildBlueprint.Id.CALIBRATION_SHRINE), "icon": ICON_CALIBRATION_SHRINE},
+				{"mode": Designator.Mode.BUILD_WALL, "label": "Wall", "tooltip": _build_tooltip(BuildBlueprint.Id.WALL), "icon": ICON_WALL, "build_id": BuildBlueprint.Id.WALL},
+				{"mode": Designator.Mode.BUILD_DOOR, "label": "Door", "tooltip": _build_tooltip(BuildBlueprint.Id.DOOR), "icon": ICON_DOOR, "build_id": BuildBlueprint.Id.DOOR},
+				{"mode": Designator.Mode.BUILD_LIGHT, "label": "Light", "tooltip": _build_tooltip(BuildBlueprint.Id.LIGHT), "icon": ICON_LIGHT, "build_id": BuildBlueprint.Id.LIGHT},
+				{"mode": Designator.Mode.BUILD_DOCK, "label": "Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.DOCK), "icon": ICON_DOCK, "build_id": BuildBlueprint.Id.DOCK},
+				{"mode": Designator.Mode.BUILD_REPAIR_BENCH, "label": "Repair", "tooltip": _build_tooltip(BuildBlueprint.Id.REPAIR_BENCH), "icon": ICON_REPAIR_BENCH, "build_id": BuildBlueprint.Id.REPAIR_BENCH},
+				{"mode": Designator.Mode.BUILD_MEDITATION_PAD, "label": "Med Pad", "tooltip": _build_tooltip(BuildBlueprint.Id.MEDITATION_PAD), "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
+				{"mode": Designator.Mode.BUILD_EXTRACTOR, "label": "Extractor", "tooltip": _build_tooltip(BuildBlueprint.Id.EXTRACTOR), "icon": ICON_EXTRACTOR, "build_id": BuildBlueprint.Id.EXTRACTOR},
+				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR, "build_id": BuildBlueprint.Id.SENSOR},
+				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD, "build_id": BuildBlueprint.Id.CHARGE_PAD},
+				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Assembly", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM, "build_id": BuildBlueprint.Id.PARTS_LOOM},
+				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Mechanic Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
+				{"mode": Designator.Mode.BUILD_CALIBRATION_SHRINE, "label": "Calibrate", "tooltip": _build_tooltip(BuildBlueprint.Id.CALIBRATION_SHRINE), "icon": ICON_CALIBRATION_SHRINE, "build_id": BuildBlueprint.Id.CALIBRATION_SHRINE},
+				{"mode": Designator.Mode.BUILD_SENTIENCE_CRADLE, "label": "Cradle", "tooltip": _build_tooltip(BuildBlueprint.Id.SENTIENCE_CRADLE), "icon": ICON_SENTIENCE_CRADLE, "build_id": BuildBlueprint.Id.SENTIENCE_CRADLE},
 			]
 		_:
 			return [
@@ -441,11 +475,21 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 			]
 
 
-func _add_command_button(mode: int, label_text: String, tooltip: String, icon_cell: Vector2i) -> void:
+func _add_command_button(mode: int, label_text: String, tooltip: String, icon_cell: Vector2i, build_id: int = -1) -> void:
+	var locked: bool = false
+	var lock_tooltip: String = tooltip
+	if build_id >= 0 and TechManager != null and not TechManager.is_build_unlocked(build_id):
+		locked = true
+		var gate: TechData = TechManager.tech_unlocking(build_id)
+		var gate_name: String = gate.display_name if gate != null else "an unknown tech"
+		lock_tooltip = "Locked — research \"%s\"\n\n%s" % [gate_name, tooltip]
+
 	var button := Button.new()
-	button.text = label_text
-	button.tooltip_text = tooltip
+	button.text = ("[locked] " + label_text) if locked else label_text
+	button.tooltip_text = lock_tooltip
 	button.toggle_mode = true
+	button.disabled = locked
+	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(96, 38)
 	button.icon = _atlas_icon(icon_cell)
 	button.expand_icon = true
@@ -462,11 +506,16 @@ func _add_command_button(mode: int, label_text: String, tooltip: String, icon_ce
 	button.add_theme_stylebox_override("normal", _button_style(base_button_color, COLOR_BORDER_DEFAULT))
 	button.add_theme_stylebox_override("hover", _button_style(hover_button_color, COLOR_ACCENT_MUTED))
 	button.add_theme_stylebox_override("pressed", _button_style(active_button_color, COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("disabled", _button_style(Color(0.08, 0.09, 0.10, 0.85), Color(0.30, 0.32, 0.34, 0.35)))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
-	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
-	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
-	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	if locked:
+		button.add_theme_color_override("font_color", Color(0.50, 0.55, 0.60))
+		button.add_theme_color_override("font_disabled_color", Color(0.50, 0.55, 0.60))
+	else:
+		button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+		button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+		button.add_theme_color_override("font_pressed_color", Color.WHITE)
 
 	button.pressed.connect(_on_command_pressed.bind(mode))
 	_command_grid.add_child(button)
@@ -546,6 +595,32 @@ func _on_combatant_died(node: Node, _faction: int) -> void:
 		_refresh_inspect_card()
 
 
+func _on_wisdom_changed(new_total: float) -> void:
+	if _wisdom_label != null:
+		_wisdom_label.text = "wisdom %d" % int(roundf(new_total))
+
+
+func _on_tech_unlocked(_tech_id: StringName) -> void:
+	# A new tech can flip the unlocked state of structures — re-render the
+	# current tab so locked rows refresh.
+	_set_tab(_current_tab)
+
+
+func _open_tech_tree() -> void:
+	if _tech_tree_panel != null and is_instance_valid(_tech_tree_panel):
+		return
+	var panel: CanvasLayer = TECH_TREE_SCENE.instantiate() as CanvasLayer
+	if panel == null:
+		return
+	_tech_tree_panel = panel
+	panel.tree_exited.connect(_on_tech_tree_closed)
+	add_child(panel)
+
+
+func _on_tech_tree_closed() -> void:
+	_tech_tree_panel = null
+
+
 func _refresh_all() -> void:
 	_refresh_mode_buttons()
 	_refresh_status()
@@ -573,6 +648,8 @@ func _refresh_status() -> void:
 		var label := _resource_labels[kind] as Label
 		if label != null:
 			label.text = "%s %d" % [Item.kind_name(int(kind)), int(counts.get(kind, 0))]
+	if _wisdom_label != null and TechManager != null:
+		_wisdom_label.text = "wisdom %d" % int(roundf(TechManager.wisdom))
 	_refresh_npc_strip()
 	_refresh_selection_panel()
 	_refresh_inspect_card()
@@ -581,10 +658,10 @@ func _refresh_status() -> void:
 func _resource_counts() -> Dictionary:
 	var counts: Dictionary = {
 		Item.Kind.SCRAP: 0,
-		Item.Kind.COMPONENT: 0,
-		Item.Kind.SUBSTRATE: 0,
-		Item.Kind.CIRCUIT: 0,
-		Item.Kind.POWER_CELL: 0,
+		Item.Kind.MECHANISM: 0,
+		Item.Kind.PLATING: 0,
+		Item.Kind.DATACORE: 0,
+		Item.Kind.CHARGE_CELL: 0,
 	}
 	if _items_root != null:
 		for child in _items_root.get_children():
@@ -607,10 +684,10 @@ func _resource_counts() -> Dictionary:
 func _tracked_item_kinds() -> Array[int]:
 	return [
 		Item.Kind.SCRAP,
-		Item.Kind.COMPONENT,
-		Item.Kind.SUBSTRATE,
-		Item.Kind.CIRCUIT,
-		Item.Kind.POWER_CELL,
+		Item.Kind.MECHANISM,
+		Item.Kind.PLATING,
+		Item.Kind.DATACORE,
+		Item.Kind.CHARGE_CELL,
 	]
 
 
@@ -777,7 +854,7 @@ func _build_worker_detail_card(worker: Worker, selected_count: int) -> void:
 	_add_worker_summary(left, worker)
 	_add_meter(left, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
 	_add_meter(left, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
-	_add_meter(left, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
+	_add_meter(left, "mental exhaustion", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
 	_add_meter(left, "social", worker.social_ratio(), Color(0.55, 0.85, 0.55))
 	var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
 	_add_meter(left, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
@@ -1042,6 +1119,7 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 	scroll.add_child(box)
 
 	var history: Array[String] = worker.action_history()
+	history.reverse()
 	for entry in history:
 		var label := Label.new()
 		label.text = entry

@@ -43,6 +43,14 @@ extends Node
 ##                                      2=hostile).
 ##   hostile_spawned(node)            - emitted by HostileSpawner after a new
 ##                                      hostile is added to the tree.
+##   wisdom_changed(new_total)        - emitted by TechManager when the wisdom
+##                                      pool changes. Payload: float.
+##   tech_unlocked(tech_id)           - emitted by TechManager after a tech
+##                                      node is unlocked. Payload: StringName.
+##   worker_spawned_from_cradle(worker)
+##                                    - emitted by StructureManager after a
+##                                      Sentience Cradle finishes a build cycle
+##                                      and a new Worker is added to the tree.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -66,4 +74,7 @@ signal combat_hit(attacker: Node, target: Node, damage: float)
 signal combat_dodged(attacker: Node, target: Node)
 signal combatant_died(node: Node, faction: int)
 signal hostile_spawned(node: Node)
+signal wisdom_changed(new_total: float)
+signal tech_unlocked(tech_id: StringName)
+signal worker_spawned_from_cradle(worker: Node)
 @warning_ignore_restore("unused_signal")

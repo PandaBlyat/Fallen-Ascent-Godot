@@ -32,6 +32,7 @@ func _ready() -> void:
 		b.text = LABELS[i]
 		b.tooltip_text = TOOLTIPS[i]
 		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size = Vector2(60, 44)
 		b.add_theme_font_size_override("font_size", 16)
 		b.add_theme_stylebox_override("normal", _button_style(COLOR_BG, COLOR_BORDER))

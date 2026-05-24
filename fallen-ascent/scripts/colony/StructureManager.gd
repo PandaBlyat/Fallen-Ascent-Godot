@@ -5,8 +5,6 @@ extends Node2D
 ## Structures are plain dictionaries for now: id, anchor, cells, produce timer.
 ##
 
-const EXTRACTOR_INTERVAL: float = 8.0
-const FABRICATOR_INTERVAL: float = 12.0
 const LIGHT_SIGHT_RADIUS: int = 8
 const SENSOR_SIGHT_RADIUS: int = 15
 const EXTRACTOR_COLOR := Color(0.25, 0.75, 0.9, 0.95)
@@ -15,6 +13,11 @@ const LIGHT_COLOR := Color(1.0, 0.9, 0.35, 0.95)
 const SENSOR_COLOR := Color(0.45, 0.95, 0.65, 0.95)
 const CHARGE_PAD_COLOR := Color(0.9, 0.45, 1.0, 0.95)
 const FABRICATOR_COLOR := Color(0.95, 0.72, 0.38, 0.95)
+const DOCK_COLOR := Color(0.45, 0.62, 0.98, 0.95)
+const REPAIR_BENCH_COLOR := Color(0.95, 0.52, 0.38, 0.95)
+const PARTS_LOOM_COLOR := Color(0.58, 0.95, 0.82, 0.95)
+const MAINTENANCE_DOCK_COLOR := Color(0.98, 0.82, 0.42, 0.95)
+const CALIBRATION_SHRINE_COLOR := Color(0.72, 0.58, 1.0, 0.95)
 
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
@@ -37,12 +40,15 @@ func _ready() -> void:
 
 
 func can_place_blueprint(id: int, anchor: Vector2i) -> bool:
+	var has_outlet: bool = false
 	for cell in BuildBlueprint.footprint(id, anchor):
 		if not _chunk_manager.is_grid_in_map(cell):
 			return false
 		if _cell_to_structure.has(cell):
 			return false
 		var tile: int = _chunk_manager.get_tile_at(cell)
+		if tile == TerrainGenerator.TILE_OUTLET:
+			has_outlet = true
 		if id == BuildBlueprint.Id.WALL:
 			if tile != TerrainGenerator.TILE_FLOOR:
 				return false
@@ -51,6 +57,8 @@ func can_place_blueprint(id: int, anchor: Vector2i) -> bool:
 				return false
 		if _stockpile_manager != null and _stockpile_manager.zone_at(cell) != null:
 			return false
+	if BuildBlueprint.requires_outlet(id) and not has_outlet:
+		return false
 	return true
 
 
@@ -61,6 +69,7 @@ func build_structure(id: int, anchor: Vector2i) -> void:
 		"anchor": anchor,
 		"cells": cells,
 		"timer": 0.0,
+		"blocked": "",
 	}
 	_structures.append(structure)
 	for cell in cells:
@@ -83,12 +92,72 @@ func structure_name_at(grid: Vector2i) -> String:
 	return BuildBlueprint.display_name(int(structure["id"]))
 
 
+func structure_status_at(grid: Vector2i) -> Dictionary:
+	var structure: Dictionary = structure_at(grid)
+	if structure.is_empty():
+		return {}
+	return _status_for(structure)
+
+
+func structure_status_by_anchor(anchor: Vector2i) -> Dictionary:
+	for structure in _structures:
+		if (structure["anchor"] as Vector2i) == anchor:
+			return _status_for(structure)
+	return {}
+
+
+func consume_repair_materials() -> bool:
+	if _consume_recipe({Item.Kind.SCRAP: 1}):
+		return true
+	return _consume_recipe({Item.Kind.COMPONENT: 1})
+
+
+func nearest_structure_anchor(ids: Array, from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for structure in _structures:
+		var id: int = int(structure["id"])
+		if not ids.has(id):
+			continue
+		var anchor: Vector2i = structure["anchor"] as Vector2i
+		if fog != null and not fog.is_explored(anchor):
+			continue
+		var target: Vector2i = interaction_cell_for(anchor)
+		if target == Pathfinder.UNREACHABLE:
+			continue
+		var d: int = maxi(absi(anchor.x - from.x), absi(anchor.y - from.y))
+		if d >= best_d:
+			continue
+		if pathfinder != null and not pathfinder.has_path(from, target):
+			continue
+		best = anchor
+		best_d = d
+	return best
+
+
+func interaction_cell_for(anchor: Vector2i) -> Vector2i:
+	var structure: Dictionary = structure_at(anchor)
+	if structure.is_empty():
+		return Pathfinder.UNREACHABLE
+	var cells: Array = structure["cells"] as Array
+	for raw_cell in cells:
+		var cell: Vector2i = raw_cell as Vector2i
+		if _chunk_manager.is_walkable(cell):
+			return cell
+	var neighbor: Vector2i = _walkable_neighbor_of_cells(cells)
+	return neighbor
+
+
 func blocks_cell(grid: Vector2i) -> bool:
 	var structure: Dictionary = structure_at(grid)
 	if structure.is_empty():
 		return false
 	var id: int = int(structure["id"])
-	return id == BuildBlueprint.Id.EXTRACTOR or id == BuildBlueprint.Id.FABRICATOR
+	return id == BuildBlueprint.Id.EXTRACTOR \
+		or id == BuildBlueprint.Id.FABRICATOR \
+		or id == BuildBlueprint.Id.REPAIR_BENCH \
+		or id == BuildBlueprint.Id.PARTS_LOOM \
+		or id == BuildBlueprint.Id.MAINTENANCE_DOCK
 
 
 func reveal_sources() -> Array[Dictionary]:
@@ -116,30 +185,38 @@ func _process(delta: float) -> void:
 	_accum = 0.0
 	for structure in _structures:
 		var id: int = int(structure["id"])
-		if id != BuildBlueprint.Id.EXTRACTOR and id != BuildBlueprint.Id.FABRICATOR:
+		var interval: float = BuildBlueprint.production_interval(id)
+		if interval <= 0.0:
 			continue
 		structure["timer"] = float(structure["timer"]) + tick
-		var interval: float = FABRICATOR_INTERVAL if id == BuildBlueprint.Id.FABRICATOR else EXTRACTOR_INTERVAL
 		if float(structure["timer"]) < interval:
 			continue
+		if not _consume_recipe(BuildBlueprint.production_inputs(id)):
+			structure["timer"] = interval
+			structure["blocked"] = "missing input: " + BuildBlueprint.ingredients_text_from(BuildBlueprint.production_inputs(id))
+			continue
+		var output_kind: int = _roll_output(id)
+		if output_kind >= 0:
+			if not _spawn_item_from(structure, output_kind):
+				structure["timer"] = interval
+				structure["blocked"] = "output blocked"
+				continue
 		structure["timer"] = 0.0
-		if id == BuildBlueprint.Id.FABRICATOR:
-			_spawn_item_from(structure, Item.Kind.POWER_CELL if randf() < 0.25 else Item.Kind.CIRCUIT)
-		else:
-			_spawn_item_from(structure, Item.Kind.COMPONENT if randf() < 0.65 else Item.Kind.SUBSTRATE)
+		structure["blocked"] = ""
 
 
-func _spawn_item_from(structure: Dictionary, kind: int) -> void:
+func _spawn_item_from(structure: Dictionary, kind: int) -> bool:
 	if _items_root == null:
-		return
+		return false
 	var output: Vector2i = _first_output_cell(structure)
 	if output == Pathfinder.UNREACHABLE:
-		return
+		return false
 	var item := Item.new()
 	_items_root.add_child(item)
 	item.setup(output, kind, 1)
 	if _stockpile_manager != null:
 		_stockpile_manager.on_item_spawned(item)
+	return true
 
 
 func _first_output_cell(structure: Dictionary) -> Vector2i:
@@ -157,6 +234,96 @@ func _first_output_cell(structure: Dictionary) -> Vector2i:
 			if _chunk_manager.is_walkable(candidate):
 				return candidate
 	return Pathfinder.UNREACHABLE
+
+
+func _walkable_neighbor_of_cells(cells: Array) -> Vector2i:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+		Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	for raw_cell in cells:
+		var cell: Vector2i = raw_cell as Vector2i
+		for off in OFFSETS:
+			var candidate: Vector2i = cell + off
+			if _chunk_manager.is_walkable(candidate):
+				return candidate
+	return Pathfinder.UNREACHABLE
+
+
+func _roll_output(id: int) -> int:
+	match id:
+		BuildBlueprint.Id.EXTRACTOR:
+			return Item.Kind.COMPONENT if randf() < 0.65 else Item.Kind.SUBSTRATE
+		BuildBlueprint.Id.FABRICATOR:
+			return Item.Kind.POWER_CELL if randf() < 0.25 else Item.Kind.CIRCUIT
+		BuildBlueprint.Id.PARTS_LOOM:
+			return Item.Kind.POWER_CELL if randf() < 0.18 else Item.Kind.COMPONENT
+		_:
+			return -1
+
+
+func _consume_recipe(recipe: Dictionary) -> bool:
+	for kind in recipe.keys():
+		var needed: int = int(recipe[kind])
+		if _available_item_count(int(kind)) < needed:
+			return false
+	for kind in recipe.keys():
+		for _i in range(int(recipe[kind])):
+			_consume_one_item(int(kind))
+	return true
+
+
+func _available_item_count(kind: int) -> int:
+	var count: int = 0
+	if _items_root != null:
+		for child in _items_root.get_children():
+			var item := child as Item
+			if item != null and item.reserved_by == null and item.kind == kind and item.count > 0:
+				count += item.count
+	if _stockpile_manager != null and _stockpile_manager.has_method("available_count"):
+		var stored_count: int = _stockpile_manager.call("available_count", kind) as int
+		count += stored_count
+	return count
+
+
+func _consume_one_item(kind: int) -> bool:
+	if _items_root != null:
+		for child in _items_root.get_children():
+			var item := child as Item
+			if item == null or item.reserved_by != null or item.kind != kind or item.count <= 0:
+				continue
+			item.count -= 1
+			if item.count <= 0:
+				item.queue_free()
+			else:
+				item.queue_redraw()
+			return true
+	if _stockpile_manager != null and _stockpile_manager.has_method("consume_one"):
+		var consumed: bool = _stockpile_manager.call("consume_one", kind) as bool
+		return consumed
+	return false
+
+
+func _status_for(structure: Dictionary) -> Dictionary:
+	var id: int = int(structure["id"])
+	var interval: float = BuildBlueprint.production_interval(id)
+	var timer: float = float(structure["timer"])
+	var output: Vector2i = _first_output_cell(structure)
+	var blocked: String = structure.get("blocked", "") as String
+	if interval > 0.0 and output == Pathfinder.UNREACHABLE:
+		blocked = "output blocked"
+	return {
+		"id": id,
+		"anchor": structure["anchor"] as Vector2i,
+		"name": BuildBlueprint.display_name(id),
+		"description": BuildBlueprint.description(id),
+		"timer": timer,
+		"interval": interval,
+		"progress": clampf(timer / interval, 0.0, 1.0) if interval > 0.0 else 0.0,
+		"production": BuildBlueprint.production_text(id),
+		"inputs": BuildBlueprint.ingredients_text_from(BuildBlueprint.production_inputs(id)),
+		"blocked": blocked,
+	}
 
 
 func _draw() -> void:
@@ -186,5 +353,15 @@ static func _color_for(id: int) -> Color:
 			return CHARGE_PAD_COLOR
 		BuildBlueprint.Id.FABRICATOR:
 			return FABRICATOR_COLOR
+		BuildBlueprint.Id.DOCK:
+			return DOCK_COLOR
+		BuildBlueprint.Id.REPAIR_BENCH:
+			return REPAIR_BENCH_COLOR
+		BuildBlueprint.Id.PARTS_LOOM:
+			return PARTS_LOOM_COLOR
+		BuildBlueprint.Id.MAINTENANCE_DOCK:
+			return MAINTENANCE_DOCK_COLOR
+		BuildBlueprint.Id.CALIBRATION_SHRINE:
+			return CALIBRATION_SHRINE_COLOR
 		_:
 			return Color.WHITE

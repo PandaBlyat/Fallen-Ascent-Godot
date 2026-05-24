@@ -13,6 +13,9 @@ extends Label
 @export var structure_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 
+const TOOLTIP_OFFSET := Vector2(14, 14)
+const EDGE_PADDING := 12.0
+
 var _camera: Camera2D
 var _chunk_manager: ChunkManager
 var _job_board: JobBoard
@@ -25,6 +28,13 @@ var _last_grid: Vector2i = Vector2i(2147483647, 2147483647)
 
 
 func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_theme_font_size_override("font_size", 12)
+	add_theme_color_override("font_color", Color(0.91, 0.94, 0.92, 1.0))
+	add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.85))
+	add_theme_constant_override("shadow_offset_x", 1)
+	add_theme_constant_override("shadow_offset_y", 1)
+	add_theme_stylebox_override("normal", _tooltip_style())
 	_camera = get_node(camera_path) as Camera2D
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_job_board = get_node(job_board_path) as JobBoard
@@ -38,7 +48,12 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	var mouse_screen: Vector2 = get_viewport().get_mouse_position()
-	position = mouse_screen + Vector2(16, 16)
+	var desired := mouse_screen + TOOLTIP_OFFSET
+	var viewport_size := get_viewport_rect().size
+	position = Vector2(
+		maxf(EDGE_PADDING, minf(desired.x, viewport_size.x - size.x - EDGE_PADDING)),
+		maxf(EDGE_PADDING, minf(desired.y, viewport_size.y - size.y - EDGE_PADDING)),
+	)
 	var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
 	if grid == _last_grid:
 		return
@@ -89,6 +104,14 @@ func _item_line_at(grid: Vector2i) -> String:
 			if occupant is Item:
 				var stored := occupant as Item
 				return "Stored: %s x%d" % [Item.kind_name(stored.kind), stored.count]
+			if occupant is Dictionary:
+				var reservation := occupant as Dictionary
+				var existing: Item = reservation.get(StockpileZone.R_EXISTING) as Item
+				if existing != null and is_instance_valid(existing):
+					return "Stored: %s x%d (reserved)" % [Item.kind_name(existing.kind), existing.count]
+				var reserved_kind: int = int(reservation.get(StockpileZone.R_KIND, -1))
+				if reserved_kind >= 0:
+					return "Reserved for: " + Item.kind_name(reserved_kind)
 	return ""
 
 
@@ -127,3 +150,19 @@ static func _join_lines(lines: Array[String]) -> String:
 			out += "\n"
 		out += line
 	return out
+
+
+static func _tooltip_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.045, 0.052, 0.06, 0.92)
+	style.border_color = Color(0.48, 0.52, 0.56, 0.62)
+	style.set_border_width_all(1)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 7.0
+	style.content_margin_top = 5.0
+	style.content_margin_right = 7.0
+	style.content_margin_bottom = 5.0
+	return style

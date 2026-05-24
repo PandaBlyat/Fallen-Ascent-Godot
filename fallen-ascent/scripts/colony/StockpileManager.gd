@@ -123,6 +123,44 @@ func total_stored() -> int:
 	return n
 
 
+func available_count(kind: int) -> int:
+	var n: int = 0
+	for zone in zones:
+		for value in zone.occupant.values():
+			var item: Item = null
+			if value is Item:
+				item = value as Item
+			elif value is Dictionary:
+				item = (value as Dictionary).get(StockpileZone.R_EXISTING) as Item
+			if item != null and is_instance_valid(item) and item.reserved_by == null and item.kind == kind and item.count > 0:
+				n += item.count
+	return n
+
+
+func consume_one(kind: int) -> bool:
+	for zone in zones:
+		for cell in zone.cells:
+			var value: Variant = zone.occupant.get(cell)
+			var item: Item = null
+			if value is Item:
+				item = value as Item
+			elif value is Dictionary:
+				item = (value as Dictionary).get(StockpileZone.R_EXISTING) as Item
+			if item == null or not is_instance_valid(item) or item.reserved_by != null or item.kind != kind or item.count <= 0:
+				continue
+			item.count -= 1
+			if item.count <= 0:
+				zone.take(cell)
+				if item.get_parent() == zone:
+					zone.remove_child(item)
+				item.queue_free()
+			else:
+				item.queue_redraw()
+			stockpile_changed.emit()
+			return true
+	return false
+
+
 ## When terrain under a zone cell becomes non-walkable, drop the cell. If
 ## the cell had a placed item, leave it as loose at the same grid (it sits
 ## on the new tile; if the new tile is solid the item gets stranded — that's

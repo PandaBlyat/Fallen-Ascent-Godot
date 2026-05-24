@@ -8,6 +8,11 @@ extends Node
 const INITIAL_WORKERS: int = 3
 const MAX_SEARCH_RADIUS: int = 24
 const WORKER_SCRIPT: Script = preload("res://scripts/colony/Worker.gd")
+const BOT_NAMES: Array[String] = [
+	"Echo", "Rook", "Cipher", "Spark", "Null", "Tweak", "Scrap", "Clink",
+	"Bolt", "Quirk", "Shift", "Flick", "Sync", "Blink", "Glitch", "Vector",
+	"Patch", "Jolt", "Latch", "Knurl", "Relay", "Fuze", "Pip", "Socket",
+]
 
 
 static func spawn(
@@ -21,17 +26,26 @@ static func spawn(
 	workers_root: Node2D,
 	colony_site: Node,
 	fog: FogOfWar = null,
+	structure_manager: StructureManager = null,
 ) -> int:
 	var spawned: int = 0
 	for cell in _walkable_cells_near(origin, count, chunk_manager):
 		var worker: Worker = WORKER_SCRIPT.new() as Worker
-		worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog)
+		worker.name = _generated_name(spawned)
+		worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager)
 		worker.position = Chunk.grid_to_pixel_center(cell)
 		workers_root.add_child(worker)
 		spawned += 1
 		if spawned >= count:
 			break
 	return spawned
+
+
+static func _generated_name(index: int) -> String:
+	var base: String = BOT_NAMES[index % BOT_NAMES.size()]
+	if index < BOT_NAMES.size():
+		return base
+	return "%s_%02d" % [base, int(index / BOT_NAMES.size()) + 1]
 
 
 ## Spiral outward from origin, collecting up to `count` walkable cells.

@@ -20,6 +20,11 @@ extends Node2D
 @export var max_loads_per_frame: int = 2          ## stagger spawns to smooth FPS
 @export var map_size_chunks: Vector2i = Vector2i(16, 16)
 @export var preload_entire_map: bool = true
+@export var job_board_path: NodePath
+@export var fog_of_war_path: NodePath
+@export var rust_spread_interval: float = 18.0
+@export var rust_spread_chance: float = 0.35
+@export var max_scrape_jobs: int = 64
 
 var _site_seed: int = 0
 var _noise: FastNoiseLite
@@ -33,7 +38,13 @@ var _load_pending: Dictionary = {}                ## Vector2i -> true (in _load_
 var _initial_loaded: bool = false                 ## first batch loads sync
 var _outlets: Dictionary = {}                      ## Vector2i -> true
 var _outlet_reservations: Dictionary = {}          ## Vector2i -> Worker
+var _rust_cells: Dictionary = {}                    ## Vector2i -> true
+var _teleporters: Array[Vector2i] = []
+var _teleporter_lookup: Dictionary = {}             ## Vector2i -> true
+var _rust_timer: float = 0.0
 var _structure_manager: Node = null
+var _job_board: JobBoard = null
+var _fog: FogOfWar = null
 
 
 func setup(site_seed: int) -> void:
@@ -42,7 +53,10 @@ func setup(site_seed: int) -> void:
 
 
 func _ready() -> void:
+	_job_board = get_node_or_null(job_board_path) as JobBoard
+	_fog = get_node_or_null(fog_of_war_path) as FogOfWar
 	EventBus.camera_moved.connect(_on_camera_moved)
+	EventBus.visibility_changed.connect(_on_visibility_changed)
 
 
 func _on_camera_moved(world_pos: Vector2, _zoom: Vector2) -> void:
@@ -95,8 +109,9 @@ func _enqueue_entire_map() -> void:
 			_load_pending[coord] = true
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_drain_queue(max_loads_per_frame)
+	_process_rust(delta)
 
 
 func _drain_queue(budget: int) -> void:
@@ -110,7 +125,7 @@ func _drain_queue(budget: int) -> void:
 		chunk.populate(coord, _noise)
 		_apply_diffs(chunk, coord)
 		_loaded[coord] = chunk
-		_index_outlets(chunk, coord)
+		_index_special_tiles(chunk, coord)
 		EventBus.chunk_loaded.emit(coord)
 		budget -= 1
 
@@ -125,7 +140,7 @@ func _unload_outside(center: Vector2i) -> void:
 	for c in to_free:
 		var chunk: Chunk = _loaded[c]
 		_loaded.erase(c)
-		_unindex_outlets(c)
+		_unindex_special_tiles(c)
 		EventBus.chunk_unloaded.emit(c)
 		chunk.queue_free()
 
@@ -193,8 +208,19 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 	if old_tile == TerrainGenerator.TILE_OUTLET:
 		_outlets.erase(grid)
 		_outlet_reservations.erase(grid)
+	elif old_tile == TerrainGenerator.TILE_RUST:
+		_rust_cells.erase(grid)
+		if _job_board != null:
+			_job_board.cancel_scrape_rust_at(grid)
+	elif old_tile == TerrainGenerator.TILE_TELEPORTER:
+		_remove_teleporter(grid)
 	if t == TerrainGenerator.TILE_OUTLET:
 		_outlets[grid] = true
+	elif t == TerrainGenerator.TILE_RUST:
+		_rust_cells[grid] = true
+		_maybe_add_scrape_job(grid)
+	elif t == TerrainGenerator.TILE_TELEPORTER:
+		_add_teleporter(grid)
 	_record_diff(ccoord, local, t)
 	EventBus.tile_changed.emit(grid, t)
 
@@ -223,7 +249,8 @@ func is_walkable(grid: Vector2i) -> bool:
 		or t == TerrainGenerator.TILE_DEBRIS \
 		or t == TerrainGenerator.TILE_OUTLET \
 		or t == TerrainGenerator.TILE_CONDUIT \
-		or t == TerrainGenerator.TILE_RUST
+		or t == TerrainGenerator.TILE_RUST \
+		or t == TerrainGenerator.TILE_TELEPORTER
 	if not terrain_walkable:
 		return false
 	if _structure_manager != null and _structure_manager.has_method("blocks_cell"):
@@ -233,6 +260,23 @@ func is_walkable(grid: Vector2i) -> bool:
 
 func is_outlet(grid: Vector2i) -> bool:
 	return get_tile_at(grid) == TerrainGenerator.TILE_OUTLET
+
+
+func is_teleporter(grid: Vector2i) -> bool:
+	return get_tile_at(grid) == TerrainGenerator.TILE_TELEPORTER
+
+
+func random_linked_teleporter(from: Vector2i) -> Vector2i:
+	if _teleporters.size() < 2:
+		return Pathfinder.UNREACHABLE
+	for _attempt in range(12):
+		var candidate: Vector2i = _teleporters[randi() % _teleporters.size()]
+		if candidate != from:
+			return candidate
+	for candidate in _teleporters:
+		if candidate != from:
+			return candidate
+	return Pathfinder.UNREACHABLE
 
 
 func reserve_outlet(grid: Vector2i, worker: Node) -> bool:
@@ -299,20 +343,110 @@ func is_grid_in_map(grid: Vector2i) -> bool:
 	return map_grid_bounds().has_point(grid)
 
 
-func _index_outlets(chunk: Chunk, coord: Vector2i) -> void:
+func _index_special_tiles(chunk: Chunk, coord: Vector2i) -> void:
 	var base: Vector2i = coord * Chunk.SIZE
 	for ly in Chunk.SIZE:
 		for lx in Chunk.SIZE:
 			var local := Vector2i(lx, ly)
-			if chunk.get_tile(local) == TerrainGenerator.TILE_OUTLET:
-				_outlets[base + local] = true
+			var grid: Vector2i = base + local
+			var tile: int = chunk.get_tile(local)
+			if tile == TerrainGenerator.TILE_OUTLET:
+				_outlets[grid] = true
+			elif tile == TerrainGenerator.TILE_RUST:
+				_rust_cells[grid] = true
+			elif tile == TerrainGenerator.TILE_TELEPORTER:
+				_add_teleporter(grid)
 
 
-func _unindex_outlets(coord: Vector2i) -> void:
+func _unindex_special_tiles(coord: Vector2i) -> void:
 	var base: Vector2i = coord * Chunk.SIZE
 	for ly in Chunk.SIZE:
 		for lx in Chunk.SIZE:
-			_outlets.erase(base + Vector2i(lx, ly))
+			var grid: Vector2i = base + Vector2i(lx, ly)
+			_outlets.erase(grid)
+			_rust_cells.erase(grid)
+			_remove_teleporter(grid)
+
+
+func _process_rust(delta: float) -> void:
+	if _rust_cells.is_empty():
+		return
+	_rust_timer += delta
+	if _rust_timer < rust_spread_interval:
+		return
+	_rust_timer = 0.0
+	if randf() > rust_spread_chance:
+		return
+	var source: Vector2i = _random_rust_cell()
+	if source == Pathfinder.UNREACHABLE:
+		return
+	var target: Vector2i = _rust_spread_target(source)
+	if target == Pathfinder.UNREACHABLE:
+		return
+	set_tile_at(target, TerrainGenerator.TILE_RUST)
+
+
+func _random_rust_cell() -> Vector2i:
+	if _rust_cells.is_empty():
+		return Pathfinder.UNREACHABLE
+	var keys: Array = _rust_cells.keys()
+	return keys[randi() % keys.size()] as Vector2i
+
+
+func _rust_spread_target(source: Vector2i) -> Vector2i:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var options: Array[Vector2i] = []
+	for off in OFFSETS:
+		var candidate: Vector2i = source + off
+		var tile: int = get_tile_at(candidate)
+		if tile == TerrainGenerator.TILE_FLOOR \
+				or tile == TerrainGenerator.TILE_DEBRIS \
+				or tile == TerrainGenerator.TILE_CONDUIT:
+			options.append(candidate)
+	if options.is_empty():
+		return Pathfinder.UNREACHABLE
+	return options[randi() % options.size()]
+
+
+func _maybe_add_scrape_job(grid: Vector2i) -> void:
+	if _job_board == null:
+		return
+	if _fog != null and not _fog.is_cell_visible(grid):
+		return
+	if _job_board.scrape_rust_count() >= max_scrape_jobs:
+		return
+	_job_board.add_scrape_rust_job(grid)
+
+
+func _on_visibility_changed(bounds: Rect2i) -> void:
+	if _job_board == null or _fog == null:
+		return
+	var lo: Vector2i = bounds.position
+	var hi: Vector2i = bounds.position + bounds.size
+	for y in range(lo.y, hi.y):
+		for x in range(lo.x, hi.x):
+			if _job_board.scrape_rust_count() >= max_scrape_jobs:
+				return
+			var grid := Vector2i(x, y)
+			if not _rust_cells.has(grid):
+				continue
+			_maybe_add_scrape_job(grid)
+
+
+func _add_teleporter(grid: Vector2i) -> void:
+	if _teleporter_lookup.has(grid):
+		return
+	_teleporter_lookup[grid] = true
+	_teleporters.append(grid)
+
+
+func _remove_teleporter(grid: Vector2i) -> void:
+	if not _teleporter_lookup.has(grid):
+		return
+	_teleporter_lookup.erase(grid)
+	_teleporters.erase(grid)
 
 
 static func _world_to_chunk(world_pos: Vector2) -> Vector2i:

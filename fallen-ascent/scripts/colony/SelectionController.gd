@@ -12,11 +12,15 @@ extends Node2D
 @export var pathfinder_path: NodePath
 @export var designator_path: NodePath
 @export var fog_of_war_path: NodePath
+@export var structure_manager_path: NodePath
 
 const SELECT_RADIUS_PX: float = 10.0
 const DRAG_THRESHOLD_PX: float = 6.0
 const DRAG_FILL := Color(0.35, 0.65, 1.0, 0.12)
 const DRAG_BORDER := Color(0.55, 0.78, 1.0, 0.8)
+const ORDER_HIGHLIGHT_SECONDS: float = 1.2
+const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.22)
+const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.95)
 
 var _camera: Camera2D
 var _workers_root: Node2D
@@ -24,12 +28,15 @@ var _chunk_manager: ChunkManager
 var _pathfinder: Pathfinder
 var _designator: Designator
 var _fog: FogOfWar
+var _structure_manager: StructureManager
 var _selected: Array[Worker] = []
 var _dragging: bool = false
 var _drag_start_screen: Vector2 = Vector2.ZERO
 var _drag_end_screen: Vector2 = Vector2.ZERO
 var _drag_start_world: Vector2 = Vector2.ZERO
 var _drag_end_world: Vector2 = Vector2.ZERO
+var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
+var _order_highlight_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -39,6 +46,16 @@ func _ready() -> void:
 	_pathfinder = get_node(pathfinder_path) as Pathfinder
 	_designator = get_node(designator_path) as Designator
 	_fog = get_node(fog_of_war_path) as FogOfWar
+	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
+
+
+func _process(delta: float) -> void:
+	if _order_highlight_timer <= 0.0:
+		return
+	_order_highlight_timer = maxf(0.0, _order_highlight_timer - delta)
+	if _order_highlight_timer <= 0.0:
+		_order_highlight_grid = Pathfinder.UNREACHABLE
+	queue_redraw()
 
 
 func selected_worker() -> Worker:
@@ -96,7 +113,15 @@ func _finish_drag(screen_pos: Vector2) -> void:
 	if is_box:
 		_select_many(_workers_in_rect(_drag_start_world, _drag_end_world))
 	else:
-		_select_many(_worker_under(_drag_end_world))
+		var workers: Array[Worker] = _worker_under(_drag_end_world)
+		if not workers.is_empty():
+			_select_many(workers)
+			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+		elif _try_select_structure(_drag_end_world):
+			_select_many([])
+		else:
+			_select_many([])
+			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
 	queue_redraw()
 
 
@@ -115,33 +140,51 @@ func _handle_right_click(shift_held: bool) -> void:
 		var miner: Worker = selected_worker()
 		if miner != null and is_instance_valid(miner):
 			miner.command_mine(grid)
+			_show_order_highlight(grid)
+		return
+	if tile == TerrainGenerator.TILE_RUST:
+		var scraper: Worker = selected_worker()
+		if scraper != null and is_instance_valid(scraper):
+			scraper.command_scrape_rust(grid)
+			_show_order_highlight(grid)
 		return
 	if shift_held and _is_walkable_order_tile(tile):
 		var builder: Worker = selected_worker()
 		if builder != null and is_instance_valid(builder):
 			builder.command_build(grid)
+			_show_order_highlight(grid)
 		return
 	if tile == TerrainGenerator.TILE_OUTLET:
-		_command_one_worker_to_charge(grid)
+		if _command_one_worker_to_charge(grid):
+			_show_order_highlight(grid)
 	elif _is_walkable_order_tile(tile):
-		_command_group_move(grid)
+		if _command_group_move(grid):
+			_show_order_highlight(grid)
 
 
-func _command_one_worker_to_charge(grid: Vector2i) -> void:
+func _command_one_worker_to_charge(grid: Vector2i) -> bool:
 	for worker in _selected_by_distance(grid):
 		if worker.command_charge(grid):
-			return
+			return true
+	return false
 
 
-func _command_group_move(grid: Vector2i) -> void:
+func _command_group_move(grid: Vector2i) -> bool:
 	var workers: Array[Worker] = _selected_by_distance(grid)
 	var assigned: Dictionary = {}
 	for worker in workers:
 		var target: Vector2i = _best_group_target_for(worker, grid, assigned)
 		if target == Pathfinder.UNREACHABLE:
 			continue
-		assigned[target] = true
-		worker.command_move(target)
+		if worker.command_move(target):
+			assigned[target] = true
+	return not assigned.is_empty()
+
+
+func _show_order_highlight(grid: Vector2i) -> void:
+	_order_highlight_grid = grid
+	_order_highlight_timer = ORDER_HIGHLIGHT_SECONDS
+	queue_redraw()
 
 
 func _best_group_target_for(worker: Worker, center: Vector2i, assigned: Dictionary) -> Vector2i:
@@ -210,7 +253,8 @@ static func _is_walkable_order_tile(tile: int) -> bool:
 	return tile == TerrainGenerator.TILE_FLOOR \
 		or tile == TerrainGenerator.TILE_DEBRIS \
 		or tile == TerrainGenerator.TILE_CONDUIT \
-		or tile == TerrainGenerator.TILE_RUST
+		or tile == TerrainGenerator.TILE_RUST \
+		or tile == TerrainGenerator.TILE_TELEPORTER
 
 
 func _worker_under(world_pos: Vector2) -> Array[Worker]:
@@ -243,6 +287,22 @@ func _workers_in_rect(a: Vector2, b: Vector2) -> Array[Worker]:
 	return out
 
 
+func _try_select_structure(world_pos: Vector2) -> bool:
+	if _structure_manager == null:
+		return false
+	var grid := Vector2i(
+		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
+		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
+	)
+	if _fog != null and not _fog.is_explored(grid):
+		return false
+	var structure: Dictionary = _structure_manager.structure_at(grid)
+	if structure.is_empty():
+		return false
+	EventBus.structure_selected.emit(int(structure["id"]), structure["anchor"] as Vector2i)
+	return true
+
+
 func _select_many(workers: Array[Worker]) -> void:
 	for worker in _selected:
 		if worker != null and is_instance_valid(worker):
@@ -256,13 +316,18 @@ func _select_many(workers: Array[Worker]) -> void:
 
 
 func _draw() -> void:
-	if not _dragging:
-		return
-	var is_box: bool = (_drag_end_screen - _drag_start_screen).length() >= DRAG_THRESHOLD_PX
-	if not is_box:
-		return
-	var origin := Vector2(minf(_drag_start_world.x, _drag_end_world.x), minf(_drag_start_world.y, _drag_end_world.y))
-	var size := Vector2(absf(_drag_start_world.x - _drag_end_world.x), absf(_drag_start_world.y - _drag_end_world.y))
-	var rect := Rect2(origin, size)
-	draw_rect(rect, DRAG_FILL)
-	draw_rect(rect, DRAG_BORDER, false, 1.0)
+	if _order_highlight_grid != Pathfinder.UNREACHABLE:
+		var alpha: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
+		var origin := Vector2(_order_highlight_grid.x * Chunk.TILE_PIXELS, _order_highlight_grid.y * Chunk.TILE_PIXELS)
+		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(rect, Color(ORDER_HIGHLIGHT_FILL.r, ORDER_HIGHLIGHT_FILL.g, ORDER_HIGHLIGHT_FILL.b, ORDER_HIGHLIGHT_FILL.a * alpha))
+		draw_rect(rect, Color(ORDER_HIGHLIGHT_BORDER.r, ORDER_HIGHLIGHT_BORDER.g, ORDER_HIGHLIGHT_BORDER.b, ORDER_HIGHLIGHT_BORDER.a * alpha), false, 1.5)
+	if _dragging:
+		var is_box: bool = (_drag_end_screen - _drag_start_screen).length() >= DRAG_THRESHOLD_PX
+		if not is_box:
+			return
+		var drag_origin := Vector2(minf(_drag_start_world.x, _drag_end_world.x), minf(_drag_start_world.y, _drag_end_world.y))
+		var size := Vector2(absf(_drag_start_world.x - _drag_end_world.x), absf(_drag_start_world.y - _drag_end_world.y))
+		var drag_rect := Rect2(drag_origin, size)
+		draw_rect(drag_rect, DRAG_FILL)
+		draw_rect(drag_rect, DRAG_BORDER, false, 1.0)

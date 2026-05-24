@@ -20,11 +20,19 @@ const CIRCUIT_COLOR := Color(0.45, 1.0, 0.82)
 const POWER_CELL_COLOR := Color(0.95, 0.45, 1.0)
 const SIZE_PX: float = 8.0
 const MAX_STACK: int = 16
+const ITEM_ATLAS_PATH := "res://resources/items/placeholder_items_atlas.png"
+const ITEM_REGION_SIZE := Vector2(16, 16)
 
 var kind: int = Kind.SCRAP
 var grid: Vector2i = Vector2i.ZERO
 var count: int = 1
 var reserved_by: Node = null
+var _atlas: Texture2D = null
+
+
+func _ready() -> void:
+	_atlas = load(ITEM_ATLAS_PATH) as Texture2D
+	queue_redraw()
 
 
 func setup(g: Vector2i, k: int = Kind.SCRAP, c: int = 1) -> void:
@@ -85,9 +93,31 @@ static func kind_name(k: int) -> String:
 			return "scrap"
 
 
+static func kind_description(k: int) -> String:
+	match k:
+		Kind.COMPONENT:
+			return "precision actuator and frame part"
+		Kind.SUBSTRATE:
+			return "raw structural feedstock"
+		Kind.CIRCUIT:
+			return "logic board for machines and calibration"
+		Kind.POWER_CELL:
+			return "portable charge reservoir"
+		_:
+			return "salvaged base material"
+
+
+static func stack_label(k: int, amount: int) -> String:
+	return "%s x%d" % [kind_name(k), amount]
+
+
 func _draw() -> void:
 	var r := Rect2(-Vector2(SIZE_PX, SIZE_PX) * 0.5, Vector2(SIZE_PX, SIZE_PX))
-	draw_rect(r, color())
+	if _atlas != null:
+		var source := Rect2(Vector2(kind * 16, 0), ITEM_REGION_SIZE)
+		draw_texture_rect_region(_atlas, Rect2(-ITEM_REGION_SIZE * 0.5, ITEM_REGION_SIZE), source)
+	else:
+		draw_rect(r, color())
 	if count > 1:
 		var font: Font = ThemeDB.fallback_font
 		var label: String = str(count)

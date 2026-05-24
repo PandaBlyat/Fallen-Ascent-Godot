@@ -6,6 +6,8 @@ extends Node2D
 ##
 
 const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
+const NEUTRAL_BOT_SCRIPT: Script = preload("res://scripts/colony/NeutralBot.gd")
+const INITIAL_NEUTRALS: int = 30
 
 @onready var chunk_manager: ChunkManager = $ChunkManager
 @onready var camera: CameraController = $Camera
@@ -15,8 +17,11 @@ const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
 @onready var structure_manager: StructureManager = $StructureManager
 @onready var items_root: Node2D = $Items
 @onready var workers_root: Node2D = $Workers
+@onready var neutrals_root: Node2D = $Neutrals
 @onready var designator: Designator = $Designator
 @onready var fog_of_war: FogOfWar = $FogOfWar
+
+var _site_seed: int = 0
 
 
 func _ready() -> void:
@@ -25,6 +30,7 @@ func _ready() -> void:
 	if site == null:
 		site = SiteData.new()
 		site.site_seed = 1234567
+	_site_seed = site.site_seed
 	chunk_manager.setup(site.site_seed)
 	camera.set_world_bounds(chunk_manager.map_world_rect())
 
@@ -47,7 +53,31 @@ func _spawn_initial_workers() -> void:
 		workers_root,
 		self,
 		fog_of_war,
+		structure_manager,
 	)
+	_spawn_neutral_bots(INITIAL_NEUTRALS)
+
+
+func _spawn_neutral_bots(count: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([_site_seed, "neutral_bots"])
+	var bounds: Rect2i = chunk_manager.map_grid_bounds()
+	var spawned: int = 0
+	var attempts: int = 0
+	while spawned < count and attempts < count * 160:
+		attempts += 1
+		var cell := Vector2i(
+			rng.randi_range(bounds.position.x, bounds.position.x + bounds.size.x - 1),
+			rng.randi_range(bounds.position.y, bounds.position.y + bounds.size.y - 1),
+		)
+		if not chunk_manager.is_walkable(cell):
+			continue
+		var bot := NEUTRAL_BOT_SCRIPT.new() as NeutralBot
+		bot.name = "Neutral_%02d" % (spawned + 1)
+		bot.setup(chunk_manager, pathfinder)
+		bot.position = Chunk.grid_to_pixel_center(cell)
+		neutrals_root.add_child(bot)
+		spawned += 1
 
 
 ## Called by Workers after they finish a mine: spawn one piece of scrap on

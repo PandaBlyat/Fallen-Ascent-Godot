@@ -69,6 +69,12 @@ func set_world_bounds(bounds: Rect2) -> void:
 	_emit_if_changed(true)
 
 
+func center_on(world_pos: Vector2) -> void:
+	position = world_pos
+	_clamp_to_world()
+	_emit_if_changed(true)
+
+
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
 	if event.button_index == MOUSE_BUTTON_MIDDLE:
 		_dragging = event.pressed

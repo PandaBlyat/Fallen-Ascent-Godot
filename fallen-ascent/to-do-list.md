@@ -40,6 +40,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       any chunk load/unload.
 - [ ] **Object pool for workers / items / projectiles** as soon as any of
       them exceeds ~100 live instances. Reserve `scripts/pool/`.
+- [ ] **Ambient entity crowd path.** Neutral bots now sleep while idle and
+      avoid duplicate path queries, but hundreds of ambient bots should move
+      through a manager with batched thinking and `MultiMeshInstance2D` or
+      another shared render path instead of one drawing `Node2D` per bot.
 - [ ] **Pathfinder region-shift optimization.** Today, when the camera pans
       and the AStarGrid2D's bounding region shifts (even by one chunk), the
       grid is fully rebuilt because `AStarGrid2D.region = ...` then `update()`
@@ -54,6 +58,23 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       haul) and per-worker work types.
 - [ ] **Worker needs** — power/charge, repair, "sleep" cycle. Sets up the
       AI director that CLAUDE.md flags as a future autoload candidate.
+- [x] **Idle behavior table.** Workers should not only poll for jobs while
+      idle. Add weighted low-cost idle choices: wait, roam explored space,
+      wander toward frontier cells, recharge at nearest outlet, socialize with
+      another worker, and rest at a sleep fixture. Keep all path choices
+      bounded and avoid per-frame scans. **Implemented v1:** bounded samples
+      from explored/frontier cells plus Dock/rest/social/repair idle actions.
+- [x] **Rest furniture / mental recovery.** Add a bot bed equivalent
+      (working name: Stillness Cradle) as a buildable structure. Charging
+      restores physical power; rest restores future mental stats.
+      **Implemented v1:** renamed to Dock; rest lowers mental tiredness.
+- [x] **Resource sinks and maintenance loop.** Add primitive crafting /
+      service structures that consume scrap, substrate, components, circuits,
+      and power cells for repairs, replacement parts, upgrades, and ongoing
+      upkeep so production has pressure instead of infinite stock growth.
+      **Implemented v1:** Repair Bench, Parts Loom, Maintenance Dock, and
+      Calibration Shrine definitions; Parts Loom and Maintenance Dock consume
+      inputs during production/upkeep, Repair Bench consumes repair materials.
 - [ ] **Combat + hostile entities.** Implies factions, damage, line-of-sight.
 - [x] **More item kinds for real gameplay.** `Item.Kind.COMPONENT` exists
       as a placeholder alongside `SCRAP`, but nothing produces components
@@ -97,6 +118,17 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       M / B / N / X / Esc only). **Implemented v1:** Orders / Zones /
       Structures tabs backed by editable UI placeholder atlas.
 - [x] **Tooltip on hover** showing tile type, occupant, designation status.
+- [x] **Fix item tooltip identity.** Colony tooltip should report real item
+      kind for loose stacks, stored stacks, and reserved stockpile merge slots;
+      avoid falling back to default `Item.Kind.SCRAP` when data is missing.
+- [x] **Designator tooltips with effects and requirements.** Orders, zones,
+      and structures should explain what the tool does and, for structures,
+      show footprint, ingredients, build time, production, and unlock/placement
+      requirements.
+- [x] **Selected entity panels.** Selecting workers or built structures should
+      open compact card panels. Worker cards show stats/state/current job;
+      structure cards show production output, interval, current timer progress,
+      blocked output state, and required inputs once crafting is added.
 - [ ] **Audio settings** — master / music / SFX volume sliders in
       `SettingsMenu` once we have audio. Wire to AudioServer bus volumes
       and persist via `SettingsManager` (add a `[audio]` section).

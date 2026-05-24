@@ -22,6 +22,14 @@ enum State {
 	MOVING_FREEFORM,
 	MOVING_TO_CHARGE,
 	CHARGING,
+	ROAMING,
+	WANDERING,
+	MOVING_TO_REST,
+	RESTING,
+	MOVING_TO_REPAIR,
+	REPAIRING,
+	MOVING_TO_SOCIALIZE,
+	SOCIALIZING,
 }
 
 const MOVE_SPEED_PX_PER_SEC: float = 48.0
@@ -43,6 +51,25 @@ const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
+const ENTITY_ATLAS_PATH := "res://resources/entities/placeholder_entities_atlas.png"
+const BOT_REGION := Rect2(Vector2.ZERO, Vector2(16, 16))
+const CONDITION_MAX: float = 100.0
+const MENTAL_TIRED_MAX: float = 100.0
+const CONDITION_MOVE_DECAY_PER_SEC: float = 0.035
+const CONDITION_WORK_DECAY_PER_SEC: float = 0.09
+const MENTAL_IDLE_RISE_PER_SEC: float = 0.04
+const MENTAL_WORK_RISE_PER_SEC: float = 0.16
+const REST_RECOVERY_PER_SEC: float = 8.0
+const REPAIR_RECOVERY_PER_SEC: float = 12.0
+const SOCIAL_GAIN_PER_SEC: float = 2.0
+const SOCIAL_ADJACENCY_RANGE: int = 1
+const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
+const TELEPORT_COOLDOWN_SECONDS: float = 1.0
+const SCRAPE_RUST_DURATION: float = 1.4
+const IDLE_SAMPLE_LIMIT: int = 48
+const ACTION_HISTORY_LIMIT: int = 96
+const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -24.0)
+const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
 
 var _state: int = State.IDLE
 var _job: Job = null
@@ -56,6 +83,23 @@ var _charge_target: Vector2i = Vector2i.ZERO
 var _has_charge_reservation: bool = false
 var _manual_charging: bool = false
 var _action_text: String = ""
+var _condition: float = CONDITION_MAX
+var _mental_tiredness: float = 0.0
+var _social: float = 0.0
+var _activity_timer: float = 0.0
+var _activity_target: Vector2i = Vector2i.ZERO
+var _activity_partner: Worker = null
+var _entity_atlas: Texture2D
+var _action_history: Array[String] = []
+var _history_index: int = 0
+var _limbs: Dictionary = {}
+var _teleport_cooldown: float = 0.0
+var _last_teleporter_grid: Vector2i = Pathfinder.UNREACHABLE
+var _resume_job: Job = null
+var _resume_state: int = State.IDLE
+var _resume_path: PackedVector2Array = PackedVector2Array()
+var _resume_path_index: int = 0
+var _resume_carried: Item = null
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -64,6 +108,7 @@ var _stockpile_manager: StockpileManager
 var _items_root: Node2D
 var _colony_site: Node
 var _fog: FogOfWar
+var _structure_manager: StructureManager
 
 
 func setup(
@@ -74,6 +119,7 @@ func setup(
 	items_root: Node2D,
 	colony_site: Node,
 	fog: FogOfWar = null,
+	structure_manager: StructureManager = null,
 ) -> void:
 	_job_board = job_board
 	_pathfinder = pathfinder
@@ -82,13 +128,17 @@ func setup(
 	_items_root = items_root
 	_colony_site = colony_site
 	_fog = fog
+	_structure_manager = structure_manager
 
 
 func _ready() -> void:
+	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
+	_init_limbs()
 	if _job_board != null:
 		_job_board.job_added.connect(_on_job_added)
 		_job_board.job_cancelled.connect(_on_job_cancelled)
 	EventBus.tile_changed.connect(_on_tile_changed)
+	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
 
 
 func current_grid() -> Vector2i:
@@ -107,6 +157,98 @@ func set_selected(v: bool) -> void:
 
 func is_selected() -> bool:
 	return _selected
+
+
+func display_name() -> String:
+	return str(name) if not str(name).is_empty() else "bot"
+
+
+func action_history() -> Array[String]:
+	return _action_history.duplicate()
+
+
+func energy_ratio() -> float:
+	return clampf(_energy / ENERGY_MAX, 0.0, 1.0)
+
+
+func condition_ratio() -> float:
+	return clampf(_condition / CONDITION_MAX, 0.0, 1.0)
+
+
+func mental_tiredness_ratio() -> float:
+	return clampf(_mental_tiredness / MENTAL_TIRED_MAX, 0.0, 1.0)
+
+
+func social_score() -> int:
+	return int(roundf(_social))
+
+
+func limb_status_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for limb_name in LIMB_NAMES:
+		var value: float = float(_limbs.get(limb_name, CONDITION_MAX))
+		lines.append("%s %d%%" % [limb_name, int(roundf(value))])
+	return lines
+
+
+func carried_label() -> String:
+	if _carried == null:
+		return "none"
+	return Item.stack_label(_carried.kind, _carried.count)
+
+
+func job_label() -> String:
+	if _job is MineJob:
+		return "mine"
+	if _job is HaulJob:
+		return "haul"
+	if _job is BuildJob:
+		return "build " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
+	if _is_scrape_job(_job):
+		return "scrape rust"
+	return "none"
+
+
+func state_label() -> String:
+	match _state:
+		State.IDLE:
+			return "idle"
+		State.MOVING_TO_WORK:
+			return "moving to mine"
+		State.WORKING:
+			return "mining"
+		State.MOVING_TO_PICKUP:
+			return "getting item"
+		State.CARRYING, State.MOVING_TO_DROP:
+			return "hauling"
+		State.MOVING_TO_BUILD_SITE:
+			return "delivering"
+		State.BUILDING:
+			return "building"
+		State.MOVING_FREEFORM:
+			return "moving"
+		State.MOVING_TO_CHARGE:
+			return "moving to charge"
+		State.CHARGING:
+			return "charging"
+		State.ROAMING:
+			return "roaming"
+		State.WANDERING:
+			return "wandering"
+		State.MOVING_TO_REST:
+			return "moving to dock"
+		State.RESTING:
+			return "resting"
+		State.MOVING_TO_REPAIR:
+			return "moving to repair"
+		State.REPAIRING:
+			return "repairing"
+		State.MOVING_TO_SOCIALIZE:
+			return "moving to chat"
+		State.SOCIALIZING:
+			return "chatting"
+		_:
+			return "unknown"
 
 
 func _on_job_added(_added_job: Job) -> void:
@@ -135,7 +277,10 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 
 
 func _process(delta: float) -> void:
+	if _teleport_cooldown > 0.0:
+		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
 	_update_energy(delta)
+	_update_body_stats(delta)
 	if _should_seek_charge():
 		_begin_auto_charge()
 		return
@@ -144,18 +289,25 @@ func _process(delta: float) -> void:
 			_idle_cooldown -= delta
 			if _idle_cooldown <= 0.0:
 				_idle_cooldown = IDLE_RETRY_SECONDS
-				_try_claim_job()
+				if not _try_claim_job():
+					_choose_idle_behavior()
 		State.MOVING_TO_WORK:
 			if _advance_path(delta):
 				_state = State.WORKING
 		State.WORKING:
-			var mine := _job as MineJob
-			if mine == null:
+			if _job is MineJob:
+				var mine := _job as MineJob
+				mine.progress += delta
+				if mine.progress >= MineJob.DURATION:
+					_complete_mine(mine)
+			elif _is_scrape_job(_job):
+				var scrape_progress: float = float(_job.get("progress")) + delta
+				_job.set("progress", scrape_progress)
+				if scrape_progress >= SCRAPE_RUST_DURATION:
+					_complete_scrape_rust(_job)
+			else:
 				_abandon_job()
 				return
-			mine.progress += delta
-			if mine.progress >= MineJob.DURATION:
-				_complete_mine(mine)
 		State.MOVING_TO_PICKUP:
 			if _advance_path(delta):
 				_pickup_item()
@@ -177,6 +329,10 @@ func _process(delta: float) -> void:
 			if _advance_path(delta):
 				_state = State.IDLE
 				_idle_cooldown = 0.0
+		State.ROAMING, State.WANDERING:
+			if _advance_path(delta):
+				_state = State.IDLE
+				_idle_cooldown = randf_range(0.6, 2.0)
 		State.MOVING_TO_CHARGE:
 			if _advance_path(delta):
 				_state = State.CHARGING
@@ -188,15 +344,59 @@ func _process(delta: float) -> void:
 				_release_charge_reservation()
 				_state = State.IDLE
 				_idle_cooldown = 0.0
+		State.MOVING_TO_REST:
+			if _advance_path(delta):
+				_state = State.RESTING
+				_activity_timer = randf_range(3.0, 6.0)
+		State.RESTING:
+			_activity_timer -= delta
+			_mental_tiredness = maxf(0.0, _mental_tiredness - REST_RECOVERY_PER_SEC * delta)
+			if _activity_timer <= 0.0 or _mental_tiredness <= 1.0:
+				_state = State.IDLE
+				_idle_cooldown = randf_range(0.5, 1.5)
+		State.MOVING_TO_REPAIR:
+			if _advance_path(delta):
+				if _structure_manager != null and _structure_manager.has_method("consume_repair_materials"):
+					_structure_manager.call("consume_repair_materials")
+				_state = State.REPAIRING
+				_activity_timer = randf_range(2.0, 4.0)
+		State.REPAIRING:
+			_activity_timer -= delta
+			_condition = minf(CONDITION_MAX, _condition + REPAIR_RECOVERY_PER_SEC * delta)
+			_repair_limbs(REPAIR_RECOVERY_PER_SEC * delta)
+			if _activity_timer <= 0.0 or _condition >= CONDITION_MAX:
+				_state = State.IDLE
+				_idle_cooldown = randf_range(0.5, 1.5)
+		State.MOVING_TO_SOCIALIZE:
+			if _advance_path(delta):
+				if _activity_partner != null and is_instance_valid(_activity_partner) and _is_adjacent_to(_activity_partner):
+					_state = State.SOCIALIZING
+					if _activity_timer <= 0.0:
+						_activity_timer = randf_range(2.0, 4.5)
+					_remember("chatting with %s" % _activity_partner.display_name())
+				else:
+					_remember("chat cancelled: not adjacent")
+					_resume_after_chat()
+		State.SOCIALIZING:
+			_activity_timer -= delta
+			var adjacent: bool = _activity_partner != null and is_instance_valid(_activity_partner) and _is_adjacent_to(_activity_partner)
+			if adjacent:
+				_social += SOCIAL_GAIN_PER_SEC * delta
+				_activity_partner.add_social(SOCIAL_GAIN_PER_SEC * 0.5 * delta)
+			if not adjacent or _activity_timer <= 0.0:
+				if _activity_partner != null and is_instance_valid(_activity_partner):
+					_remember("finished chat with %s" % _activity_partner.display_name())
+				_resume_after_chat()
+	_check_teleporter()
 	_refresh_action_text()
 
 
-func _try_claim_job() -> void:
+func _try_claim_job() -> bool:
 	if _job_board == null or _pathfinder == null:
-		return
+		return false
 	var job: Job = _job_board.claim_next_for(self, current_grid())
 	if job == null:
-		return
+		return false
 	_job = job
 	if job is MineJob:
 		_begin_mine(job as MineJob)
@@ -204,6 +404,247 @@ func _try_claim_job() -> void:
 		_begin_haul(job as HaulJob)
 	elif job is BuildJob:
 		_begin_build(job as BuildJob)
+	elif _is_scrape_job(job):
+		_begin_scrape_rust(job)
+	return true
+
+
+func add_social(amount: float) -> void:
+	_social += amount
+
+
+func _remember(text: String) -> void:
+	_history_index += 1
+	_action_history.append("%03d  %s" % [_history_index, text])
+	if _action_history.size() > ACTION_HISTORY_LIMIT:
+		_action_history.pop_front()
+
+
+func _init_limbs() -> void:
+	for limb_name in LIMB_NAMES:
+		_limbs[limb_name] = CONDITION_MAX
+
+
+func _is_scrape_job(job: Job) -> bool:
+	return job != null and job.kind == Job.Kind.SCRAPE_RUST
+
+
+func _choose_idle_behavior() -> void:
+	if _condition <= 68.0 and _begin_structure_activity(
+			[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
+			State.MOVING_TO_REPAIR):
+		return
+	if _mental_tiredness >= 55.0 and _begin_structure_activity([BuildBlueprint.Id.DOCK], State.MOVING_TO_REST):
+		return
+	var roll: float = randf()
+	if roll < 0.18:
+		_idle_cooldown = randf_range(1.2, 4.0)
+	elif roll < 0.36:
+		if not _begin_roam(false):
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.52:
+		if not _begin_roam(true):
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.66:
+		var outlet: Vector2i = _chunk_manager.nearest_outlet(current_grid(), _pathfinder, _fog, self)
+		if outlet != Pathfinder.UNREACHABLE and _energy < ENERGY_MAX:
+			_begin_charge(outlet)
+		else:
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.82:
+		if not _begin_socialize():
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.94:
+		if not _begin_structure_activity([BuildBlueprint.Id.DOCK], State.MOVING_TO_REST):
+			_idle_cooldown = randf_range(1.0, 2.5)
+	else:
+		_idle_cooldown = randf_range(3.0, 7.0)
+
+
+func _begin_roam(frontier: bool) -> bool:
+	var target: Vector2i = _random_idle_target(frontier)
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_path = path
+	_path_index = 0
+	_activity_target = target
+	_state = State.WANDERING if frontier else State.ROAMING
+	return true
+
+
+func _random_idle_target(frontier: bool) -> Vector2i:
+	if _fog == null:
+		return _random_walkable_near(current_grid(), 12)
+	var explored: Array[Vector2i] = _fog.explored_cells()
+	if explored.is_empty():
+		return Pathfinder.UNREACHABLE
+	for _i in range(IDLE_SAMPLE_LIMIT):
+		var candidate: Vector2i = explored[randi() % explored.size()]
+		if frontier and not _fog.is_frontier(candidate):
+			continue
+		if not _chunk_manager.is_walkable(candidate):
+			continue
+		if candidate == current_grid():
+			continue
+		if _pathfinder.has_path(current_grid(), candidate):
+			return candidate
+	return Pathfinder.UNREACHABLE
+
+
+func _random_walkable_near(origin: Vector2i, radius: int) -> Vector2i:
+	for _i in range(IDLE_SAMPLE_LIMIT):
+		var candidate := origin + Vector2i(randi_range(-radius, radius), randi_range(-radius, radius))
+		if _chunk_manager.is_walkable(candidate) and _pathfinder.has_path(origin, candidate):
+			return candidate
+	return Pathfinder.UNREACHABLE
+
+
+func _begin_structure_activity(ids: Array, next_state: int) -> bool:
+	if _structure_manager == null:
+		return false
+	var anchor: Vector2i = _structure_manager.nearest_structure_anchor(ids, current_grid(), _pathfinder, _fog)
+	if anchor == Pathfinder.UNREACHABLE:
+		return false
+	var target: Vector2i = _structure_manager.interaction_cell_for(anchor)
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_path = path
+	_path_index = 0
+	_activity_target = anchor
+	_state = next_state
+	return true
+
+
+func _begin_socialize() -> bool:
+	var partner: Worker = _nearest_partner()
+	if partner == null:
+		return false
+	var target: Vector2i = _adjacent_chat_cell_near(partner.current_grid(), current_grid())
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	var duration: float = randf_range(2.0, 4.5)
+	if not partner.accept_chat_invite(self, partner.current_grid(), duration):
+		return false
+	_activity_partner = partner
+	_activity_timer = duration
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_SOCIALIZE
+	_remember("invited %s to chat" % partner.display_name())
+	return true
+
+
+func accept_chat_invite(partner: Worker, target: Vector2i, duration: float) -> bool:
+	if partner == null or not is_instance_valid(partner):
+		return false
+	if _state == State.MOVING_TO_SOCIALIZE or _state == State.SOCIALIZING:
+		return false
+	if not _chunk_manager.is_walkable(target):
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_suspend_for_chat()
+	_activity_partner = partner
+	_activity_timer = duration
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_SOCIALIZE
+	_remember("paused work to chat with %s" % partner.display_name())
+	return true
+
+
+func _adjacent_chat_cell_near(center: Vector2i, from: Vector2i) -> Vector2i:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for off in OFFSETS:
+		var candidate: Vector2i = center + off
+		if not _chunk_manager.is_walkable(candidate):
+			continue
+		if candidate != from and not _pathfinder.has_path(from, candidate):
+			continue
+		var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
+		if d < best_d:
+			best = candidate
+			best_d = d
+	return best
+
+
+func _is_adjacent_to(other: Worker) -> bool:
+	var d: Vector2i = other.current_grid() - current_grid()
+	return maxi(absi(d.x), absi(d.y)) <= SOCIAL_ADJACENCY_RANGE
+
+
+func _suspend_for_chat() -> void:
+	if _resume_job != null:
+		return
+	_resume_job = _job
+	_resume_state = _state
+	_resume_path = _path
+	_resume_path_index = _path_index
+	_resume_carried = _carried
+	_release_charge_reservation()
+
+
+func _resume_after_chat() -> void:
+	var resume_job: Job = _resume_job
+	var resume_state: int = _resume_state
+	var resume_path: PackedVector2Array = _resume_path
+	var resume_path_index: int = _resume_path_index
+	_clear_activity()
+	_resume_job = null
+	_resume_state = State.IDLE
+	_resume_path = PackedVector2Array()
+	_resume_path_index = 0
+	_resume_carried = null
+	if resume_job != null and _job_board != null and _job_board.is_active(resume_job):
+		_job = resume_job
+		_state = resume_state
+		_path = resume_path
+		_path_index = mini(resume_path_index, resume_path.size())
+		_replan()
+		_idle_cooldown = 0.0
+	else:
+		_job = null
+		_path = PackedVector2Array()
+		_path_index = 0
+		_state = State.IDLE
+		_idle_cooldown = randf_range(0.8, 2.0)
+
+
+func _nearest_partner() -> Worker:
+	var parent_node: Node = get_parent()
+	if parent_node == null:
+		return null
+	var best: Worker = null
+	var best_d: int = 0x7fffffff
+	for child in parent_node.get_children():
+		var worker := child as Worker
+		if worker == null or worker == self:
+			continue
+		if _fog != null and not _fog.is_explored(worker.current_grid()):
+			continue
+		var d: int = maxi(
+			absi(worker.current_grid().x - current_grid().x),
+			absi(worker.current_grid().y - current_grid().y),
+		)
+		if d < best_d and _pathfinder.has_path(current_grid(), worker.current_grid()):
+			best = worker
+			best_d = d
+	return best
 
 
 func _begin_mine(job: MineJob) -> void:
@@ -218,6 +659,23 @@ func _begin_mine(job: MineJob) -> void:
 		_cancel_mine_job(job)
 		return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_WORK
+
+
+func _begin_scrape_rust(job: Job) -> void:
+	var target: Vector2i = job.get("target") as Vector2i
+	if _chunk_manager.get_tile_at(target) != TerrainGenerator.TILE_RUST:
+		if _job_board != null:
+			_job_board.cancel_scrape_rust_at(target)
+		_job = null
+		_state = State.IDLE
+		return
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		_release_and_idle()
+		return
 	_path = path
 	_path_index = 0
 	_state = State.MOVING_TO_WORK
@@ -384,6 +842,7 @@ func _arrive_at_build_site() -> void:
 
 
 func _take_into_hand(item: Item) -> void:
+	_remember("picked up %s" % Item.stack_label(item.kind, item.count))
 	if item.get_parent() != null:
 		item.get_parent().remove_child(item)
 	add_child(item)
@@ -424,6 +883,7 @@ func _drop_item() -> void:
 	var placed: Item = zone.place(_carried, haul.dropoff)
 	placed.reserved_by = null
 	_carried = null
+	_remember("stored %s at %d,%d" % [Item.stack_label(placed.kind, placed.count), haul.dropoff.x, haul.dropoff.y])
 	_finish_job()
 	if _stockpile_manager != null:
 		_stockpile_manager.stockpile_changed.emit()
@@ -447,6 +907,8 @@ func _drop_in_place() -> void:
 		_release_and_idle()
 	else:
 		_finish_job()
+	if dropped != null:
+		_remember("dropped %s at %d,%d" % [Item.stack_label(dropped.kind, dropped.count), dropped.grid.x, dropped.grid.y])
 	if dropped != null and _stockpile_manager != null:
 		_stockpile_manager.on_item_spawned(dropped)
 
@@ -472,6 +934,15 @@ func _complete_mine(mine: MineJob) -> void:
 				_colony_site.call("spawn_item_at", mine.target, Item.Kind.CIRCUIT)
 		elif randf() < 0.08:
 			_colony_site.call("spawn_item_at", mine.target, Item.Kind.COMPONENT)
+	_remember("mined %d,%d" % [mine.target.x, mine.target.y])
+	_finish_job()
+
+
+func _complete_scrape_rust(scrape: Job) -> void:
+	var target: Vector2i = scrape.get("target") as Vector2i
+	if _chunk_manager.get_tile_at(target) == TerrainGenerator.TILE_RUST:
+		_chunk_manager.set_tile_at(target, TerrainGenerator.TILE_FLOOR)
+		_remember("scraped rust at %d,%d" % [target.x, target.y])
 	_finish_job()
 
 
@@ -485,6 +956,11 @@ func _complete_build(build: BuildJob) -> void:
 		_chunk_manager.set_tile_at(build.anchor, TerrainGenerator.TILE_WALL)
 	elif _colony_site != null and _colony_site.has_method("build_structure"):
 		_colony_site.call("build_structure", build.blueprint_id, build.anchor)
+	_remember("built %s at %d,%d" % [
+		BuildBlueprint.display_name(build.blueprint_id),
+		build.anchor.x,
+		build.anchor.y,
+	])
 	_finish_job()
 
 
@@ -497,6 +973,8 @@ func _finish_job() -> void:
 	_path_index = 0
 	_state = State.IDLE
 	_idle_cooldown = 0.0
+	_clear_activity()
+	_clear_resume()
 
 
 func _release_and_idle() -> void:
@@ -509,6 +987,8 @@ func _release_and_idle() -> void:
 	_path_index = 0
 	_state = State.IDLE
 	_idle_cooldown = IDLE_RETRY_SECONDS
+	_clear_activity()
+	_clear_resume()
 
 
 func _abandon_job(release_claim: bool = true) -> void:
@@ -540,6 +1020,8 @@ func _abandon_job(release_claim: bool = true) -> void:
 	_path_index = 0
 	_state = State.IDLE
 	_idle_cooldown = IDLE_RETRY_SECONDS
+	_clear_activity()
+	_clear_resume()
 	if dropped != null and _stockpile_manager != null:
 		_stockpile_manager.on_item_spawned(dropped)
 	elif rematch_item != null and _stockpile_manager != null:
@@ -554,6 +1036,7 @@ func _cancel_mine_job(job: MineJob) -> void:
 	_path_index = 0
 	_state = State.IDLE
 	_idle_cooldown = IDLE_RETRY_SECONDS
+	_clear_activity()
 
 
 func _release_charge_reservation() -> void:
@@ -576,9 +1059,28 @@ func _clear_job_reservations() -> void:
 			(build.source_item as Item).reserved_by = null
 
 
+func _clear_activity() -> void:
+	_activity_timer = 0.0
+	_activity_target = Vector2i.ZERO
+	_activity_partner = null
+
+
+func _clear_resume() -> void:
+	_resume_job = null
+	_resume_state = State.IDLE
+	_resume_path = PackedVector2Array()
+	_resume_path_index = 0
+	_resume_carried = null
+
+
 func _replan() -> void:
 	if _job == null:
-		if _state == State.MOVING_FREEFORM and _path.size() > 0:
+		if (_state == State.MOVING_FREEFORM \
+				or _state == State.ROAMING \
+				or _state == State.WANDERING \
+				or _state == State.MOVING_TO_REST \
+				or _state == State.MOVING_TO_REPAIR \
+				or _state == State.MOVING_TO_SOCIALIZE) and _path.size() > 0:
 			# Try to re-path to the final waypoint.
 			var dest_pixel: Vector2 = _path[_path.size() - 1]
 			var dest: Vector2i = Vector2i(
@@ -597,12 +1099,17 @@ func _replan() -> void:
 	var target_grid: Vector2i
 	match _state:
 		State.MOVING_TO_WORK:
-			var mine_job := _job as MineJob
-			var stand: Vector2i = _reachable_neighbor_of(mine_job.target)
-			if stand == Pathfinder.UNREACHABLE:
-				_cancel_mine_job(mine_job)
+			if _job is MineJob:
+				var mine_job := _job as MineJob
+				var stand: Vector2i = _reachable_neighbor_of(mine_job.target)
+				if stand == Pathfinder.UNREACHABLE:
+					_cancel_mine_job(mine_job)
+					return
+				target_grid = stand
+			elif _is_scrape_job(_job):
+				target_grid = _job.get("target") as Vector2i
+			else:
 				return
-			target_grid = stand
 		State.MOVING_TO_PICKUP:
 			if _job is HaulJob:
 				target_grid = (_job as HaulJob).item.call("get_grid") as Vector2i
@@ -663,6 +1170,7 @@ func command_move(target: Vector2i) -> bool:
 	_path = path
 	_path_index = 0
 	_state = State.MOVING_FREEFORM
+	_remember("ordered to move to %d,%d" % [target.x, target.y])
 	return true
 
 
@@ -681,7 +1189,21 @@ func command_mine(target: Vector2i) -> void:
 	var job: MineJob = _job_board.add_mine_job(target)
 	job.claimed_by = self
 	_job = job
+	_remember("ordered to mine %d,%d" % [target.x, target.y])
 	_begin_mine(job)
+
+
+func command_scrape_rust(target: Vector2i) -> void:
+	if _chunk_manager.get_tile_at(target) != TerrainGenerator.TILE_RUST:
+		return
+	_abandon_job()
+	if _job_board.has_scrape_rust_at(target):
+		_job_board.cancel_scrape_rust_at(target)
+	var job: Job = _job_board.add_scrape_rust_job(target)
+	job.claimed_by = self
+	_job = job
+	_remember("ordered to scrape rust %d,%d" % [target.x, target.y])
+	_begin_scrape_rust(job)
 
 
 func command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> void:
@@ -696,6 +1218,11 @@ func command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL)
 	var job: BuildJob = _job_board.add_build_job(target, blueprint_id)
 	job.claimed_by = self
 	_job = job
+	_remember("ordered to build %s at %d,%d" % [
+		BuildBlueprint.display_name(blueprint_id),
+		target.x,
+		target.y,
+	])
 	_begin_build(job)
 
 
@@ -706,6 +1233,7 @@ func command_charge(target: Vector2i) -> bool:
 		return false
 	_abandon_job()
 	_manual_charging = true
+	_remember("ordered to charge at %d,%d" % [target.x, target.y])
 	return _begin_charge(target)
 
 
@@ -734,13 +1262,79 @@ func _update_energy(delta: float) -> void:
 	match _state:
 		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
 		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
-		State.MOVING_TO_CHARGE:
+		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
+		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE:
 			drain = ENERGY_MOVE_DRAIN_PER_SEC
 		State.WORKING, State.BUILDING:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
-		State.CHARGING:
+		State.CHARGING, State.RESTING:
 			drain = 0.0
 	_energy = clampf(_energy - drain * delta, 0.0, ENERGY_MAX)
+	queue_redraw()
+
+
+func _update_body_stats(delta: float) -> void:
+	var condition_decay: float = 0.0
+	match _state:
+		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
+		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
+		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
+		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE:
+			condition_decay = CONDITION_MOVE_DECAY_PER_SEC * delta
+			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
+		State.WORKING, State.BUILDING:
+			condition_decay = CONDITION_WORK_DECAY_PER_SEC * delta
+			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_WORK_RISE_PER_SEC * delta)
+		State.RESTING:
+			pass
+		_:
+			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
+	if condition_decay <= 0.0:
+		return
+	if _chunk_manager != null and _chunk_manager.get_tile_at(current_grid()) == TerrainGenerator.TILE_RUST:
+		condition_decay *= RUST_CONDITION_DECAY_MULTIPLIER
+	_condition = maxf(0.0, _condition - condition_decay)
+	_damage_limb(condition_decay)
+
+
+func _damage_limb(amount: float) -> void:
+	if _limbs.is_empty():
+		return
+	var limb_name: String = LIMB_NAMES[randi() % LIMB_NAMES.size()]
+	_limbs[limb_name] = maxf(0.0, float(_limbs.get(limb_name, CONDITION_MAX)) - amount * 1.6)
+
+
+func _repair_limbs(amount: float) -> void:
+	for limb_name in LIMB_NAMES:
+		_limbs[limb_name] = minf(CONDITION_MAX, float(_limbs.get(limb_name, CONDITION_MAX)) + amount)
+
+
+func _check_teleporter() -> void:
+	if _chunk_manager == null or _teleport_cooldown > 0.0:
+		return
+	var here: Vector2i = current_grid()
+	if here == _last_teleporter_grid:
+		return
+	if not _chunk_manager.is_teleporter(here):
+		_last_teleporter_grid = Pathfinder.UNREACHABLE
+		return
+	var target: Vector2i = _chunk_manager.random_linked_teleporter(here)
+	if target == Pathfinder.UNREACHABLE:
+		return
+	position = Chunk.grid_to_pixel_center(target)
+	_path = PackedVector2Array()
+	_path_index = 0
+	_teleport_cooldown = TELEPORT_COOLDOWN_SECONDS
+	_last_teleporter_grid = target
+	_remember("teleported from %d,%d to %d,%d" % [here.x, here.y, target.x, target.y])
+	if _job == null:
+		if _state == State.MOVING_TO_SOCIALIZE or _state == State.SOCIALIZING:
+			_resume_after_chat()
+		else:
+			_state = State.IDLE
+			_idle_cooldown = IDLE_RETRY_SECONDS
+	else:
+		_replan()
 	queue_redraw()
 
 
@@ -786,9 +1380,9 @@ func _refresh_action_text() -> void:
 	var next_text: String = ""
 	match _state:
 		State.MOVING_TO_WORK:
-			next_text = "Moving to mine"
+			next_text = "Moving to rust" if _is_scrape_job(_job) else "Moving to mine"
 		State.WORKING:
-			next_text = "Mining"
+			next_text = "Scraping rust" if _is_scrape_job(_job) else "Mining"
 		State.MOVING_TO_PICKUP:
 			if _job is BuildJob:
 				next_text = "Getting " + Item.kind_name((_job as BuildJob).material_kind)
@@ -812,9 +1406,27 @@ func _refresh_action_text() -> void:
 			next_text = "Moving to charge"
 		State.CHARGING:
 			next_text = "Charging"
+		State.ROAMING:
+			next_text = "Roaming"
+		State.WANDERING:
+			next_text = "Wandering"
+		State.MOVING_TO_REST:
+			next_text = "Moving to dock"
+		State.RESTING:
+			next_text = "Resting"
+		State.MOVING_TO_REPAIR:
+			next_text = "Moving to repair"
+		State.REPAIRING:
+			next_text = "Repairing"
+		State.MOVING_TO_SOCIALIZE:
+			next_text = "Moving to chat"
+		State.SOCIALIZING:
+			next_text = "Chatting"
 	if _action_text == next_text:
 		return
 	_action_text = next_text
+	if not next_text.is_empty():
+		_remember(next_text.to_lower())
 	queue_redraw()
 
 
@@ -823,7 +1435,10 @@ func _draw() -> void:
 	if _selected:
 		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.5)
-	draw_circle(Vector2.ZERO, BODY_RADIUS, BODY_COLOR)
+	if _entity_atlas != null:
+		draw_texture_rect_region(_entity_atlas, Rect2(Vector2(-8, -8), Vector2(16, 16)), BOT_REGION)
+	else:
+		draw_circle(Vector2.ZERO, BODY_RADIUS, BODY_COLOR)
 	if _carried != null:
 		draw_circle(Vector2(0, -BODY_RADIUS - 2), 2.0, Item.kind_color(_carried.kind))
 	var bar_pos := Vector2(-BODY_RADIUS, BODY_RADIUS + 3.0)
@@ -839,9 +1454,17 @@ func _draw_action_bubble() -> void:
 	var font: Font = ThemeDB.fallback_font
 	var text_size := font.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
 	var pad := Vector2(4, 3)
-	var origin := Vector2(roundf(-text_size.x * 0.5 - pad.x), roundf(-BODY_RADIUS - 24.0))
+	var screen_scale: Vector2 = get_global_transform_with_canvas().get_scale()
+	if is_zero_approx(screen_scale.x) or is_zero_approx(screen_scale.y):
+		return
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0 / screen_scale.x, 1.0 / screen_scale.y))
+	var origin := Vector2(
+		roundf(ACTION_BUBBLE_SCREEN_OFFSET.x - text_size.x * 0.5 - pad.x),
+		roundf(ACTION_BUBBLE_SCREEN_OFFSET.y - BODY_RADIUS - text_size.y - pad.y),
+	)
 	var rect := Rect2(origin, text_size + pad * 2.0)
 	draw_rect(rect, Color(0.02, 0.02, 0.03, 0.82))
 	draw_rect(rect, Color(0.9, 0.9, 1.0, 0.6), false, 1.0)
 	draw_string(font, origin + Vector2(pad.x, text_size.y + pad.y - 1.0),
 		_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE, Color.WHITE)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

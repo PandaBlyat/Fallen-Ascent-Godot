@@ -7,17 +7,32 @@ extends HBoxContainer
 
 const SPEEDS := [0.0, 1.0, 2.0, 3.0]
 const LABELS := ["||", "1x", "2x", "3x"]
+const COLOR_BG := Color(0.045, 0.052, 0.06, 0.88)
+const COLOR_BG_HOVER := Color(0.14, 0.16, 0.18, 0.94)
+const COLOR_ACTIVE := Color(0.25, 0.20, 0.12, 1.0)
+const COLOR_BORDER := Color(0.33, 0.36, 0.39, 0.62)
+const COLOR_ACCENT := Color(0.96, 0.58, 0.16, 1.0)
+const COLOR_TEXT := Color(0.90, 0.93, 0.91, 1.0)
 
 var _buttons: Array[Button] = []
 var _last_play_speed: float = 1.0
 
 
 func _ready() -> void:
+	add_theme_constant_override("separation", 4)
 	for i in SPEEDS.size():
 		var b: Button = Button.new()
 		b.text = LABELS[i]
 		b.toggle_mode = true
 		b.custom_minimum_size = Vector2(44, 32)
+		b.add_theme_font_size_override("font_size", 12)
+		b.add_theme_stylebox_override("normal", _button_style(COLOR_BG, COLOR_BORDER))
+		b.add_theme_stylebox_override("hover", _button_style(COLOR_BG_HOVER, COLOR_ACCENT))
+		b.add_theme_stylebox_override("pressed", _button_style(COLOR_ACTIVE, COLOR_ACCENT))
+		b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		b.add_theme_color_override("font_color", COLOR_TEXT)
+		b.add_theme_color_override("font_hover_color", Color.WHITE)
+		b.add_theme_color_override("font_pressed_color", Color.WHITE)
 		b.pressed.connect(_on_pressed.bind(i))
 		add_child(b)
 		_buttons.append(b)
@@ -51,3 +66,15 @@ func _on_speed_changed(speed: float) -> void:
 		_last_play_speed = speed
 	for i in _buttons.size():
 		_buttons[i].set_pressed_no_signal(is_equal_approx(speed, SPEEDS[i]))
+
+
+func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	return style

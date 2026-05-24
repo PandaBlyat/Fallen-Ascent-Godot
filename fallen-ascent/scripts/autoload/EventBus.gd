@@ -19,9 +19,12 @@ extends Node
 ##   worker_selected(worker)          - legacy single-worker selection mirror.
 ##   workers_selected(workers)        - emitted by SelectionController when the
 ##                                      player changes worker selection.
+##   structure_selected(id, anchor)   - emitted by SelectionController when a
+##                                      built structure is selected. id -1 clears.
 ##   structure_built(manager)         - emitted after StructureManager places
 ##                                      or changes static objects.
-##   visibility_changed(bounds)       - emitted after FogOfWar recomputes sight.
+##   visibility_changed(bounds)       - emitted after FogOfWar changes sight.
+##                                      Payload: changed grid bounds only.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -36,6 +39,7 @@ signal chunk_unloaded(chunk_coord: Vector2i)
 signal tile_changed(grid: Vector2i, new_tile: int)
 signal worker_selected(worker: Node)
 signal workers_selected(workers: Array)
+signal structure_selected(id: int, anchor: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
 @warning_ignore_restore("unused_signal")

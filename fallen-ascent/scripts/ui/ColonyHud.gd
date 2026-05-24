@@ -24,20 +24,44 @@ const ICON_EXTRACTOR := Vector2i(7, 0)
 const ICON_SENSOR := Vector2i(8, 0)
 const ICON_CHARGE_PAD := Vector2i(9, 0)
 const ICON_FABRICATOR := Vector2i(10, 0)
+const ICON_DOCK := ICON_CHARGE_PAD
+const ICON_REPAIR_BENCH := ICON_FABRICATOR
+const ICON_PARTS_LOOM := ICON_FABRICATOR
+const ICON_MAINTENANCE_DOCK := ICON_CHARGE_PAD
+const ICON_CALIBRATION_SHRINE := ICON_SENSOR
+
+# Colors for UI accents and states
+const COLOR_BG_DARK := Color(0.045, 0.052, 0.06, 0.88)
+const COLOR_BG_RAISED := Color(0.10, 0.115, 0.13, 0.92)
+const COLOR_BORDER_DEFAULT := Color(0.33, 0.36, 0.39, 0.62)
+const COLOR_ACCENT_AMBER := Color(0.96, 0.58, 0.16, 1.0)
+const COLOR_ACCENT_MUTED := Color(0.55, 0.60, 0.64, 0.42)
+const COLOR_TEXT_LIGHT := Color(0.90, 0.93, 0.91, 1.0)
+const COLOR_TEXT_MUTED := Color(0.67, 0.70, 0.68, 1.0)
+const COLOR_METER_GOOD := Color(0.3, 0.9, 0.55)
+const COLOR_METER_LOW := Color(1.0, 0.78, 0.2)
+const HISTORY_VISIBLE_ROWS: int = 4
+const ENTITY_ATLAS_PATH := "res://resources/entities/placeholder_entities_atlas.png"
+const BOT_REGION := Rect2(Vector2.ZERO, Vector2(16, 16))
 
 @export var designator_path: NodePath
 @export var job_board_path: NodePath
 @export var stockpile_manager_path: NodePath
 @export var items_root_path: NodePath
 @export var workers_root_path: NodePath
+@export var structure_manager_path: NodePath
+@export var camera_path: NodePath
 
 var _designator: Designator
 var _job_board: JobBoard
 var _stockpile_manager: StockpileManager
 var _items_root: Node2D
 var _workers_root: Node2D
+var _structure_manager: StructureManager
+var _camera: CameraController
 
 var _atlas: Texture2D
+var _entity_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
 var _current_tab: StringName = TAB_ORDERS
 var _command_grid: GridContainer
@@ -46,6 +70,12 @@ var _workers_label: Label
 var _jobs_label: Label
 var _resource_labels: Dictionary = {}            ## int -> Label
 var _command_buttons: Dictionary = {}            ## int -> Button
+var _selection_panel: PanelContainer
+var _selection_box: HBoxContainer
+var _npc_strip: BoxContainer
+var _selected_workers: Array[Worker] = []
+var _selected_structure_id: int = -1
+var _selected_structure_anchor: Vector2i = Vector2i.ZERO
 
 
 func _ready() -> void:
@@ -55,7 +85,10 @@ func _ready() -> void:
 	_stockpile_manager = get_node_or_null(stockpile_manager_path) as StockpileManager
 	_items_root = get_node_or_null(items_root_path) as Node2D
 	_workers_root = get_node_or_null(workers_root_path) as Node2D
+	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
+	_camera = get_node_or_null(camera_path) as CameraController
 	_atlas = load(UI_ATLAS_PATH) as Texture2D
+	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 
 	_build_layout()
 	_connect_signals()
@@ -79,64 +112,107 @@ func _connect_signals() -> void:
 	if _stockpile_manager != null:
 		_stockpile_manager.stockpile_changed.connect(_refresh_status)
 	EventBus.workers_selected.connect(_on_workers_selected)
+	EventBus.structure_selected.connect(_on_structure_selected)
 
 
 func _build_layout() -> void:
+	# Top Strip Container
 	var top_strip := PanelContainer.new()
 	top_strip.name = "TopStrip"
 	top_strip.mouse_filter = Control.MOUSE_FILTER_STOP
-	top_strip.add_theme_stylebox_override("panel", _panel_style(Color(0.025, 0.027, 0.03, 0.90), Color(0.42, 0.45, 0.48, 0.55)))
-	top_strip.anchor_left = 0.5
-	top_strip.anchor_right = 0.5
-	top_strip.offset_left = -430.0
-	top_strip.offset_top = 8.0
-	top_strip.offset_right = 430.0
-	top_strip.offset_bottom = 48.0
+	top_strip.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0))
+	top_strip.anchor_left = 0.0
+	top_strip.anchor_right = 1.0
+	top_strip.offset_left = 12.0
+	top_strip.offset_top = 10.0
+	top_strip.offset_right = -236.0
+	top_strip.offset_bottom = 50.0
 	add_child(top_strip)
 
 	var top_margin := MarginContainer.new()
 	top_margin.add_theme_constant_override("margin_left", 10)
-	top_margin.add_theme_constant_override("margin_top", 6)
+	top_margin.add_theme_constant_override("margin_top", 5)
 	top_margin.add_theme_constant_override("margin_right", 10)
-	top_margin.add_theme_constant_override("margin_bottom", 6)
+	top_margin.add_theme_constant_override("margin_bottom", 5)
 	top_strip.add_child(top_margin)
 
 	var status_row := HBoxContainer.new()
-	status_row.add_theme_constant_override("separation", 14)
+	status_row.add_theme_constant_override("separation", 7)
 	top_margin.add_child(status_row)
 
+	# Stats Badges
 	_workers_label = _status_label("workers 0")
-	status_row.add_child(_workers_label)
+	status_row.add_child(_badge_container(_workers_label))
+
 	_jobs_label = _status_label("jobs 0")
-	status_row.add_child(_jobs_label)
+	status_row.add_child(_badge_container(_jobs_label))
+
 	_active_label = _status_label("tool -")
-	status_row.add_child(_active_label)
+	_active_label.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
+	status_row.add_child(_badge_container(_active_label))
+
 	status_row.add_child(_separator())
 
+	# Resource Badges
 	for kind in _tracked_item_kinds():
 		var label := _status_label("%s 0" % Item.kind_name(kind))
-		label.add_theme_color_override("font_color", Item.kind_color(kind).lerp(Color.WHITE, 0.35))
-		status_row.add_child(label)
+		label.add_theme_color_override("font_color", Item.kind_color(kind).lerp(Color.WHITE, 0.4))
+
+		var badge := _badge_container(label)
+		status_row.add_child(badge)
 		_resource_labels[kind] = label
 
+	var npc_panel := PanelContainer.new()
+	npc_panel.name = "NpcStrip"
+	npc_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	npc_panel.anchor_left = 0.0
+	npc_panel.anchor_top = 0.0
+	npc_panel.anchor_right = 0.0
+	npc_panel.anchor_bottom = 0.0
+	npc_panel.offset_left = 12.0
+	npc_panel.offset_top = 60.0
+	npc_panel.offset_right = 204.0
+	npc_panel.offset_bottom = 198.0
+	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	add_child(npc_panel)
+
+	var npc_margin := MarginContainer.new()
+	npc_margin.add_theme_constant_override("margin_left", 7)
+	npc_margin.add_theme_constant_override("margin_top", 7)
+	npc_margin.add_theme_constant_override("margin_right", 7)
+	npc_margin.add_theme_constant_override("margin_bottom", 7)
+	npc_panel.add_child(npc_margin)
+
+	var npc_scroll := ScrollContainer.new()
+	npc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	npc_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	npc_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	npc_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	npc_margin.add_child(npc_scroll)
+
+	_npc_strip = VBoxContainer.new()
+	_npc_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_npc_strip.add_theme_constant_override("separation", 6)
+	npc_scroll.add_child(_npc_strip)
+
+	# Command Palette Panel
 	var palette := PanelContainer.new()
 	palette.name = "CommandPalette"
 	palette.mouse_filter = Control.MOUSE_FILTER_STOP
-	palette.anchors_preset = Control.PRESET_BOTTOM_WIDE
-	palette.anchor_left = 0.5
+	palette.anchor_left = 0.0
 	palette.anchor_top = 1.0
-	palette.anchor_right = 0.5
+	palette.anchor_right = 0.0
 	palette.anchor_bottom = 1.0
-	palette.offset_left = -300.0
-	palette.offset_top = -210.0
-	palette.offset_right = 300.0
-	palette.offset_bottom = -10.0
-	palette.add_theme_stylebox_override("panel", _panel_style(Color(0.035, 0.036, 0.04, 0.94), Color(0.56, 0.52, 0.44, 0.65)))
+	palette.offset_left = 16.0
+	palette.offset_top = -202.0
+	palette.offset_right = 548.0
+	palette.offset_bottom = -16.0
+	palette.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
 	add_child(palette)
 
 	var palette_margin := MarginContainer.new()
 	palette_margin.add_theme_constant_override("margin_left", 10)
-	palette_margin.add_theme_constant_override("margin_top", 10)
+	palette_margin.add_theme_constant_override("margin_top", 9)
 	palette_margin.add_theme_constant_override("margin_right", 10)
 	palette_margin.add_theme_constant_override("margin_bottom", 10)
 	palette.add_child(palette_margin)
@@ -146,25 +222,72 @@ func _build_layout() -> void:
 	palette_margin.add_child(palette_box)
 
 	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 6)
+	tabs.add_theme_constant_override("separation", 4)
 	palette_box.add_child(tabs)
+
 	_add_tab_button(tabs, TAB_ORDERS, "Orders")
 	_add_tab_button(tabs, TAB_ZONES, "Zones")
 	_add_tab_button(tabs, TAB_STRUCTURES, "Structures")
 
 	_command_grid = GridContainer.new()
-	_command_grid.columns = 4
+	_command_grid.columns = 5
 	_command_grid.add_theme_constant_override("h_separation", 6)
-	_command_grid.add_theme_constant_override("v_separation", 6)
+	_command_grid.add_theme_constant_override("v_separation", 7)
 	palette_box.add_child(_command_grid)
 
+	_selection_panel = PanelContainer.new()
+	_selection_panel.name = "SelectionPanel"
+	_selection_panel.visible = false
+	_selection_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_selection_panel.anchor_left = 1.0
+	_selection_panel.anchor_top = 1.0
+	_selection_panel.anchor_right = 1.0
+	_selection_panel.anchor_bottom = 1.0
+	_selection_panel.offset_left = -670.0
+	_selection_panel.offset_top = -282.0
+	_selection_panel.offset_right = -16.0
+	_selection_panel.offset_bottom = -16.0
+	_selection_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
+	add_child(_selection_panel)
 
-func _add_tab_button(parent: HBoxContainer, tab: StringName, label: String) -> void:
+	var selection_margin := MarginContainer.new()
+	selection_margin.add_theme_constant_override("margin_left", 12)
+	selection_margin.add_theme_constant_override("margin_top", 12)
+	selection_margin.add_theme_constant_override("margin_right", 12)
+	selection_margin.add_theme_constant_override("margin_bottom", 12)
+	_selection_panel.add_child(selection_margin)
+
+	var selection_scroll := ScrollContainer.new()
+	selection_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	selection_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	selection_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	selection_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	selection_margin.add_child(selection_scroll)
+
+	_selection_box = HBoxContainer.new()
+	_selection_box.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_selection_box.add_theme_constant_override("separation", 10)
+	selection_scroll.add_child(_selection_box)
+
+
+func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
 	var button := Button.new()
-	button.text = label
+	button.text = label_text
 	button.toggle_mode = true
 	button.button_group = _tab_group
-	button.custom_minimum_size = Vector2(112, 30)
+	button.custom_minimum_size = Vector2(96, 28)
+	button.add_theme_font_size_override("font_size", 12)
+
+	# Tab specific styling
+	button.add_theme_stylebox_override("normal", _tab_style(Color(0.12, 0.14, 0.16, 0.4), Color.TRANSPARENT))
+	button.add_theme_stylebox_override("hover", _tab_style(Color(0.18, 0.20, 0.22, 0.6), COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
 	button.pressed.connect(_set_tab.bind(tab))
 	parent.add_child(button)
 
@@ -183,7 +306,7 @@ func _set_tab(tab: StringName) -> void:
 			command["tooltip"] as String,
 			command["icon"] as Vector2i,
 		)
-	_add_command_button(Designator.Mode.NONE, "Cancel", "Clear active tool", ICON_CANCEL)
+	_add_command_button(Designator.Mode.NONE, "Cancel", "Cancel\nClears active order, zone, or build tool.", ICON_CANCEL)
 	_refresh_mode_buttons()
 
 
@@ -191,8 +314,8 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 	match tab:
 		TAB_ZONES:
 			return [
-				{"mode": Designator.Mode.STOCKPILE, "label": "Stockpile", "tooltip": "Paint stockpile zone", "icon": ICON_STOCKPILE},
-				{"mode": Designator.Mode.REMOVE_STOCKPILE, "label": "Remove", "tooltip": "Remove stockpile zone", "icon": ICON_REMOVE},
+				{"mode": Designator.Mode.STOCKPILE, "label": "Stockpile", "tooltip": "Stockpile\nPaint explored walkable cells for loose item storage.\nWorkers haul loose stacks here and merge same-kind stacks.", "icon": ICON_STOCKPILE},
+				{"mode": Designator.Mode.REMOVE_STOCKPILE, "label": "Remove", "tooltip": "Remove stockpile\nDeletes stockpile zone under cursor.\nStored items drop in place as loose stacks.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
 			return [
@@ -203,25 +326,45 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR},
 				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD},
 				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR},
+				{"mode": Designator.Mode.BUILD_DOCK, "label": "Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.DOCK), "icon": ICON_DOCK},
+				{"mode": Designator.Mode.BUILD_REPAIR_BENCH, "label": "Repair", "tooltip": _build_tooltip(BuildBlueprint.Id.REPAIR_BENCH), "icon": ICON_REPAIR_BENCH},
+				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Parts Loom", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM},
+				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Maint Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK},
+				{"mode": Designator.Mode.BUILD_CALIBRATION_SHRINE, "label": "Calibrate", "tooltip": _build_tooltip(BuildBlueprint.Id.CALIBRATION_SHRINE), "icon": ICON_CALIBRATION_SHRINE},
 			]
 		_:
 			return [
-				{"mode": Designator.Mode.MINE, "label": "Mine", "tooltip": "Mark wall cells for mining", "icon": ICON_MINE},
+				{"mode": Designator.Mode.MINE, "label": "Mine", "tooltip": "Mine\nMark wall, service core, or rich wall cells.\nWorkers dig adjacent cells and drop salvage resources.", "icon": ICON_MINE},
 			]
 
 
-func _add_command_button(mode: int, label: String, tooltip: String, icon_cell: Vector2i) -> void:
+func _add_command_button(mode: int, label_text: String, tooltip: String, icon_cell: Vector2i) -> void:
 	var button := Button.new()
-	button.text = label
+	button.text = label_text
 	button.tooltip_text = tooltip
 	button.toggle_mode = true
-	button.custom_minimum_size = Vector2(112, 56)
+	button.custom_minimum_size = Vector2(96, 38)
 	button.icon = _atlas_icon(icon_cell)
 	button.expand_icon = true
-	button.add_theme_stylebox_override("normal", _button_style(Color(0.070, 0.074, 0.082, 0.96)))
-	button.add_theme_stylebox_override("hover", _button_style(Color(0.115, 0.122, 0.132, 0.98)))
-	button.add_theme_stylebox_override("pressed", _button_style(Color(0.34, 0.29, 0.18, 1.0)))
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+
+	# Styling typography & spacing for button structure
+	button.add_theme_font_size_override("font_size", 12)
+	button.add_theme_constant_override("h_separation", 6)
+
+	var base_button_color := COLOR_BG_RAISED
+	var hover_button_color := Color(0.16, 0.18, 0.20, 0.95)
+	var active_button_color := Color(0.25, 0.20, 0.12, 1.0) # Amber tone when active
+
+	button.add_theme_stylebox_override("normal", _button_style(base_button_color, COLOR_BORDER_DEFAULT))
+	button.add_theme_stylebox_override("hover", _button_style(hover_button_color, COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _button_style(active_button_color, COLOR_ACCENT_AMBER))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
 	button.pressed.connect(_on_command_pressed.bind(mode))
 	_command_grid.add_child(button)
 	_command_buttons[mode] = button
@@ -245,13 +388,26 @@ func _on_job_changed(_job: Job) -> void:
 	_refresh_status()
 
 
-func _on_workers_selected(_workers: Array[Worker]) -> void:
+func _on_workers_selected(workers: Array[Worker]) -> void:
+	_selected_workers = workers
+	if not _selected_workers.is_empty():
+		_selected_structure_id = -1
 	_refresh_status()
+	_refresh_selection_panel()
+
+
+func _on_structure_selected(id: int, anchor: Vector2i) -> void:
+	_selected_structure_id = id
+	_selected_structure_anchor = anchor
+	if id >= 0:
+		_selected_workers.clear()
+	_refresh_selection_panel()
 
 
 func _refresh_all() -> void:
 	_refresh_mode_buttons()
 	_refresh_status()
+	_refresh_selection_panel()
 
 
 func _refresh_mode_buttons() -> void:
@@ -275,6 +431,8 @@ func _refresh_status() -> void:
 		var label := _resource_labels[kind] as Label
 		if label != null:
 			label.text = "%s %d" % [Item.kind_name(int(kind)), int(counts.get(kind, 0))]
+	_refresh_npc_strip()
+	_refresh_selection_panel()
 
 
 func _resource_counts() -> Dictionary:
@@ -314,11 +472,195 @@ func _tracked_item_kinds() -> Array[int]:
 
 
 func _build_tooltip(blueprint_id: int) -> String:
-	var parts: Array[String] = []
-	var ingredients: Dictionary = BuildBlueprint.ingredients(blueprint_id)
-	for kind in ingredients.keys():
-		parts.append("%s x%d" % [Item.kind_name(int(kind)), int(ingredients[kind])])
-	return "%s: %s" % [BuildBlueprint.display_name(blueprint_id).capitalize(), ", ".join(parts)]
+	return BuildBlueprint.tooltip_text(blueprint_id)
+
+
+func _refresh_selection_panel() -> void:
+	if _selection_panel == null or _selection_box == null:
+		return
+	for child in _selection_box.get_children():
+		_selection_box.remove_child(child)
+		child.queue_free()
+	if _selected_structure_id >= 0:
+		_build_structure_card()
+	elif not _selected_workers.is_empty():
+		_build_worker_cards()
+	_selection_panel.visible = _selection_box.get_child_count() > 0
+
+
+func _build_worker_cards() -> void:
+	var live_workers: Array[Worker] = []
+	for worker in _selected_workers:
+		if worker != null and is_instance_valid(worker):
+			live_workers.append(worker)
+	_selected_workers = live_workers
+	var shown: int = mini(live_workers.size(), 3)
+	for i in range(shown):
+		var worker: Worker = live_workers[i]
+		var card := VBoxContainer.new()
+		card.custom_minimum_size = Vector2(196, 0)
+		card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		card.add_theme_constant_override("separation", 3)
+		_selection_box.add_child(card)
+		_add_card_title(card, worker.display_name())
+		_add_card_line(card, "state", worker.state_label())
+		_add_card_line(card, "job", worker.job_label())
+		_add_card_line(card, "carry", worker.carried_label())
+		_add_meter(card, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
+		_add_meter(card, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
+		_add_meter(card, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
+		_add_card_line(card, "social", "%d" % worker.social_score())
+		for limb_line in worker.limb_status_lines():
+			_add_card_line(card, "limb", limb_line)
+		_add_history_panel(card, worker)
+	if live_workers.size() > 3:
+		_add_card_line(_selection_box, "more", "%d selected" % live_workers.size())
+
+
+func _build_structure_card() -> void:
+	if _structure_manager == null:
+		return
+	var status: Dictionary = _structure_manager.structure_status_by_anchor(_selected_structure_anchor)
+	if status.is_empty():
+		_selected_structure_id = -1
+		return
+	var card := VBoxContainer.new()
+	card.custom_minimum_size = Vector2(360, 0)
+	card.add_theme_constant_override("separation", 4)
+	_selection_box.add_child(card)
+	_add_card_title(card, (status["name"] as String).capitalize())
+	_add_card_line(card, "grid", "%d,%d" % [_selected_structure_anchor.x, _selected_structure_anchor.y])
+	_add_card_line(card, "does", status["description"] as String)
+	_add_card_line(card, "production", status["production"] as String)
+	var interval: float = float(status["interval"])
+	if interval > 0.0:
+		_add_meter(card, "progress", float(status["progress"]), COLOR_ACCENT_AMBER)
+		_add_card_line(card, "cycle", "%.0fs" % interval)
+	var inputs: String = status["inputs"] as String
+	if inputs != "none":
+		_add_card_line(card, "inputs", inputs)
+	var blocked: String = status["blocked"] as String
+	if not blocked.is_empty():
+		_add_card_line(card, "blocked", blocked, Color(1.0, 0.5, 0.35))
+
+
+func _add_card_title(parent: Control, text_value: String) -> void:
+	var label := Label.new()
+	label.text = text_value
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color.WHITE)
+	parent.add_child(label)
+
+
+func _add_card_line(parent: Control, key: String, value: String, color: Color = COLOR_TEXT_LIGHT) -> void:
+	var label := Label.new()
+	label.text = "%s: %s" % [key, value]
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", color)
+	parent.add_child(label)
+
+
+func _add_meter(parent: Control, label_text: String, ratio: float, fill: Color) -> void:
+	var label := Label.new()
+	label.text = "%s %d%%" % [label_text, int(roundf(clampf(ratio, 0.0, 1.0) * 100.0))]
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	parent.add_child(label)
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = clampf(ratio, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 6)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.09, 0.10, 0.95)
+	bg.corner_radius_top_left = 2
+	bg.corner_radius_top_right = 2
+	bg.corner_radius_bottom_left = 2
+	bg.corner_radius_bottom_right = 2
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = fill
+	fg.corner_radius_top_left = 2
+	fg.corner_radius_top_right = 2
+	fg.corner_radius_bottom_left = 2
+	fg.corner_radius_bottom_right = 2
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fg)
+	parent.add_child(bar)
+
+
+func _add_history_panel(parent: Control, worker: Worker) -> void:
+	var title := Label.new()
+	title.text = "thought history"
+	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	parent.add_child(title)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(178, HISTORY_VISIBLE_ROWS * 16)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	parent.add_child(scroll)
+
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(178, 0)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 2)
+	scroll.add_child(box)
+
+	var history: Array[String] = worker.action_history()
+	for entry in history:
+		var label := Label.new()
+		label.text = entry
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.custom_minimum_size = Vector2(168, 0)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.add_theme_font_size_override("font_size", 10)
+		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+		box.add_child(label)
+
+
+func _refresh_npc_strip() -> void:
+	if _npc_strip == null:
+		return
+	for child in _npc_strip.get_children():
+		_npc_strip.remove_child(child)
+		child.queue_free()
+	if _workers_root == null:
+		return
+	for child in _workers_root.get_children():
+		var worker := child as Worker
+		if worker == null:
+			continue
+		var button := Button.new()
+		button.text = worker.display_name()
+		button.icon = _bot_icon()
+		button.expand_icon = true
+		button.custom_minimum_size = Vector2(176, 32)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.add_theme_font_size_override("font_size", 11)
+		button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+		button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+		button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+		button.pressed.connect(_focus_worker.bind(worker))
+		_npc_strip.add_child(button)
+
+
+func _focus_worker(worker: Worker) -> void:
+	if worker == null or not is_instance_valid(worker) or _camera == null:
+		return
+	_camera.center_on(worker.global_position)
+
+
+func _bot_icon() -> Texture2D:
+	if _entity_atlas == null:
+		return null
+	var icon := AtlasTexture.new()
+	icon.atlas = _entity_atlas
+	icon.region = BOT_REGION
+	return icon
 
 
 func _atlas_icon(cell: Vector2i) -> Texture2D:
@@ -330,21 +672,68 @@ func _atlas_icon(cell: Vector2i) -> Texture2D:
 	return icon
 
 
-func _status_label(text: String) -> Label:
+func _status_label(label_text: String) -> Label:
 	var label := Label.new()
-	label.text = text
-	label.add_theme_font_size_override("font_size", 14)
-	label.add_theme_color_override("font_color", Color(0.90, 0.92, 0.90, 1.0))
+	label.text = label_text
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
 	return label
 
 
-func _separator() -> VSeparator:
+# Wraps a label in a neat panel "badge" for consistent visual separation
+func _badge_container(content_label: Label) -> PanelContainer:
+	var badge := PanelContainer.new()
+	var badge_style := StyleBoxFlat.new()
+	badge_style.bg_color = COLOR_BG_RAISED
+	badge_style.set_border_width_all(1)
+	badge_style.border_color = Color(0.29, 0.32, 0.35, 0.46)
+	badge_style.corner_radius_top_left = 3
+	badge_style.corner_radius_top_right = 3
+	badge_style.corner_radius_bottom_left = 3
+	badge_style.corner_radius_bottom_right = 3
+	badge.add_theme_stylebox_override("panel", badge_style)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 7)
+	margin.add_theme_constant_override("margin_top", 3)
+	margin.add_theme_constant_override("margin_right", 7)
+	margin.add_theme_constant_override("margin_bottom", 3)
+
+	badge.add_child(margin)
+	margin.add_child(content_label)
+	return badge
+
+
+func _separator() -> Control:
 	var sep := VSeparator.new()
-	sep.custom_minimum_size = Vector2(8, 0)
+	var sep_style := StyleBoxLine.new()
+	sep_style.color = COLOR_ACCENT_MUTED
+	sep_style.vertical = true
+	sep_style.grow_begin = 2.0
+	sep_style.grow_end = 2.0
+	sep.add_theme_stylebox_override("line", sep_style)
+	sep.custom_minimum_size = Vector2(12, 0)
 	return sep
 
 
-func _panel_style(fill: Color, border: Color) -> StyleBoxFlat:
+func _panel_style(fill: Color, border: Color, radius: float, with_shadow: bool = false) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = fill
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.corner_radius_top_left = int(radius)
+	style.corner_radius_top_right = int(radius)
+	style.corner_radius_bottom_left = int(radius)
+	style.corner_radius_bottom_right = int(radius)
+
+	if with_shadow:
+		style.shadow_color = Color(0, 0, 0, 0.38)
+		style.shadow_size = 8
+		style.shadow_offset = Vector2(0, 4)
+	return style
+
+
+func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = border
@@ -353,18 +742,23 @@ func _panel_style(fill: Color, border: Color) -> StyleBoxFlat:
 	style.corner_radius_top_right = 4
 	style.corner_radius_bottom_left = 4
 	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 9.0
+	style.content_margin_right = 8.0
 	return style
 
 
-func _button_style(fill: Color) -> StyleBoxFlat:
+func _tab_style(fill: Color, bottom_border_color: Color) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
-	style.border_color = Color(0.30, 0.31, 0.32, 0.8)
-	style.set_border_width_all(1)
-	style.corner_radius_top_left = 3
-	style.corner_radius_top_right = 3
-	style.corner_radius_bottom_left = 3
-	style.corner_radius_bottom_right = 3
-	style.content_margin_left = 8.0
-	style.content_margin_right = 8.0
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+
+	# Tab style uses a dynamic accent line on the bottom edge to show focus/selection
+	if bottom_border_color != Color.TRANSPARENT:
+		style.set_border_width_all(0)
+		style.border_width_bottom = 2
+		style.border_color = bottom_border_color
+
+	style.content_margin_left = 12.0
+	style.content_margin_right = 12.0
 	return style

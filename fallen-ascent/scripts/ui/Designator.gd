@@ -22,10 +22,17 @@ enum Mode {
 	BUILD_SENSOR,
 	BUILD_CHARGE_PAD,
 	BUILD_FABRICATOR,
+	BUILD_DOCK,
+	BUILD_REPAIR_BENCH,
+	BUILD_PARTS_LOOM,
+	BUILD_MAINTENANCE_DOCK,
+	BUILD_CALIBRATION_SHRINE,
 }
 
 const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.18)
 const ZONE_PREVIEW_BORDER := Color(0.4, 0.85, 0.5, 0.6)
+const ORDER_PREVIEW_FILL := Color(0.85, 0.72, 0.35, 0.16)
+const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.65)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -81,6 +88,11 @@ func mode_label() -> String:
 		Mode.BUILD_SENSOR: return "BUILD SENSOR"
 		Mode.BUILD_CHARGE_PAD: return "BUILD CHARGE PAD"
 		Mode.BUILD_FABRICATOR: return "BUILD FABRICATOR"
+		Mode.BUILD_DOCK: return "BUILD DOCK"
+		Mode.BUILD_REPAIR_BENCH: return "BUILD REPAIR BENCH"
+		Mode.BUILD_PARTS_LOOM: return "BUILD PARTS LOOM"
+		Mode.BUILD_MAINTENANCE_DOCK: return "BUILD MAINTENANCE DOCK"
+		Mode.BUILD_CALIBRATION_SHRINE: return "BUILD CALIBRATION SHRINE"
 		_: return "-"
 
 
@@ -150,24 +162,23 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_right_press() -> void:
 	var grid := _world_to_grid(_camera.get_global_mouse_position())
 	match _mode:
-		Mode.MINE:
-			_apply_mine_click(grid)
-		Mode.STOCKPILE:
+		Mode.MINE, Mode.STOCKPILE, Mode.REMOVE_STOCKPILE, \
+		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_LIGHT, Mode.BUILD_EXTRACTOR, \
+		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
+		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
+		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
 			queue_redraw()
-		Mode.REMOVE_STOCKPILE:
-			_apply_remove_stockpile_click(grid)
-		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_LIGHT, Mode.BUILD_EXTRACTOR:
-			_apply_build_click(grid, _blueprint_for_mode())
 
 
 func _on_right_release() -> void:
-	if _mode != Mode.STOCKPILE or not _dragging:
+	if not _dragging:
 		return
 	_dragging = false
 	var cells: Array[Vector2i] = _rect_cells(_drag_start, _drag_end)
+	var blueprint_id: int = _blueprint_for_mode()
 	if _fog != null:
 		var explored_cells: Array[Vector2i] = []
 		for cell in cells:
@@ -175,7 +186,20 @@ func _on_right_release() -> void:
 				explored_cells.append(cell)
 		cells = explored_cells
 	if not cells.is_empty():
-		_stockpile_manager.create_zone(cells)
+		match _mode:
+			Mode.STOCKPILE:
+				_stockpile_manager.create_zone(cells)
+			Mode.MINE:
+				for cell in cells:
+					_apply_mine_click(cell)
+			Mode.REMOVE_STOCKPILE:
+				for cell in cells:
+					_apply_remove_stockpile_click(cell)
+			_:
+				if _is_build_mode():
+					var anchors: Array[Vector2i] = cells if blueprint_id == BuildBlueprint.Id.WALL else [_drag_start]
+					for cell in anchors:
+						_apply_build_click(cell, blueprint_id)
 	queue_redraw()
 
 
@@ -190,6 +214,8 @@ func _apply_mine_click(grid: Vector2i) -> void:
 			or tile == TerrainGenerator.TILE_SERVICE_CORE \
 			or tile == TerrainGenerator.TILE_RICH_WALL:
 		_job_board.add_mine_job(grid)
+	elif tile == TerrainGenerator.TILE_RUST:
+		_job_board.add_scrape_rust_job(grid)
 
 
 func _apply_build_click(grid: Vector2i, blueprint_id: int) -> void:
@@ -226,6 +252,16 @@ func _blueprint_for_mode() -> int:
 			return BuildBlueprint.Id.CHARGE_PAD
 		Mode.BUILD_FABRICATOR:
 			return BuildBlueprint.Id.FABRICATOR
+		Mode.BUILD_DOCK:
+			return BuildBlueprint.Id.DOCK
+		Mode.BUILD_REPAIR_BENCH:
+			return BuildBlueprint.Id.REPAIR_BENCH
+		Mode.BUILD_PARTS_LOOM:
+			return BuildBlueprint.Id.PARTS_LOOM
+		Mode.BUILD_MAINTENANCE_DOCK:
+			return BuildBlueprint.Id.MAINTENANCE_DOCK
+		Mode.BUILD_CALIBRATION_SHRINE:
+			return BuildBlueprint.Id.CALIBRATION_SHRINE
 		_:
 			return BuildBlueprint.Id.WALL
 
@@ -237,7 +273,12 @@ func _is_build_mode() -> bool:
 		or _mode == Mode.BUILD_EXTRACTOR \
 		or _mode == Mode.BUILD_SENSOR \
 		or _mode == Mode.BUILD_CHARGE_PAD \
-		or _mode == Mode.BUILD_FABRICATOR
+		or _mode == Mode.BUILD_FABRICATOR \
+		or _mode == Mode.BUILD_DOCK \
+		or _mode == Mode.BUILD_REPAIR_BENCH \
+		or _mode == Mode.BUILD_PARTS_LOOM \
+		or _mode == Mode.BUILD_MAINTENANCE_DOCK \
+		or _mode == Mode.BUILD_CALIBRATION_SHRINE
 
 
 func _world_to_grid(world_pos: Vector2) -> Vector2i:
@@ -267,8 +308,10 @@ func _draw() -> void:
 			(hi.y - lo.y + 1) * Chunk.TILE_PIXELS,
 		)
 		var r := Rect2(origin, size)
-		draw_rect(r, ZONE_PREVIEW_FILL)
-		draw_rect(r, ZONE_PREVIEW_BORDER, false, 1.0)
+		var fill: Color = ZONE_PREVIEW_FILL if _mode == Mode.STOCKPILE else ORDER_PREVIEW_FILL
+		var border: Color = ZONE_PREVIEW_BORDER if _mode == Mode.STOCKPILE else ORDER_PREVIEW_BORDER
+		draw_rect(r, fill)
+		draw_rect(r, border, false, 1.0)
 	if _is_build_mode():
 		_draw_build_ghost(_blueprint_for_mode(), _hover_grid)
 

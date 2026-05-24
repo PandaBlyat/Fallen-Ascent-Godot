@@ -14,6 +14,9 @@ signal job_cancelled(job: Job)
 var pending: Array[Job] = []
 var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
 var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
+var _scrape_targets: Dictionary = {} ## Vector2i -> Job
+
+const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
 
 
 func add_mine_job(target: Vector2i) -> MineJob:
@@ -38,6 +41,33 @@ func cancel_mine_at(target: Vector2i) -> void:
 
 func has_mine_at(target: Vector2i) -> bool:
 	return _mine_targets.has(target)
+
+
+func add_scrape_rust_job(target: Vector2i) -> Job:
+	if _scrape_targets.has(target):
+		return _scrape_targets[target] as Job
+	var job: Job = SCRAPE_RUST_JOB_SCRIPT.new(target) as Job
+	pending.append(job)
+	_scrape_targets[target] = job
+	job_added.emit(job)
+	return job
+
+
+func cancel_scrape_rust_at(target: Vector2i) -> void:
+	if not _scrape_targets.has(target):
+		return
+	var job: Job = _scrape_targets[target] as Job
+	_scrape_targets.erase(target)
+	pending.erase(job)
+	job_cancelled.emit(job)
+
+
+func has_scrape_rust_at(target: Vector2i) -> bool:
+	return _scrape_targets.has(target)
+
+
+func scrape_rust_count() -> int:
+	return _scrape_targets.size()
 
 
 func add_haul_job(item: Node, zone: Node, cell: Vector2i) -> HaulJob:
@@ -110,14 +140,17 @@ func build_job_at(target: Vector2i) -> BuildJob:
 func claim_next_for(worker: Node, worker_grid: Vector2i) -> Job:
 	var best: Job = null
 	var best_dist: int = 0x7fffffff
+	var best_priority: int = 0x7fffffff
 	for job in pending:
 		if job.claimed_by != null:
 			continue
 		var t: Vector2i = _target_grid_of(job)
 		var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))
-		if d < best_dist:
+		var priority: int = _priority_of(job)
+		if priority < best_priority or (priority == best_priority and d < best_dist):
 			best = job
 			best_dist = d
+			best_priority = priority
 	if best != null:
 		best.claimed_by = worker
 	return best
@@ -140,6 +173,8 @@ func complete(job: Job) -> void:
 	elif job is BuildJob:
 		for cell in (job as BuildJob).footprint:
 			_build_targets.erase(cell)
+	elif job.kind == Job.Kind.SCRAPE_RUST:
+		_scrape_targets.erase(job.get("target") as Vector2i)
 	job_completed.emit(job)
 
 
@@ -157,4 +192,12 @@ static func _target_grid_of(job: Job) -> Vector2i:
 		if h.item != null and h.item.has_method("get_grid"):
 			return h.item.call("get_grid") as Vector2i
 		return h.dropoff
+	if job.kind == Job.Kind.SCRAPE_RUST:
+		return job.get("target") as Vector2i
 	return Vector2i.ZERO
+
+
+static func _priority_of(job: Job) -> int:
+	if job.kind == Job.Kind.SCRAPE_RUST:
+		return 20
+	return 0

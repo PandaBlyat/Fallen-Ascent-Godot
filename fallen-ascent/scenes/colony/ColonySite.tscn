@@ -21,6 +21,8 @@ script = ExtResource("1_colony")
 
 [node name="ChunkManager" type="Node2D" parent="."]
 script = ExtResource("2_chunks")
+job_board_path = NodePath("../JobBoard")
+fog_of_war_path = NodePath("../FogOfWar")
 
 [node name="Items" type="Node2D" parent="."]
 
@@ -45,6 +47,8 @@ structure_manager_path = NodePath("../StructureManager")
 
 [node name="Workers" type="Node2D" parent="."]
 
+[node name="Neutrals" type="Node2D" parent="."]
+
 [node name="MineOverlay" type="Node2D" parent="."]
 script = ExtResource("9_mineoverlay")
 job_board_path = NodePath("../JobBoard")
@@ -66,6 +70,7 @@ chunk_manager_path = NodePath("../ChunkManager")
 pathfinder_path = NodePath("../Pathfinder")
 designator_path = NodePath("../Designator")
 fog_of_war_path = NodePath("../FogOfWar")
+structure_manager_path = NodePath("../StructureManager")
 
 [node name="JobBoard" type="Node" parent="."]
 script = ExtResource("5_jobboard")
@@ -98,6 +103,8 @@ job_board_path = NodePath("../../JobBoard")
 stockpile_manager_path = NodePath("../../StockpileManager")
 items_root_path = NodePath("../../Items")
 workers_root_path = NodePath("../../Workers")
+structure_manager_path = NodePath("../../StructureManager")
+camera_path = NodePath("../../Camera")
 
 [node name="ColonyTooltip" type="Label" parent="HUD"]
 visible = false

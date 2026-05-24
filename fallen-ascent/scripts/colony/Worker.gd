@@ -335,6 +335,19 @@ func current_grid() -> Vector2i:
 	)
 
 
+func active_path_points() -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	if _state != State.MOVING_FREEFORM:
+		return pts
+	if _path.is_empty() or _path_index >= _path.size():
+		return pts
+	pts.resize(_path.size() - _path_index + 1)
+	pts[0] = position
+	for i in range(_path_index, _path.size()):
+		pts[i - _path_index + 1] = _path[i]
+	return pts
+
+
 func set_selected(v: bool) -> void:
 	if _selected == v:
 		return
@@ -1434,6 +1447,11 @@ func _show_blocked_action(text: String) -> void:
 	queue_redraw()
 
 
+func show_order_failed(text: String) -> void:
+	_show_blocked_action(text)
+	_remember("order failed: " + text.to_lower())
+
+
 func _replan() -> void:
 	if _job == null:
 		if (_state == State.MOVING_FREEFORM \
@@ -1521,13 +1539,15 @@ func _reachable_neighbor_of(grid: Vector2i) -> Vector2i:
 # ----- Direct orders from the player ---------------------------------------
 
 func command_move(target: Vector2i) -> bool:
-	# Abort whatever we were doing, then walk to target.
-	_abandon_job()
 	if not _chunk_manager.is_walkable(target):
+		show_order_failed("Blocked tile")
 		return false
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
+		show_order_failed("No path")
 		return false
+	# Abort whatever we were doing only after destination is valid.
+	_abandon_job()
 	_path = path
 	_path_index = 0
 	_state = State.MOVING_FREEFORM

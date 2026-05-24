@@ -1,17 +1,18 @@
 extends HBoxContainer
 ##
-## Bottom-of-screen speed buttons: pause / 1× / 2× / 3×.
-## Buttons drive GameState.set_game_speed; hotkeys 0/1/2/3 do the same.
+## Bottom-of-screen speed buttons: pause / 1× / 2× / 3× / 10×.
+## Buttons drive GameState.set_game_speed; hotkeys 0/1/2/3/4 do the same.
 ## The currently-active button is visually highlighted via `button_pressed`.
 ##
 
-const SPEEDS := [0.0, 1.0, 2.0, 3.0]
-const LABELS := ["||", "1x", "2x", "3x"]
+const SPEEDS := [0.0, 1.0, 2.0, 3.0, 10.0]
+const LABELS := ["||", "1x", "2x", "3x", "10x"]
 const TOOLTIPS := [
 	"Pause\nKey: 0 or Space",
 	"Normal speed\nKey: 1",
 	"Fast speed\nKey: 2",
 	"Max speed\nKey: 3",
+	"Extreme speed\nKey: 4",
 ]
 const COLOR_BG := Color(0.045, 0.052, 0.06, 0.88)
 const COLOR_BG_HOVER := Color(0.14, 0.16, 0.18, 0.94)
@@ -62,6 +63,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		GameState.set_game_speed(SPEEDS[2])
 	elif event.is_action_pressed("speed_3x"):
 		GameState.set_game_speed(SPEEDS[3])
+	elif event.is_action_pressed("speed_10x"):
+		GameState.set_game_speed(SPEEDS[4])
 
 
 func _on_pressed(idx: int) -> void:

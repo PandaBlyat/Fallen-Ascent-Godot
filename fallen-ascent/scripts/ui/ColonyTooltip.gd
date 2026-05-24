@@ -153,9 +153,11 @@ func _job_line_at(grid: Vector2i) -> String:
 	var build: BuildJob = _job_board.build_job_at(grid)
 	if build != null:
 		var line: String = "Job: build " + BuildBlueprint.display_name(build.blueprint_id)
+		line += "\nDelivered: " + build.delivered_items_text()
 		var missing: String = build.missing_items_text()
 		if missing != "none":
 			line += "\nStill needs: " + missing
+		line += "\nRemove refund: " + build.refund_items_text()
 		return line
 	return ""
 

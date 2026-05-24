@@ -117,14 +117,15 @@ func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL,
 	return job
 
 
-func cancel_build_at(target: Vector2i) -> void:
+func cancel_build_at(target: Vector2i) -> BuildJob:
 	if not _build_targets.has(target):
-		return
+		return null
 	var job: BuildJob = _build_targets[target]
 	for cell in job.footprint:
 		_build_targets.erase(cell)
 	pending.erase(job)
 	job_cancelled.emit(job)
+	return job
 
 
 func has_build_at(target: Vector2i) -> bool:

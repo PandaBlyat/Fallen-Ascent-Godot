@@ -131,6 +131,7 @@ items_root_path = NodePath("../../Items")
 workers_root_path = NodePath("../../Workers")
 structure_manager_path = NodePath("../../StructureManager")
 camera_path = NodePath("../../Camera")
+selection_controller_path = NodePath("../../SelectionController")
 
 [node name="ColonyTooltip" type="Label" parent="HUD"]
 visible = false
@@ -159,7 +160,7 @@ anchor_left = 1.0
 anchor_top = 0.0
 anchor_right = 1.0
 anchor_bottom = 0.0
-offset_left = -282.0
+offset_left = -348.0
 offset_top = 8.0
 offset_right = -10.0
 offset_bottom = 60.0

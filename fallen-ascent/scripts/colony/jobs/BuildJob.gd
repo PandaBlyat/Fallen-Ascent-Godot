@@ -68,5 +68,39 @@ func missing_items_text() -> String:
 	return ", ".join(parts)
 
 
+func delivered_items_text() -> String:
+	var parts: Array[String] = []
+	for key in ingredients.keys():
+		var k: int = int(key)
+		var amount: int = int(delivered.get(k, 0))
+		if amount > 0:
+			parts.append("%s x%d" % [Item.kind_name(k), amount])
+	if parts.is_empty():
+		return "none"
+	return ", ".join(parts)
+
+
+func refund_items() -> Dictionary:
+	var refund: Dictionary = {}
+	for key in delivered.keys():
+		var k: int = int(key)
+		var amount: int = int(delivered.get(k, 0))
+		var returned: int = int(floor(float(amount) * 0.5 + 0.5))
+		if returned > 0:
+			refund[k] = returned
+	return refund
+
+
+func refund_items_text() -> String:
+	var refund: Dictionary = refund_items()
+	if refund.is_empty():
+		return "none"
+	var parts: Array[String] = []
+	for key in refund.keys():
+		var k: int = int(key)
+		parts.append("%s x%d" % [Item.kind_name(k), int(refund[k])])
+	return ", ".join(parts)
+
+
 func block_briefly(seconds: float = 2.0) -> void:
 	blocked_until_msec = Time.get_ticks_msec() + int(seconds * 1000.0)

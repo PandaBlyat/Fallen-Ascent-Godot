@@ -19,7 +19,6 @@ func _ready() -> void:
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_menu_music.play()
 
-
 func _on_new_game_pressed() -> void:
 	GameState.set_world_seed(_resolve_seed())
 	GameState.set_game_speed(1.0)

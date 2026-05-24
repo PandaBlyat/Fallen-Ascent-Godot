@@ -21,6 +21,9 @@ extends Node
 ##                                      player changes worker selection.
 ##   structure_selected(id, anchor)   - emitted by SelectionController when a
 ##                                      built structure is selected. id -1 clears.
+##   build_job_selected(anchor)       - emitted by SelectionController when a
+##                                      queued construction job is selected.
+##                                      UNREACHABLE clears.
 ##   structure_built(manager)         - emitted after StructureManager places
 ##                                      or changes static objects.
 ##   visibility_changed(bounds)       - emitted after FogOfWar changes sight.
@@ -55,6 +58,7 @@ signal tile_changed(grid: Vector2i, new_tile: int)
 signal worker_selected(worker: Node)
 signal workers_selected(workers: Array)
 signal structure_selected(id: int, anchor: Vector2i)
+signal build_job_selected(anchor: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
 signal bot_inspected(node: Node, faction: int)

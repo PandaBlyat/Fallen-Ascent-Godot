@@ -53,9 +53,9 @@ const PALETTE_HEIGHT: float = 200.0
 const TOP_STRIP_HEIGHT: float = 44.0
 const WORKER_LIST_WIDTH: float = 260.0
 const WORKER_LIST_HEIGHT: float = 126.0
-const SELECTION_PANEL_WIDTH: float = 680.0
-const SELECTION_PANEL_HEIGHT: float = 330.0
-const WORKER_CARD_WIDTH: float = 230.0
+const SELECTION_PANEL_WIDTH: float = 760.0
+const SELECTION_PANEL_HEIGHT: float = 430.0
+const WORKER_CARD_WIDTH: float = 560.0
 const INSPECT_CARD_WIDTH: float = 300.0
 const INSPECT_CARD_HEIGHT: float = 150.0
 
@@ -66,6 +66,7 @@ const INSPECT_CARD_HEIGHT: float = 150.0
 @export var workers_root_path: NodePath
 @export var structure_manager_path: NodePath
 @export var camera_path: NodePath
+@export var selection_controller_path: NodePath
 
 var _designator: Designator
 var _job_board: JobBoard
@@ -74,6 +75,7 @@ var _items_root: Node2D
 var _workers_root: Node2D
 var _structure_manager: StructureManager
 var _camera: CameraController
+var _selection_controller: SelectionController
 
 var _atlas: Texture2D
 var _entity_atlas: Texture2D
@@ -91,7 +93,9 @@ var _npc_strip: BoxContainer
 var _selected_workers: Array[Worker] = []
 var _selected_structure_id: int = -1
 var _selected_structure_anchor: Vector2i = Vector2i.ZERO
+var _selected_build_anchor: Vector2i = Pathfinder.UNREACHABLE
 var _top_strip: PanelContainer
+var _npc_panel: PanelContainer
 var _inspect_panel: PanelContainer
 var _inspect_box: VBoxContainer
 var _inspected_node: Node = null
@@ -107,6 +111,7 @@ func _ready() -> void:
 	_workers_root = get_node_or_null(workers_root_path) as Node2D
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
 	_camera = get_node_or_null(camera_path) as CameraController
+	_selection_controller = get_node_or_null(selection_controller_path) as SelectionController
 	_atlas = load(UI_ATLAS_PATH) as Texture2D
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 
@@ -133,6 +138,7 @@ func _connect_signals() -> void:
 		_stockpile_manager.stockpile_changed.connect(_refresh_status)
 	EventBus.workers_selected.connect(_on_workers_selected)
 	EventBus.structure_selected.connect(_on_structure_selected)
+	EventBus.build_job_selected.connect(_on_build_job_selected)
 	EventBus.bot_inspected.connect(_on_bot_inspected)
 	EventBus.combatant_died.connect(_on_combatant_died)
 
@@ -200,6 +206,7 @@ func _build_layout() -> void:
 	npc_panel.offset_right = WORKER_LIST_WIDTH * 0.5
 	npc_panel.offset_bottom = 62.0 + WORKER_LIST_HEIGHT
 	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	_npc_panel = npc_panel
 	add_child(npc_panel)
 
 	var npc_margin := MarginContainer.new()
@@ -334,6 +341,10 @@ func _recenter_top_strip() -> void:
 		return
 	_top_strip.offset_left = -w * 0.5
 	_top_strip.offset_right = w * 0.5
+	if _npc_panel != null:
+		var npc_w: float = maxf(WORKER_LIST_WIDTH, minf(w, 420.0))
+		_npc_panel.offset_left = -npc_w * 0.5
+		_npc_panel.offset_right = npc_w * 0.5
 
 
 func _position_selection_panel() -> void:
@@ -344,12 +355,14 @@ func _position_selection_panel() -> void:
 		return
 	var left: float = viewport_size.x * 0.5 + PALETTE_WIDTH * 0.5 + 12.0
 	var available_right: float = viewport_size.x - left - 12.0
-	var width: float = clampf(available_right, 300.0, SELECTION_PANEL_WIDTH)
-	if width < 300.0:
-		width = minf(SELECTION_PANEL_WIDTH, viewport_size.x - 24.0)
-		left = maxf(12.0, viewport_size.x - width - 12.0)
+	var width: float = clampf(available_right, 360.0, SELECTION_PANEL_WIDTH)
 	var bottom: float = viewport_size.y - 16.0
 	var top: float = maxf(64.0, bottom - SELECTION_PANEL_HEIGHT)
+	if available_right < 420.0:
+		width = minf(SELECTION_PANEL_WIDTH, viewport_size.x - 24.0)
+		left = (viewport_size.x - width) * 0.5
+		bottom = viewport_size.y - PALETTE_HEIGHT - 28.0
+		top = maxf(64.0, bottom - minf(SELECTION_PANEL_HEIGHT, bottom - 64.0))
 	_selection_panel.offset_left = left
 	_selection_panel.offset_top = top
 	_selection_panel.offset_right = left + width
@@ -475,6 +488,9 @@ func _on_mode_changed(_mode: int) -> void:
 
 
 func _on_job_changed(_job: Job) -> void:
+	if _selected_build_anchor != Pathfinder.UNREACHABLE and _job_board != null:
+		if _job_board.build_job_at(_selected_build_anchor) == null:
+			_selected_build_anchor = Pathfinder.UNREACHABLE
 	_refresh_status()
 
 
@@ -482,6 +498,7 @@ func _on_workers_selected(workers: Array[Worker]) -> void:
 	_selected_workers = workers
 	if not _selected_workers.is_empty():
 		_selected_structure_id = -1
+		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
 	_refresh_status()
@@ -494,6 +511,18 @@ func _on_structure_selected(id: int, anchor: Vector2i) -> void:
 	_selected_structure_anchor = anchor
 	if id >= 0:
 		_selected_workers.clear()
+		_selected_build_anchor = Pathfinder.UNREACHABLE
+		_inspected_node = null
+		_inspected_faction = 0
+	_refresh_selection_panel()
+	_refresh_inspect_card()
+
+
+func _on_build_job_selected(anchor: Vector2i) -> void:
+	_selected_build_anchor = anchor
+	if anchor != Pathfinder.UNREACHABLE:
+		_selected_workers.clear()
+		_selected_structure_id = -1
 		_inspected_node = null
 		_inspected_faction = 0
 	_refresh_selection_panel()
@@ -506,6 +535,7 @@ func _on_bot_inspected(node: Node, faction: int) -> void:
 	if node != null:
 		_selected_workers.clear()
 		_selected_structure_id = -1
+		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_refresh_selection_panel()
 	_refresh_inspect_card()
 
@@ -655,7 +685,9 @@ func _refresh_selection_panel() -> void:
 	for child in _selection_box.get_children():
 		_selection_box.remove_child(child)
 		child.queue_free()
-	if _selected_structure_id >= 0:
+	if _selected_build_anchor != Pathfinder.UNREACHABLE:
+		_build_construction_card()
+	elif _selected_structure_id >= 0:
 		_build_structure_card()
 	elif not _selected_workers.is_empty():
 		_build_worker_cards()
@@ -668,44 +700,96 @@ func _build_worker_cards() -> void:
 		if worker != null and is_instance_valid(worker):
 			live_workers.append(worker)
 	_selected_workers = live_workers
-	var shown: int = mini(live_workers.size(), 3)
-	for i in range(shown):
-		var worker: Worker = live_workers[i]
-		var card_panel := PanelContainer.new()
-		card_panel.custom_minimum_size = Vector2(WORKER_CARD_WIDTH, 0)
-		card_panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		card_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
-		_selection_box.add_child(card_panel)
+	if live_workers.is_empty():
+		return
+	if live_workers.size() > 1:
+		_add_worker_roster(live_workers)
+	_build_worker_detail_card(live_workers[0], live_workers.size())
 
-		var margin := MarginContainer.new()
-		margin.add_theme_constant_override("margin_left", 10)
-		margin.add_theme_constant_override("margin_top", 9)
-		margin.add_theme_constant_override("margin_right", 10)
-		margin.add_theme_constant_override("margin_bottom", 10)
-		card_panel.add_child(margin)
 
-		var card := VBoxContainer.new()
-		card.add_theme_constant_override("separation", 7)
-		margin.add_child(card)
+func _add_worker_roster(workers: Array[Worker]) -> void:
+	var roster_panel := PanelContainer.new()
+	roster_panel.custom_minimum_size = Vector2(170, 0)
+	roster_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
+	_selection_box.add_child(roster_panel)
 
-		_add_worker_header(card, worker)
-		_add_worker_summary(card, worker)
-		_add_meter(card, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
-		_add_meter(card, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
-		_add_meter(card, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
-		_add_meter(card, "social", worker.social_ratio(), Color(0.55, 0.85, 0.55))
-		var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
-		_add_meter(card, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
-		var needs: Array[String] = worker.unsatisfied_needs()
-		_add_section_label(card, "needs")
-		if needs.is_empty():
-			_add_status_banner(card, "satisfied", COLOR_METER_GOOD)
-		else:
-			_add_status_banner(card, ", ".join(needs), Color(1.0, 0.5, 0.35))
-		_add_limb_grid(card, worker)
-		_add_history_panel(card, worker)
-	if live_workers.size() > 3:
-		_add_card_line(_selection_box, "more", "%d selected" % live_workers.size())
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 8)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	roster_panel.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	margin.add_child(box)
+	_add_section_label(box, "%d selected" % workers.size())
+	for worker in workers:
+		var b := Button.new()
+		b.text = worker.display_name()
+		b.icon = _bot_icon()
+		b.expand_icon = true
+		b.custom_minimum_size = Vector2(0, 30)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_size_override("font_size", 11)
+		b.add_theme_stylebox_override("normal", _button_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT))
+		b.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+		b.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+		b.pressed.connect(_focus_worker.bind(worker))
+		box.add_child(b)
+
+
+func _build_worker_detail_card(worker: Worker, selected_count: int) -> void:
+	var card_panel := PanelContainer.new()
+	card_panel.custom_minimum_size = Vector2(WORKER_CARD_WIDTH, 0)
+	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
+	_selection_box.add_child(card_panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	card_panel.add_child(margin)
+
+	var card := VBoxContainer.new()
+	card.add_theme_constant_override("separation", 8)
+	margin.add_child(card)
+
+	_add_worker_header(card, worker)
+	if selected_count > 1:
+		_add_status_banner(card, "showing primary worker", COLOR_TEXT_MUTED)
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 14)
+	card.add_child(columns)
+
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.add_theme_constant_override("separation", 7)
+	columns.add_child(left)
+
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 7)
+	columns.add_child(right)
+
+	_add_worker_summary(left, worker)
+	_add_meter(left, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
+	_add_meter(left, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
+	_add_meter(left, "mental tired", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
+	_add_meter(left, "social", worker.social_ratio(), Color(0.55, 0.85, 0.55))
+	var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
+	_add_meter(left, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
+
+	var needs: Array[String] = worker.unsatisfied_needs()
+	_add_section_label(right, "needs")
+	if needs.is_empty():
+		_add_status_banner(right, "satisfied", COLOR_METER_GOOD)
+	else:
+		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
+	_add_limb_grid(right, worker)
+	_add_history_panel(right, worker)
 
 
 func _add_worker_header(parent: Control, worker: Worker) -> void:
@@ -835,6 +919,53 @@ func _build_structure_card() -> void:
 		_add_card_line(card, "blocked", blocked, Color(1.0, 0.5, 0.35))
 
 
+func _build_construction_card() -> void:
+	if _job_board == null:
+		return
+	var build: BuildJob = _job_board.build_job_at(_selected_build_anchor)
+	if build == null:
+		_selected_build_anchor = Pathfinder.UNREACHABLE
+		return
+	var card := VBoxContainer.new()
+	card.custom_minimum_size = Vector2(420, 0)
+	card.add_theme_constant_override("separation", 6)
+	_selection_box.add_child(card)
+	_add_card_title(card, "Building " + BuildBlueprint.display_name(build.blueprint_id).capitalize())
+	_add_card_line(card, "grid", "%d,%d" % [build.anchor.x, build.anchor.y])
+	_add_card_line(card, "cost", BuildBlueprint.ingredients_text(build.blueprint_id))
+	_add_card_line(card, "delivered", build.delivered_items_text())
+	_add_card_line(card, "missing", build.missing_items_text())
+	_add_meter(card, "build progress", clampf(build.progress / build.build_duration(), 0.0, 1.0), COLOR_ACCENT_AMBER)
+	_add_card_line(card, "refund", build.refund_items_text(), COLOR_ACCENT_CYAN)
+	var info := Label.new()
+	info.text = "Remove returns 50% of delivered resources."
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_theme_font_size_override("font_size", 11)
+	info.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	card.add_child(info)
+	var remove := Button.new()
+	remove.text = "Remove"
+	remove.tooltip_text = "Cancel construction\nReturns 50% of delivered resources."
+	remove.custom_minimum_size = Vector2(132, 34)
+	remove.add_theme_font_size_override("font_size", 12)
+	remove.add_theme_stylebox_override("normal", _button_style(Color(0.18, 0.07, 0.07, 0.95), Color(0.70, 0.22, 0.18, 0.78)))
+	remove.add_theme_stylebox_override("hover", _button_style(Color(0.26, 0.10, 0.09, 0.98), Color(1.0, 0.32, 0.24, 0.95)))
+	remove.add_theme_stylebox_override("pressed", _button_style(Color(0.34, 0.12, 0.10, 1.0), Color(1.0, 0.38, 0.28, 1.0)))
+	remove.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	remove.pressed.connect(_on_remove_build_pressed.bind(build.anchor))
+	card.add_child(remove)
+
+
+func _on_remove_build_pressed(anchor: Vector2i) -> void:
+	var scene: Node = get_tree().current_scene
+	if scene == null or not scene.has_method("cancel_build_with_refund"):
+		return
+	var removed: bool = scene.call("cancel_build_with_refund", anchor) as bool
+	if removed:
+		_selected_build_anchor = Pathfinder.UNREACHABLE
+		_refresh_status()
+
+
 func _add_card_title(parent: Control, text_value: String) -> void:
 	var label := Label.new()
 	label.text = text_value
@@ -898,14 +1029,14 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 	parent.add_child(title)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 32.0, HISTORY_VISIBLE_ROWS * 16)
+	scroll.custom_minimum_size = Vector2(240.0, HISTORY_VISIBLE_ROWS * 16)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	parent.add_child(scroll)
 
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 42.0, 0)
+	box.custom_minimum_size = Vector2(230.0, 0)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 2)
 	scroll.add_child(box)
@@ -915,7 +1046,7 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 		var label := Label.new()
 		label.text = entry
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.custom_minimum_size = Vector2(WORKER_CARD_WIDTH - 52.0, 0)
+		label.custom_minimum_size = Vector2(220.0, 0)
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.add_theme_font_size_override("font_size", 10)
 		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
@@ -951,6 +1082,9 @@ func _refresh_npc_strip() -> void:
 func _focus_worker(worker: Worker) -> void:
 	if worker == null or not is_instance_valid(worker) or _camera == null:
 		return
+	if _selection_controller != null:
+		var picked: Array[Worker] = [worker]
+		_selection_controller.select_workers(picked)
 	_camera.center_on(worker.global_position)
 
 

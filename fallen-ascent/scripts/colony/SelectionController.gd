@@ -26,6 +26,10 @@ const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.22)
 const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.95)
 const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.18)
 const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.95)
+const PATH_PREVIEW_COLOR := Color(1.0, 1.0, 1.0, 0.34)
+const ORDER_FAIL_SECONDS: float = 1.2
+const ORDER_FAIL_FILL := Color(1.0, 0.12, 0.12, 0.18)
+const ORDER_FAIL_BORDER := Color(1.0, 0.22, 0.18, 0.92)
 
 var _camera: Camera2D
 var _workers_root: Node2D
@@ -47,6 +51,8 @@ var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_highlight_timer: float = 0.0
 var _order_highlight_target: Node2D = null
 var _attack_hover_target: Node2D = null
+var _order_fail_grid: Vector2i = Pathfinder.UNREACHABLE
+var _order_fail_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -63,13 +69,22 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if _order_highlight_timer <= 0.0:
-		return
-	_order_highlight_timer = maxf(0.0, _order_highlight_timer - delta)
-	if _order_highlight_timer <= 0.0:
-		_order_highlight_grid = Pathfinder.UNREACHABLE
-		_order_highlight_target = null
-	queue_redraw()
+	var needs_redraw: bool = false
+	if _order_highlight_timer > 0.0:
+		_order_highlight_timer = maxf(0.0, _order_highlight_timer - delta)
+		if _order_highlight_timer <= 0.0:
+			_order_highlight_grid = Pathfinder.UNREACHABLE
+			_order_highlight_target = null
+		needs_redraw = true
+	if _order_fail_timer > 0.0:
+		_order_fail_timer = maxf(0.0, _order_fail_timer - delta)
+		if _order_fail_timer <= 0.0:
+			_order_fail_grid = Pathfinder.UNREACHABLE
+		needs_redraw = true
+	if _has_selected_path():
+		needs_redraw = true
+	if needs_redraw:
+		queue_redraw()
 
 
 func selected_worker() -> Worker:
@@ -78,6 +93,10 @@ func selected_worker() -> Worker:
 
 func selected_workers() -> Array[Worker]:
 	return _selected.duplicate()
+
+
+func select_workers(workers: Array[Worker]) -> void:
+	_select_many(workers)
 
 
 func clear_selection() -> bool:
@@ -135,25 +154,35 @@ func _finish_drag(screen_pos: Vector2) -> void:
 	if is_box:
 		_select_many(_workers_in_rect(_drag_start_world, _drag_end_world))
 		EventBus.bot_inspected.emit(null, 0)
+		EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+		EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 	else:
 		var workers: Array[Worker] = _worker_under(_drag_end_world)
 		if not workers.is_empty():
 			_select_many(workers)
 			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+			EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 			EventBus.bot_inspected.emit(null, 0)
 		else:
 			var npc: Node2D = _npc_under(_drag_end_world)
 			if npc != null:
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				var faction_id: int = int(npc.call("faction")) if npc.has_method("faction") else 0
 				EventBus.bot_inspected.emit(npc, faction_id)
+			elif _try_select_build_job(_drag_end_world):
+				_select_many([])
+				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.bot_inspected.emit(null, 0)
 			elif _try_select_structure(_drag_end_world):
 				_select_many([])
+				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 			else:
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 	queue_redraw()
 
@@ -171,12 +200,15 @@ func _handle_right_click(shift_held: bool) -> void:
 		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
 	)
 	if _fog != null and not _fog.is_explored(grid):
+		_show_order_failed(grid, "Unexplored")
 		return
 	var build: BuildJob = _job_board.build_job_at(grid) if _job_board != null else null
 	if build != null:
 		var worker: Worker = selected_worker()
 		if worker != null and is_instance_valid(worker) and worker.command_take_build_job(build):
 			_show_order_highlight(build.anchor)
+		elif worker != null and is_instance_valid(worker):
+			_show_order_failed(grid, "No path", worker)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
 	if tile == TerrainGenerator.TILE_WALL \
@@ -202,9 +234,15 @@ func _handle_right_click(shift_held: bool) -> void:
 	if tile == TerrainGenerator.TILE_OUTLET:
 		if _command_one_worker_to_charge(grid):
 			_show_order_highlight(grid)
+		else:
+			_show_order_failed(grid, "Outlet unavailable")
 	elif _is_walkable_order_tile(tile):
 		if _command_group_move(grid):
 			_show_order_highlight(grid)
+		else:
+			_show_order_failed(grid, "No path")
+	else:
+		_show_order_failed(grid, "Blocked tile")
 
 
 func _command_one_worker_to_charge(grid: Vector2i) -> bool:
@@ -237,6 +275,15 @@ func _show_entity_order_highlight(target: Node2D) -> void:
 	_order_highlight_grid = Pathfinder.UNREACHABLE
 	_order_highlight_target = target
 	_order_highlight_timer = ORDER_HIGHLIGHT_SECONDS
+	queue_redraw()
+
+
+func _show_order_failed(grid: Vector2i, reason: String, worker: Worker = null) -> void:
+	_order_fail_grid = grid
+	_order_fail_timer = ORDER_FAIL_SECONDS
+	var target_worker: Worker = worker if worker != null else selected_worker()
+	if target_worker != null and is_instance_valid(target_worker):
+		target_worker.show_order_failed(reason)
 	queue_redraw()
 
 
@@ -477,6 +524,22 @@ func _try_select_structure(world_pos: Vector2) -> bool:
 	return true
 
 
+func _try_select_build_job(world_pos: Vector2) -> bool:
+	if _job_board == null:
+		return false
+	var grid := Vector2i(
+		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
+		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
+	)
+	if _fog != null and not _fog.is_explored(grid):
+		return false
+	var build: BuildJob = _job_board.build_job_at(grid)
+	if build == null:
+		return false
+	EventBus.build_job_selected.emit(build.anchor)
+	return true
+
+
 func _select_many(workers: Array[Worker]) -> void:
 	for worker in _selected:
 		if worker != null and is_instance_valid(worker):
@@ -492,10 +555,26 @@ func _select_many(workers: Array[Worker]) -> void:
 	EventBus.workers_selected.emit(_selected.duplicate())
 
 
+func _has_selected_path() -> bool:
+	for worker in _selected:
+		if worker == null or not is_instance_valid(worker):
+			continue
+		if not worker.active_path_points().is_empty():
+			return true
+	return false
+
+
 func _draw() -> void:
+	_draw_selected_paths()
 	var designator_idle: bool = _designator == null or _designator.current_mode() == Designator.Mode.NONE
 	if designator_idle and _attack_hover_target != null and is_instance_valid(_attack_hover_target):
 		_draw_entity_highlight(_attack_hover_target, ATTACK_HOVER_FILL, ATTACK_HOVER_BORDER, 1.0)
+	if _order_fail_grid != Pathfinder.UNREACHABLE:
+		var fail_alpha: float = clampf(_order_fail_timer / ORDER_FAIL_SECONDS, 0.0, 1.0)
+		var fail_origin := Vector2(_order_fail_grid.x * Chunk.TILE_PIXELS, _order_fail_grid.y * Chunk.TILE_PIXELS)
+		var fail_rect := Rect2(fail_origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(fail_rect, Color(ORDER_FAIL_FILL.r, ORDER_FAIL_FILL.g, ORDER_FAIL_FILL.b, ORDER_FAIL_FILL.a * fail_alpha))
+		draw_rect(fail_rect, Color(ORDER_FAIL_BORDER.r, ORDER_FAIL_BORDER.g, ORDER_FAIL_BORDER.b, ORDER_FAIL_BORDER.a * fail_alpha), false, 1.5)
 	if _order_highlight_target != null and is_instance_valid(_order_highlight_target):
 		var alpha_target: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
 		_draw_entity_highlight(_order_highlight_target, ORDER_HIGHLIGHT_FILL, ORDER_HIGHLIGHT_BORDER, alpha_target)
@@ -514,6 +593,16 @@ func _draw() -> void:
 		var drag_rect := Rect2(drag_origin, size)
 		draw_rect(drag_rect, DRAG_FILL)
 		draw_rect(drag_rect, DRAG_BORDER, false, 1.0)
+
+
+func _draw_selected_paths() -> void:
+	for worker in _selected:
+		if worker == null or not is_instance_valid(worker):
+			continue
+		var pts: PackedVector2Array = worker.active_path_points()
+		if pts.size() < 2:
+			continue
+		draw_polyline(pts, PATH_PREVIEW_COLOR, 1.5, true)
 
 
 func _draw_entity_highlight(target: Node2D, fill: Color, border: Color, alpha: float) -> void:

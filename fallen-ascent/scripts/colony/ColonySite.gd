@@ -85,10 +85,10 @@ func _spawn_neutral_bots(count: int) -> void:
 
 ## Called by Workers after they finish a mine: spawn one piece of scrap on
 ## the now-floor tile, then offer it to the stockpile system.
-func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP) -> void:
+func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP, count: int = 1) -> void:
 	var item: Item = ITEM_SCRIPT.new() as Item
 	items_root.add_child(item)
-	item.setup(grid, kind, 1)
+	item.setup(grid, kind, count)
 	stockpile_manager.on_item_spawned(item)
 
 
@@ -100,6 +100,35 @@ func build_structure(blueprint_id: int, anchor: Vector2i, rotation: int = 0) -> 
 	if structure_manager == null:
 		return
 	structure_manager.build_structure(blueprint_id, anchor, rotation)
+
+
+func cancel_build_with_refund(anchor: Vector2i) -> bool:
+	if job_board == null:
+		return false
+	var job: BuildJob = job_board.cancel_build_at(anchor)
+	if job == null:
+		return false
+	var refund: Dictionary = job.refund_items()
+	for kind in refund.keys():
+		var amount: int = int(refund[kind])
+		if amount <= 0:
+			continue
+		spawn_item_at(_refund_spawn_cell(job.anchor), int(kind), amount)
+	return true
+
+
+func _refund_spawn_cell(anchor: Vector2i) -> Vector2i:
+	if chunk_manager.is_walkable(anchor):
+		return anchor
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+		Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	for off in OFFSETS:
+		var candidate: Vector2i = anchor + off
+		if chunk_manager.is_walkable(candidate):
+			return candidate
+	return anchor
 
 
 func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:

@@ -35,6 +35,8 @@ const PERCEPTION_RADIUS_TILES: int = 5
 const LOS_CACHE_TTL_MSEC: int = 400
 const RETALIATE_DURATION: float = 3.0
 const KNOCKBACK_DURATION: float = 0.12
+const ACID_SHALLOW_DPS: float = 2.0
+const ACID_PUDDLE_DPS: float = 0.5
 
 const FACTION_NEUTRAL: int = 1
 
@@ -248,11 +250,14 @@ func _set_facing_from_vector(delta_pos: Vector2) -> void:
 	queue_redraw()
 
 
-func ai_tick(_delta: float) -> void:
+func ai_tick(delta: float) -> void:
 	if _dead:
 		return
 	_apply_visibility()
 	EntityGrid.update_position(self, current_grid())
+	_tick_acid_damage(delta)
+	if _dead:
+		return
 	if _state == State.RETALIATING:
 		return
 	var threat: Node2D = _scan_for_hostile()
@@ -260,6 +265,23 @@ func ai_tick(_delta: float) -> void:
 		_threat = threat
 		_state = State.FLEEING
 		_flee_from(threat)
+
+
+func _tick_acid_damage(delta: float) -> void:
+	if _chunk_manager == null or stats == null:
+		return
+	var tile: int = _chunk_manager.get_tile_at(current_grid())
+	var dps: float = 0.0
+	if tile == TerrainGenerator.TILE_ACID_SHALLOW:
+		dps = ACID_SHALLOW_DPS
+	elif tile == TerrainGenerator.TILE_ACID_PUDDLE:
+		dps = ACID_PUDDLE_DPS
+	if dps <= 0.0:
+		return
+	stats.hp = maxf(0.0, stats.hp - dps * delta)
+	queue_redraw()
+	if stats.hp <= 0.0:
+		_die()
 
 
 func _scan_for_hostile() -> Node2D:

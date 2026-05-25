@@ -49,6 +49,12 @@ const FACTION_COLONY: int = 0
 const MOVE_SPEED_PX_PER_SEC: float = 48.0
 const WATER_SHALLOW_SPEED_MULT: float = 0.5
 const WATER_PUDDLE_SPEED_MULT: float = 0.85
+const ACID_SHALLOW_SPEED_MULT: float = 0.4
+const ACID_PUDDLE_SPEED_MULT: float = 0.75
+const ACID_SHALLOW_DPS: float = 2.0
+const ACID_PUDDLE_DPS: float = 0.5
+## Must match ActivityFxManager.KIND_BUILD_DUST.
+const BUILD_DUST_FX_KIND: int = 7
 const ARRIVE_EPSILON_PX: float = 1.0
 const IDLE_RETRY_SECONDS: float = 0.5
 const BODY_RADIUS: float = 12.0
@@ -177,6 +183,7 @@ var _crowd_contacts: Dictionary = {}
 var _direct_order_queue: Array[Dictionary] = []
 var _needs_refresh_timer: float = 0.0
 var _entity_grid_timer: float = 0.0
+var _acid_damage_accum: float = 0.0
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -543,7 +550,7 @@ func state_label() -> String:
 			return "unknown"
 
 
-func activity_fx() -> Dictionary:
+func activity_fx() -> Variant:
 	match _state:
 		State.WORKING:
 			if _job is MineJob:
@@ -565,12 +572,22 @@ func activity_fx() -> Dictionary:
 		State.BUILDING:
 			var build := _job as BuildJob
 			if build != null:
-				return {
-					"grid": build.anchor,
-					"kind": 2,
-					"progress": clampf(build.progress / build.build_duration(), 0.0, 1.0),
-					"intensity": 0.85,
-				}
+				var build_progress: float = clampf(build.progress / build.build_duration(), 0.0, 1.0)
+				return [
+					{
+						"grid": build.anchor,
+						"kind": 2,
+						"progress": build_progress,
+						"intensity": 0.85,
+					},
+					{
+						"grid": current_grid(),
+						"to_grid": build.anchor,
+						"kind": BUILD_DUST_FX_KIND,
+						"progress": build_progress,
+						"intensity": 0.9,
+					},
+				]
 		State.CHARGING:
 			return {
 				"grid": _charge_target if _charge_target != Vector2i.ZERO else current_grid(),
@@ -642,6 +659,7 @@ func _process(delta: float) -> void:
 		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
 	_update_energy(delta)
 	_update_body_stats(delta)
+	_tick_acid_damage(delta)
 	_entity_grid_timer -= delta
 	if _entity_grid_timer <= 0.0:
 		_entity_grid_timer = ENTITY_GRID_SYNC_SECONDS
@@ -702,7 +720,7 @@ func _process(delta: float) -> void:
 		State.CRAFTING:
 			if _job is OperateStructureJob:
 				var op := _job as OperateStructureJob
-				op.progress += delta * _light_speed_multiplier()
+				op.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(op.anchor)
 				if op.progress >= op.operate_duration():
 					_complete_operation(op)
 			else:
@@ -710,7 +728,7 @@ func _process(delta: float) -> void:
 				if craft == null:
 					_abandon_job()
 					return
-				craft.progress += delta * _light_speed_multiplier()
+				craft.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(craft.station_anchor)
 				if craft.progress >= craft.craft_duration():
 					_complete_craft(craft)
 		State.MOVING_FREEFORM:
@@ -2388,8 +2406,39 @@ func _light_speed_multiplier() -> float:
 	return clampf(float(_structure_manager.call("light_speed_multiplier_at", current_grid())), 1.0, 1.5)
 
 
-## Shallow water and puddles slow the worker; deep water is impassable so
-## the pathfinder never lands a worker on it.
+## Speed multiplier applied to crafts/operations at a workshop. Workshop Room
+## adds a small bonus; standing outside any room imposes a small penalty. The
+## room manager queries by the workshop's anchor cell so multi-tile workshops
+## get a consistent reading.
+func _workshop_room_speed_multiplier(anchor: Vector2i) -> float:
+	if _room_manager == null or not _room_manager.has_method("workshop_speed_multiplier_at"):
+		return 1.0
+	return clampf(float(_room_manager.call("workshop_speed_multiplier_at", anchor)), 0.5, 1.5)
+
+
+## Drains limb integrity while standing on acid tiles. Damage is accumulated
+## so sub-HP-per-frame ticks don't get rounded away by `_damage_limb`.
+func _tick_acid_damage(delta: float) -> void:
+	if _chunk_manager == null:
+		return
+	var tile: int = _chunk_manager.get_tile_at(current_grid())
+	var dps: float = 0.0
+	if tile == TerrainGenerator.TILE_ACID_SHALLOW:
+		dps = ACID_SHALLOW_DPS
+	elif tile == TerrainGenerator.TILE_ACID_PUDDLE:
+		dps = ACID_PUDDLE_DPS
+	if dps <= 0.0:
+		_acid_damage_accum = 0.0
+		return
+	_acid_damage_accum += dps * delta
+	if _acid_damage_accum >= 1.0:
+		var whole: float = floorf(_acid_damage_accum)
+		_acid_damage_accum -= whole
+		_damage_limb(whole)
+
+
+## Shallow water/acid and puddles slow the worker; deep variants are impassable
+## so the pathfinder never lands a worker on them.
 func _water_speed_multiplier() -> float:
 	if _chunk_manager == null:
 		return 1.0
@@ -2398,6 +2447,10 @@ func _water_speed_multiplier() -> float:
 		return WATER_SHALLOW_SPEED_MULT
 	if tile == TerrainGenerator.TILE_WATER_PUDDLE:
 		return WATER_PUDDLE_SPEED_MULT
+	if tile == TerrainGenerator.TILE_ACID_SHALLOW:
+		return ACID_SHALLOW_SPEED_MULT
+	if tile == TerrainGenerator.TILE_ACID_PUDDLE:
+		return ACID_PUDDLE_SPEED_MULT
 	return 1.0
 
 

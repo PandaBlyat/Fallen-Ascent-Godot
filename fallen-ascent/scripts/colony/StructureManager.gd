@@ -94,6 +94,10 @@ func can_place_blueprint(id: int, anchor: Vector2i, rotation: int = 0) -> bool:
 		if _cell_to_structure.has(cell):
 			return false
 		var tile: int = _chunk_manager.get_tile_at(cell)
+		# Hazardous fluids — nothing builds on water or acid, regardless of
+		# whether the tile is technically walkable (shallow/puddle are).
+		if TileVisuals.is_water_or_acid_family(tile):
+			return false
 		if tile == TerrainGenerator.TILE_OUTLET:
 			has_outlet = true
 		if id == BuildBlueprint.Id.WALL:
@@ -244,6 +248,7 @@ func blocks_cell(grid: Vector2i) -> bool:
 		or id == BuildBlueprint.Id.REPAIR_BENCH \
 		or id == BuildBlueprint.Id.PARTS_LOOM \
 		or id == BuildBlueprint.Id.MAINTENANCE_DOCK \
+		or id == BuildBlueprint.Id.FABRICATOR_ADVANCED \
 		or id == BuildBlueprint.Id.SENTIENCE_CRADLE
 
 
@@ -268,14 +273,7 @@ func visual_light_sources() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for structure in _structures:
 		var id: int = int(structure["id"])
-		if id == BuildBlueprint.Id.LIGHT:
-			out.append({
-				"grid": structure["anchor"] as Vector2i,
-				"radius": LIGHT_VISUAL_RADIUS,
-				"color": _brightest_structure_color(id, Color(1.0, 0.78, 0.36, 1.0)),
-				"intensity": LIGHT_VISUAL_INTENSITY,
-			})
-		elif id == BuildBlueprint.Id.SMALL_LIGHT_DEVICE:
+		if id == BuildBlueprint.Id.SMALL_LIGHT_DEVICE:
 			out.append({
 				"grid": structure["anchor"] as Vector2i,
 				"radius": SMALL_LIGHT_VISUAL_RADIUS,
@@ -310,8 +308,7 @@ func light_speed_multiplier_at(grid: Vector2i) -> float:
 	var best: float = 1.0
 	for structure in _structures:
 		var id: int = int(structure["id"])
-		if id != BuildBlueprint.Id.LIGHT \
-				and id != BuildBlueprint.Id.SMALL_LIGHT_DEVICE \
+		if id != BuildBlueprint.Id.SMALL_LIGHT_DEVICE \
 				and id != BuildBlueprint.Id.LARGE_LIGHT_DEVICE:
 			continue
 		var anchor: Vector2i = structure["anchor"] as Vector2i
@@ -525,10 +522,15 @@ func _roll_output(id: int) -> int:
 	match id:
 		BuildBlueprint.Id.EXTRACTOR:
 			return Item.Kind.MECHANISM if randf() < 0.65 else Item.Kind.PLATING
-		BuildBlueprint.Id.FABRICATOR:
-			return Item.Kind.CHARGE_CELL if randf() < 0.25 else Item.Kind.DATACORE
 		BuildBlueprint.Id.PARTS_LOOM:
-			return Item.Kind.CHARGE_CELL if randf() < 0.18 else Item.Kind.MECHANISM
+			return Item.Kind.MECHANISM if randf() < 0.45 else Item.Kind.PLATING
+		BuildBlueprint.Id.FABRICATOR_ADVANCED:
+			var r: float = randf()
+			if r < 0.45:
+				return Item.Kind.DATACORE
+			if r < 0.85:
+				return Item.Kind.CHARGE_CELL
+			return Item.Kind.RUDIMENTARY_SENSOR
 		_:
 			return -1
 
@@ -537,7 +539,7 @@ func _fx_kind_for(id: int) -> int:
 	match id:
 		BuildBlueprint.Id.EXTRACTOR:
 			return 6
-		BuildBlueprint.Id.FABRICATOR, BuildBlueprint.Id.PARTS_LOOM:
+		BuildBlueprint.Id.PARTS_LOOM, BuildBlueprint.Id.FABRICATOR_ADVANCED:
 			return 4
 		BuildBlueprint.Id.SENTIENCE_CRADLE:
 			return 5
@@ -691,8 +693,6 @@ static func _color_for(id: int) -> Color:
 	match id:
 		BuildBlueprint.Id.DOOR:
 			return DOOR_COLOR
-		BuildBlueprint.Id.LIGHT:
-			return LIGHT_COLOR
 		BuildBlueprint.Id.EXTRACTOR:
 			return EXTRACTOR_COLOR
 		BuildBlueprint.Id.SENSOR:
@@ -709,7 +709,7 @@ static func _color_for(id: int) -> Color:
 			return PARTS_LOOM_COLOR
 		BuildBlueprint.Id.MAINTENANCE_DOCK:
 			return MAINTENANCE_DOCK_COLOR
-		BuildBlueprint.Id.CALIBRATION_SHRINE:
+		BuildBlueprint.Id.FABRICATOR_ADVANCED:
 			return CALIBRATION_SHRINE_COLOR
 		BuildBlueprint.Id.MEDITATION_PAD:
 			return MEDITATION_PAD_COLOR

@@ -24,7 +24,7 @@ const RUST_VARIANTS: int = 16
 
 
 static func base_source(tile: int) -> int:
-	if is_water_family(tile):
+	if is_water_family(tile) or is_acid_family(tile):
 		return SOURCE_WATER
 	if is_floor_family(tile) or tile == TerrainGenerator.TILE_VOID:
 		return SOURCE_FLOOR
@@ -49,6 +49,12 @@ static func base_atlas_coords(tile: int, mask: int) -> Vector2i:
 			return Vector2i(mask, 1)
 		TerrainGenerator.TILE_WATER_PUDDLE:
 			return Vector2i(mask, 2)
+		TerrainGenerator.TILE_ACID:
+			return Vector2i(mask, 3)
+		TerrainGenerator.TILE_ACID_SHALLOW:
+			return Vector2i(mask, 4)
+		TerrainGenerator.TILE_ACID_PUDDLE:
+			return Vector2i(mask, 5)
 		_:
 			return Vector2i(mask, FLOOR_ROW)
 
@@ -89,10 +95,20 @@ static func is_water_family(tile: int) -> bool:
 		or tile == TerrainGenerator.TILE_WATER_PUDDLE
 
 
+static func is_acid_family(tile: int) -> bool:
+	return tile == TerrainGenerator.TILE_ACID \
+		or tile == TerrainGenerator.TILE_ACID_SHALLOW \
+		or tile == TerrainGenerator.TILE_ACID_PUDDLE
+
+
+static func is_water_or_acid_family(tile: int) -> bool:
+	return is_water_family(tile) or is_acid_family(tile)
+
+
 static func connects(tile: int, neighbor: int) -> bool:
-	# Each water depth connects only to itself so the 4-bit mask geometry
-	# stays meaningful per depth band.
-	if is_water_family(tile):
+	# Each water/acid depth connects only to itself so the 4-bit mask
+	# geometry stays meaningful per depth band.
+	if is_water_family(tile) or is_acid_family(tile):
 		return neighbor == tile
 	if is_floor_family(tile):
 		return is_floor_family(neighbor)

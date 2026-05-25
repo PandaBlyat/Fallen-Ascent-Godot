@@ -1,16 +1,19 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// Shared procedural-water shader used by all three depth bands in
+// Shared procedural-water/acid shader used by both fluid families in
 // `resources/tiles/water_atlas.png`. The atlas row currently being sampled
 // determines which palette and ripple style we use:
-//   UV.y < 1/3        -> deep water  (impassable)
-//   UV.y in 1/3..2/3  -> shallow water (slower walking)
-//   UV.y > 2/3        -> puddle (slightly slower walking)
+//   UV.y < 1/6           -> deep water     (impassable)
+//   UV.y in 1/6..2/6     -> shallow water  (slower walking)
+//   UV.y in 2/6..3/6     -> puddle water   (slightly slower walking)
+//   UV.y in 3/6..4/6     -> deep acid      (impassable, caustic)
+//   UV.y in 4/6..5/6     -> shallow acid   (slow + damage)
+//   UV.y > 5/6           -> acid puddle    (slight damage)
 //
 // The TileMapLayer feeds normalized UVs across the entire atlas, so we can
 // recover the depth band without per-tile uniforms. Keeping it one shader
-// per chunk means we still get a single batched draw call for all water.
+// per chunk means we still get a single batched draw call for all fluids.
 
 uniform float dirty_strength = 0.55;
 uniform float flow_speed = 0.10;
@@ -22,6 +25,14 @@ uniform vec3 shallow_high = vec3(0.28, 0.62, 0.66);
 uniform vec3 puddle_low   = vec3(0.18, 0.20, 0.18);
 uniform vec3 puddle_high  = vec3(0.45, 0.45, 0.38);
 uniform vec3 oil_sheen    = vec3(0.55, 0.48, 0.22);
+
+uniform vec3 acid_deep_low      = vec3(0.04, 0.12, 0.04);
+uniform vec3 acid_deep_high     = vec3(0.10, 0.30, 0.08);
+uniform vec3 acid_shallow_low   = vec3(0.14, 0.38, 0.10);
+uniform vec3 acid_shallow_high  = vec3(0.40, 0.72, 0.22);
+uniform vec3 acid_puddle_low    = vec3(0.30, 0.52, 0.16);
+uniform vec3 acid_puddle_high   = vec3(0.58, 0.86, 0.32);
+uniform vec3 acid_sheen         = vec3(0.78, 0.92, 0.34);
 
 varying vec2 world_pos;
 
@@ -51,13 +62,12 @@ void fragment() {
 	float ripple = noise(p * 7.0 + vec2(-t * 8.0, t * 3.0));
 	float grit = noise(p * 17.0);
 
-	// Atlas row → depth band. UV.y is in [0,1] across the whole atlas, so
-	// 0..1/3 is row 0 (deep), 1/3..2/3 is row 1 (shallow), 2/3..1 is row 2
-	// (puddle).
-	float depth_band = floor(UV.y * 3.0);
+	// Atlas row → depth band. UV.y is in [0,1] across the whole atlas, 6 rows.
+	float depth_band = floor(UV.y * 6.0);
 
 	vec3 low_color;
 	vec3 high_color;
+	vec3 sheen_color = oil_sheen;
 	float ripple_gain;
 	float oil_gain;
 	float alpha;
@@ -73,17 +83,38 @@ void fragment() {
 		ripple_gain = 0.35;
 		oil_gain = 0.18;
 		alpha = 0.92;
-	} else {
+	} else if (depth_band < 2.5) {
 		low_color = puddle_low;
 		high_color = puddle_high;
 		ripple_gain = 0.55;
 		oil_gain = 0.10;
 		alpha = 0.85;
+	} else if (depth_band < 3.5) {
+		low_color = acid_deep_low;
+		high_color = acid_deep_high;
+		sheen_color = acid_sheen;
+		ripple_gain = 0.18;
+		oil_gain = 0.22;
+		alpha = 1.0;
+	} else if (depth_band < 4.5) {
+		low_color = acid_shallow_low;
+		high_color = acid_shallow_high;
+		sheen_color = acid_sheen;
+		ripple_gain = 0.42;
+		oil_gain = 0.32;
+		alpha = 0.94;
+	} else {
+		low_color = acid_puddle_low;
+		high_color = acid_puddle_high;
+		sheen_color = acid_sheen;
+		ripple_gain = 0.62;
+		oil_gain = 0.28;
+		alpha = 0.88;
 	}
 
 	vec3 color = mix(low_color, high_color, wave * 0.7 + ripple * ripple_gain);
 	float oil = smoothstep(0.78, 0.96, noise(p * 3.1 + vec2(t * 4.0, t * 1.6)));
-	color = mix(color, oil_sheen, oil * oil_gain);
+	color = mix(color, sheen_color, oil * oil_gain);
 	color *= 0.78 + grit * dirty_strength * 0.22;
 
 	// Soft scum/foam edge along each tile boundary so seams between

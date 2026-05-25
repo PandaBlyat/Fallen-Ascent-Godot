@@ -249,11 +249,14 @@ func _set_facing_from_vector(delta_pos: Vector2) -> void:
 	queue_redraw()
 
 
-func ai_tick(_delta: float) -> void:
+func ai_tick(delta: float) -> void:
 	if _dead:
 		return
 	_apply_visibility()
 	EntityGrid.update_position(self, current_grid())
+	_tick_acid_damage(delta)
+	if _dead:
+		return
 	var best: Node2D = _scan_for_target()
 	var now: float = _now()
 	if best != null:
@@ -426,6 +429,23 @@ func _on_wander_timer_timeout() -> void:
 	if _dead or _state == State.CHASING or _state == State.ATTACKING:
 		return
 	_pick_next_wander()
+
+
+func _tick_acid_damage(delta: float) -> void:
+	if _chunk_manager == null or stats == null:
+		return
+	var tile: int = _chunk_manager.get_tile_at(current_grid())
+	var dps: float = 0.0
+	if tile == TerrainGenerator.TILE_ACID_SHALLOW:
+		dps = 2.0
+	elif tile == TerrainGenerator.TILE_ACID_PUDDLE:
+		dps = 0.5
+	if dps <= 0.0:
+		return
+	stats.hp = maxf(0.0, stats.hp - dps * delta)
+	queue_redraw()
+	if stats.hp <= 0.0:
+		_die()
 
 
 func _die() -> void:

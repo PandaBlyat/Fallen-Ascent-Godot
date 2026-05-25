@@ -3,28 +3,32 @@ extends Node2D
 ##
 ## Tracks player-designated rooms (Rimworld-style). Supported kinds:
 ##   - DOCK_ROOM         — personal rest space, one bot per room
-##   - MEDITATION_CHAMBER — must contain a Meditation Pad; offers a wisdom bonus
-##   - MECHANIC_ROOM     — must contain a Mechanic Dock; gates limb-heal services
-##                         (heal effect itself is deferred — see to-do-list.md)
+##   - RESEARCH_ROOM     — must contain a Research Bench; offers a wisdom bonus
+##                         (enum slot RESEARCH_ROOM replaces the legacy
+##                         MEDITATION_CHAMBER name; mechanics are unchanged)
+##   - MECHANIC_ROOM     — must contain a Mechanic Dock; heals limbs faster
+##   - WORKSHOP_ROOM     — enclosed by walls + door, contains a light source and
+##                         a workshop structure; gives a work-speed buff inside.
 ##
-## A room is valid if it has the minimum cell count AND contains the required
-## structure for its kind. Enclosure detection (Rimworld-style walls-only
-## boundary) is intentionally deferred — see to-do-list.md.
+## A room is valid if it has the minimum cell count, contains the required
+## structures, AND (for Workshop Rooms) is enclosed by walls/doors.
 ##
 
 signal rooms_changed
 
-enum Kind { DOCK_ROOM, MEDITATION_CHAMBER, MECHANIC_ROOM, MACHINE_ROOM }
+enum Kind { DOCK_ROOM, RESEARCH_ROOM, MECHANIC_ROOM, WORKSHOP_ROOM }
 
 const ROOM_FILL := Color(0.45, 0.62, 0.98, 0.05)
 const ROOM_BORDER := Color(0.45, 0.62, 0.98, 0.30)
 const ROOM_INVALID_BORDER := Color(0.95, 0.45, 0.45, 0.40)
-const MEDITATION_BORDER := Color(0.62, 0.78, 1.0, 0.32)
+const RESEARCH_BORDER := Color(0.62, 0.78, 1.0, 0.32)
 const MECHANIC_BORDER := Color(0.98, 0.82, 0.42, 0.32)
-const MACHINE_BORDER := Color(0.42, 0.90, 0.88, 0.32)
+const WORKSHOP_BORDER := Color(0.42, 0.90, 0.88, 0.32)
 const MIN_ROOM_CELLS: int = 2
 const MECHANIC_HEAL_TICK_SECONDS: float = 1.0
 const MECHANIC_LIMB_REPAIR_PER_SEC: float = 5.0
+const WORKSHOP_ROOM_BUFF: float = 1.15
+const WORKSHOP_OUTSIDE_DEBUFF: float = 0.75
 
 @export var structure_manager_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -59,16 +63,16 @@ func create_dock_room(cells: Array[Vector2i]) -> Dictionary:
 	return _create_room(Kind.DOCK_ROOM, cells)
 
 
-func create_meditation_chamber(cells: Array[Vector2i]) -> Dictionary:
-	return _create_room(Kind.MEDITATION_CHAMBER, cells)
+func create_research_room(cells: Array[Vector2i]) -> Dictionary:
+	return _create_room(Kind.RESEARCH_ROOM, cells)
 
 
 func create_mechanic_room(cells: Array[Vector2i]) -> Dictionary:
 	return _create_room(Kind.MECHANIC_ROOM, cells)
 
 
-func create_machine_room(cells: Array[Vector2i]) -> Dictionary:
-	return _create_room(Kind.MACHINE_ROOM, cells)
+func create_workshop_room(cells: Array[Vector2i]) -> Dictionary:
+	return _create_room(Kind.WORKSHOP_ROOM, cells)
 
 
 func _create_room(kind: int, cells: Array[Vector2i]) -> Dictionary:
@@ -175,17 +179,12 @@ func is_room_valid(room: Dictionary) -> bool:
 	match kind:
 		Kind.DOCK_ROOM:
 			return _room_has_structure(room, [BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK])
-		Kind.MEDITATION_CHAMBER:
+		Kind.RESEARCH_ROOM:
 			return _room_has_structure(room, [BuildBlueprint.Id.MEDITATION_PAD])
 		Kind.MECHANIC_ROOM:
 			return _room_has_structure(room, [BuildBlueprint.Id.MAINTENANCE_DOCK])
-		Kind.MACHINE_ROOM:
-			return _room_has_structure(room, [
-				BuildBlueprint.Id.EXTRACTOR,
-				BuildBlueprint.Id.FABRICATOR,
-				BuildBlueprint.Id.PARTS_LOOM,
-				BuildBlueprint.Id.SENTIENCE_CRADLE,
-			])
+		Kind.WORKSHOP_ROOM:
+			return _workshop_room_valid(room)
 	return true
 
 
@@ -197,22 +196,125 @@ func invalid_reason(room: Dictionary) -> String:
 	match int(room["kind"]):
 		Kind.DOCK_ROOM:
 			if not _room_has_structure(room, [BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK]):
-				return "needs dock"
-		Kind.MEDITATION_CHAMBER:
+				return "needs dock bed"
+		Kind.RESEARCH_ROOM:
 			if not _room_has_structure(room, [BuildBlueprint.Id.MEDITATION_PAD]):
-				return "needs meditation pad"
+				return "needs research bench"
 		Kind.MECHANIC_ROOM:
 			if not _room_has_structure(room, [BuildBlueprint.Id.MAINTENANCE_DOCK]):
 				return "needs mechanic dock"
-		Kind.MACHINE_ROOM:
-			if not _room_has_structure(room, [
-					BuildBlueprint.Id.EXTRACTOR,
-					BuildBlueprint.Id.FABRICATOR,
-					BuildBlueprint.Id.PARTS_LOOM,
-					BuildBlueprint.Id.SENTIENCE_CRADLE,
-				]):
-				return "needs machine"
+		Kind.WORKSHOP_ROOM:
+			if not _workshop_room_has_workshop(room):
+				return "needs a workshop"
+			if not _workshop_room_has_light(room):
+				return "needs a light source"
+			if not _workshop_room_has_door(room):
+				return "needs a door on the perimeter"
+			if not _workshop_room_is_enclosed(room):
+				return "not enclosed by walls"
 	return "unknown"
+
+
+## Workshop Room validation: enclosed by walls/doors, at least one door on the
+## perimeter, at least one placed light-source object, and a workshop inside.
+func _workshop_room_valid(room: Dictionary) -> bool:
+	return _workshop_room_has_workshop(room) \
+		and _workshop_room_has_light(room) \
+		and _workshop_room_has_door(room) \
+		and _workshop_room_is_enclosed(room)
+
+
+func _workshop_room_has_workshop(room: Dictionary) -> bool:
+	if _structure_manager == null:
+		return false
+	for raw_cell in (room["cells"] as Array):
+		var cell: Vector2i = raw_cell as Vector2i
+		var s: Dictionary = _structure_manager.structure_at(cell)
+		if s.is_empty():
+			continue
+		if BuildBlueprint.is_workshop(int(s["id"])):
+			return true
+	return false
+
+
+func _workshop_room_has_light(room: Dictionary) -> bool:
+	return _room_has_structure(room, [
+		BuildBlueprint.Id.SMALL_LIGHT_DEVICE,
+		BuildBlueprint.Id.LARGE_LIGHT_DEVICE,
+	])
+
+
+func _workshop_room_has_door(room: Dictionary) -> bool:
+	if _structure_manager == null:
+		return false
+	var interior: Dictionary = {}
+	for raw_cell in (room["cells"] as Array):
+		interior[raw_cell as Vector2i] = true
+	const NEIGHBORS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for cell in interior.keys():
+		for off in NEIGHBORS:
+			var n: Vector2i = (cell as Vector2i) + off
+			if interior.has(n):
+				continue
+			var s: Dictionary = _structure_manager.structure_at(n)
+			if s.is_empty():
+				continue
+			if int(s["id"]) == BuildBlueprint.Id.DOOR:
+				return true
+	return false
+
+
+## True if every cell outside the painted area that touches an interior cell
+## is either a TILE_WALL, a WALL structure, or a DOOR structure. Cheap because
+## we only inspect the room's outer perimeter, not the whole map.
+func _workshop_room_is_enclosed(room: Dictionary) -> bool:
+	if _chunk_manager == null:
+		return false
+	var interior: Dictionary = {}
+	for raw_cell in (room["cells"] as Array):
+		interior[raw_cell as Vector2i] = true
+	const NEIGHBORS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for cell in interior.keys():
+		for off in NEIGHBORS:
+			var n: Vector2i = (cell as Vector2i) + off
+			if interior.has(n):
+				continue
+			if not _is_room_boundary(n):
+				return false
+	return true
+
+
+func _is_room_boundary(cell: Vector2i) -> bool:
+	if _chunk_manager == null:
+		return false
+	var tile: int = _chunk_manager.get_tile_at(cell)
+	if tile == TerrainGenerator.TILE_WALL \
+			or tile == TerrainGenerator.TILE_RICH_WALL \
+			or tile == TerrainGenerator.TILE_SERVICE_CORE:
+		return true
+	if _structure_manager == null:
+		return false
+	var s: Dictionary = _structure_manager.structure_at(cell)
+	if s.is_empty():
+		return false
+	var sid: int = int(s["id"])
+	return sid == BuildBlueprint.Id.WALL or sid == BuildBlueprint.Id.DOOR
+
+
+## Multiplier applied to workshops standing on `grid`. Returns 1.15 inside a
+## valid Workshop Room, 0.75 outside any room (penalty), 1.0 inside any other
+## room kind.
+func workshop_speed_multiplier_at(grid: Vector2i) -> float:
+	var room: Dictionary = _cell_to_room.get(grid, {})
+	if room.is_empty():
+		return WORKSHOP_OUTSIDE_DEBUFF
+	if int(room["kind"]) == Kind.WORKSHOP_ROOM and is_room_valid(room):
+		return WORKSHOP_ROOM_BUFF
+	return 1.0
 
 
 func _can_designate_room_cell(cell: Vector2i, kind: int) -> bool:
@@ -230,12 +332,12 @@ func _can_designate_room_cell(cell: Vector2i, kind: int) -> bool:
 	match kind:
 		Kind.DOCK_ROOM:
 			return id == BuildBlueprint.Id.DOCK or id == BuildBlueprint.Id.MAINTENANCE_DOCK
-		Kind.MEDITATION_CHAMBER:
+		Kind.RESEARCH_ROOM:
 			return id == BuildBlueprint.Id.MEDITATION_PAD
 		Kind.MECHANIC_ROOM:
 			return id == BuildBlueprint.Id.MAINTENANCE_DOCK
-		Kind.MACHINE_ROOM:
-			return BuildBlueprint.is_worker_operated(id)
+		Kind.WORKSHOP_ROOM:
+			return BuildBlueprint.is_workshop(id)
 	return false
 
 
@@ -336,23 +438,23 @@ func _draw() -> void:
 
 static func _border_for_kind(kind: int) -> Color:
 	match kind:
-		Kind.MEDITATION_CHAMBER:
-			return MEDITATION_BORDER
+		Kind.RESEARCH_ROOM:
+			return RESEARCH_BORDER
 		Kind.MECHANIC_ROOM:
 			return MECHANIC_BORDER
-		Kind.MACHINE_ROOM:
-			return MACHINE_BORDER
+		Kind.WORKSHOP_ROOM:
+			return WORKSHOP_BORDER
 		_:
 			return ROOM_BORDER
 
 
 static func _room_kind_name(kind: int) -> String:
 	match kind:
-		Kind.MEDITATION_CHAMBER:
-			return "Meditation Chamber"
+		Kind.RESEARCH_ROOM:
+			return "Research Room"
 		Kind.MECHANIC_ROOM:
 			return "Mechanic Room"
-		Kind.MACHINE_ROOM:
-			return "Machine Room"
+		Kind.WORKSHOP_ROOM:
+			return "Workshop Room"
 		_:
 			return "Dock Room"

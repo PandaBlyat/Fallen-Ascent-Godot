@@ -13,9 +13,12 @@ const ICON_CELL_SIZE := Vector2i(32, 32)
 
 const TAB_ORDERS := &"orders"
 const TAB_ZONES := &"zones"
-const TAB_STRUCTURES := &"structures"
-const TAB_OBJECTS := &"objects"
 const TAB_ROOMS := &"rooms"
+const TAB_WORKSHOPS := &"workshops"
+const TAB_BUILDING := &"building"
+const TAB_STORAGE := &"storage"
+const TAB_VISIBILITY := &"visibility"
+const TAB_OBJECTS := &"objects"
 
 const ICON_CANCEL := Vector2i(0, 0)
 const ICON_MINE := Vector2i(1, 0)
@@ -32,7 +35,6 @@ const ICON_DOCK := ICON_CHARGE_PAD
 const ICON_REPAIR_BENCH := ICON_FABRICATOR
 const ICON_PARTS_LOOM := ICON_FABRICATOR
 const ICON_MAINTENANCE_DOCK := ICON_CHARGE_PAD
-const ICON_CALIBRATION_SHRINE := ICON_SENSOR
 const ICON_MEDITATION_PAD := ICON_SENSOR
 const ICON_SENTIENCE_CRADLE := ICON_FABRICATOR
 const ICON_FABRICATION_SPOT := ICON_FABRICATOR
@@ -308,7 +310,10 @@ func _build_layout() -> void:
 	_add_tab_button(tabs, TAB_ORDERS, "Orders")
 	_add_tab_button(tabs, TAB_ZONES, "Zones")
 	_add_tab_button(tabs, TAB_ROOMS, "Rooms")
-	_add_tab_button(tabs, TAB_STRUCTURES, "Structures")
+	_add_tab_button(tabs, TAB_WORKSHOPS, "Workshops")
+	_add_tab_button(tabs, TAB_BUILDING, "Building")
+	_add_tab_button(tabs, TAB_STORAGE, "Storage")
+	_add_tab_button(tabs, TAB_VISIBILITY, "Visibility")
 	_add_tab_button(tabs, TAB_OBJECTS, "Objects")
 
 	_command_grid = GridContainer.new()
@@ -446,7 +451,7 @@ func _set_tab(tab: StringName) -> void:
 		var required_tech_id: StringName = StringName(command.get("required_tech_id", &""))
 		var lock_build: bool = bool(command.get("lock_build", true))
 		var icon_texture: Texture2D = null
-		if build_id >= 0 and (tab == TAB_STRUCTURES or tab == TAB_OBJECTS):
+		if build_id >= 0 and (tab == TAB_WORKSHOPS or tab == TAB_BUILDING or tab == TAB_STORAGE or tab == TAB_VISIBILITY or tab == TAB_OBJECTS):
 			icon_texture = _structure_icon(build_id)
 		_add_command_button(
 			int(command["mode"]),
@@ -470,38 +475,45 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 			]
 		TAB_ROOMS:
 			return [
-				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
-				{"mode": Designator.Mode.DESIGNATE_MEDITATION_CHAMBER, "label": "Meditate", "tooltip": "Meditation Chamber\nMust contain a Meditation Pad.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
-				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nWhen valid, that dock heals room occupants.", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK, "required_tech_id": TechDatabase.MECHANIC_ROOM, "lock_build": false},
-				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nOptional designation for a production area.\nGroups Extractors, Fabricators, Assembly Presses, and Replication Cradles.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock Bed. One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
+				{"mode": Designator.Mode.DESIGNATE_RESEARCH_ROOM, "label": "Research", "tooltip": "Research Room\nMust contain a Research Bench.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
+				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nWhen valid, that dock heals room occupants faster.", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK, "required_tech_id": TechDatabase.MECHANIC_ROOM, "lock_build": false},
+				{"mode": Designator.Mode.DESIGNATE_WORKSHOP_ROOM, "label": "Workshop", "tooltip": "Workshop Room\nMust be enclosed by walls + door, contain a light source object, and a workshop structure.\nWorkshops inside get a speed buff; outside any room they suffer a debuff.", "icon": ICON_FABRICATION_SPOT, "build_id": BuildBlueprint.Id.FABRICATION_SPOT},
 				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
-		TAB_STRUCTURES:
+		TAB_WORKSHOPS:
+			return [
+				{"mode": Designator.Mode.BUILD_DOCK, "label": "Dock Bed", "tooltip": _build_tooltip(BuildBlueprint.Id.DOCK), "icon": ICON_DOCK, "build_id": BuildBlueprint.Id.DOCK},
+				{"mode": Designator.Mode.BUILD_REPAIR_BENCH, "label": "Repair Bench", "tooltip": _build_tooltip(BuildBlueprint.Id.REPAIR_BENCH), "icon": ICON_REPAIR_BENCH, "build_id": BuildBlueprint.Id.REPAIR_BENCH},
+				{"mode": Designator.Mode.BUILD_MEDITATION_PAD, "label": "Research", "tooltip": _build_tooltip(BuildBlueprint.Id.MEDITATION_PAD), "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
+				{"mode": Designator.Mode.BUILD_FABRICATION_SPOT, "label": "Craft Spot", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATION_SPOT), "icon": ICON_FABRICATION_SPOT, "build_id": BuildBlueprint.Id.FABRICATION_SPOT},
+				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR, "build_id": BuildBlueprint.Id.SENSOR},
+				{"mode": Designator.Mode.BUILD_EXTRACTOR, "label": "Extractor", "tooltip": _build_tooltip(BuildBlueprint.Id.EXTRACTOR), "icon": ICON_EXTRACTOR, "build_id": BuildBlueprint.Id.EXTRACTOR},
+				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD, "build_id": BuildBlueprint.Id.CHARGE_PAD},
+				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Craft Bench", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Assembler", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM, "build_id": BuildBlueprint.Id.PARTS_LOOM},
+				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Mech Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
+				{"mode": Designator.Mode.BUILD_FABRICATOR_ADVANCED, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR_ADVANCED), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR_ADVANCED},
+				{"mode": Designator.Mode.BUILD_SENTIENCE_CRADLE, "label": "Cradle", "tooltip": _build_tooltip(BuildBlueprint.Id.SENTIENCE_CRADLE), "icon": ICON_SENTIENCE_CRADLE, "build_id": BuildBlueprint.Id.SENTIENCE_CRADLE},
+			]
+		TAB_BUILDING:
 			return [
 				{"mode": Designator.Mode.BUILD_WALL, "label": "Wall", "tooltip": _build_tooltip(BuildBlueprint.Id.WALL), "icon": ICON_WALL, "build_id": BuildBlueprint.Id.WALL},
 				{"mode": Designator.Mode.BUILD_DOOR, "label": "Door", "tooltip": _build_tooltip(BuildBlueprint.Id.DOOR), "icon": ICON_DOOR, "build_id": BuildBlueprint.Id.DOOR},
-				{"mode": Designator.Mode.BUILD_LIGHT, "label": "Light", "tooltip": _build_tooltip(BuildBlueprint.Id.LIGHT), "icon": ICON_LIGHT, "build_id": BuildBlueprint.Id.LIGHT},
-				{"mode": Designator.Mode.BUILD_DOCK, "label": "Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.DOCK), "icon": ICON_DOCK, "build_id": BuildBlueprint.Id.DOCK},
-				{"mode": Designator.Mode.BUILD_REPAIR_BENCH, "label": "Repair", "tooltip": _build_tooltip(BuildBlueprint.Id.REPAIR_BENCH), "icon": ICON_REPAIR_BENCH, "build_id": BuildBlueprint.Id.REPAIR_BENCH},
-				{"mode": Designator.Mode.BUILD_MEDITATION_PAD, "label": "Med Pad", "tooltip": _build_tooltip(BuildBlueprint.Id.MEDITATION_PAD), "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
-				{"mode": Designator.Mode.BUILD_EXTRACTOR, "label": "Extractor", "tooltip": _build_tooltip(BuildBlueprint.Id.EXTRACTOR), "icon": ICON_EXTRACTOR, "build_id": BuildBlueprint.Id.EXTRACTOR},
-				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR, "build_id": BuildBlueprint.Id.SENSOR},
-				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD, "build_id": BuildBlueprint.Id.CHARGE_PAD},
-				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
-				{"mode": Designator.Mode.BUILD_FABRICATION_SPOT, "label": "Fab Spot", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATION_SPOT), "icon": ICON_FABRICATION_SPOT, "build_id": BuildBlueprint.Id.FABRICATION_SPOT},
-				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Assembly", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM, "build_id": BuildBlueprint.Id.PARTS_LOOM},
-				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Mechanic Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
-				{"mode": Designator.Mode.BUILD_CALIBRATION_SHRINE, "label": "Calibrate", "tooltip": _build_tooltip(BuildBlueprint.Id.CALIBRATION_SHRINE), "icon": ICON_CALIBRATION_SHRINE, "build_id": BuildBlueprint.Id.CALIBRATION_SHRINE},
-				{"mode": Designator.Mode.BUILD_SENTIENCE_CRADLE, "label": "Cradle", "tooltip": _build_tooltip(BuildBlueprint.Id.SENTIENCE_CRADLE), "icon": ICON_SENTIENCE_CRADLE, "build_id": BuildBlueprint.Id.SENTIENCE_CRADLE},
+				{"mode": Designator.Mode.PLACE_OUTLET_EXTENSION, "label": "Outlet Ext", "tooltip": _build_tooltip(BuildBlueprint.Id.OUTLET_EXTENSION), "icon": ICON_OUTLET_EXTENSION, "build_id": BuildBlueprint.Id.OUTLET_EXTENSION},
 			]
-		TAB_OBJECTS:
+		TAB_STORAGE:
 			return [
 				{"mode": Designator.Mode.PLACE_STORAGE_BIN, "label": "Storage Bin", "tooltip": _build_tooltip(BuildBlueprint.Id.STORAGE_BIN), "icon": ICON_STORAGE_BIN, "build_id": BuildBlueprint.Id.STORAGE_BIN},
-				{"mode": Designator.Mode.PLACE_OUTLET_EXTENSION, "label": "Outlet Ext", "tooltip": _build_tooltip(BuildBlueprint.Id.OUTLET_EXTENSION), "icon": ICON_OUTLET_EXTENSION, "build_id": BuildBlueprint.Id.OUTLET_EXTENSION},
-				{"mode": Designator.Mode.PLACE_RUDIMENTARY_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.RUDIMENTARY_SENSOR), "icon": ICON_RUDIMENTARY_SENSOR, "build_id": BuildBlueprint.Id.RUDIMENTARY_SENSOR},
+			]
+		TAB_VISIBILITY:
+			return [
 				{"mode": Designator.Mode.PLACE_SMALL_LIGHT_DEVICE, "label": "Small Light", "tooltip": _build_tooltip(BuildBlueprint.Id.SMALL_LIGHT_DEVICE), "icon": ICON_SMALL_LIGHT_DEVICE, "build_id": BuildBlueprint.Id.SMALL_LIGHT_DEVICE},
 				{"mode": Designator.Mode.PLACE_LARGE_LIGHT_DEVICE, "label": "Large Light", "tooltip": _build_tooltip(BuildBlueprint.Id.LARGE_LIGHT_DEVICE), "icon": ICON_LARGE_LIGHT_DEVICE, "build_id": BuildBlueprint.Id.LARGE_LIGHT_DEVICE},
+				{"mode": Designator.Mode.PLACE_RUDIMENTARY_SENSOR, "label": "Rud Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.RUDIMENTARY_SENSOR), "icon": ICON_RUDIMENTARY_SENSOR, "build_id": BuildBlueprint.Id.RUDIMENTARY_SENSOR},
 			]
+		TAB_OBJECTS:
+			return []
 		_:
 			return [
 				{"mode": Designator.Mode.MINE, "label": "Mine", "tooltip": "Mine\nMark wall, service core, or rich wall cells.\nWorkers dig adjacent cells and drop salvage resources.", "icon": ICON_MINE},

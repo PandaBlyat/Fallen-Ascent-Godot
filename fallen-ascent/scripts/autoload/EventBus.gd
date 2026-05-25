@@ -29,6 +29,8 @@ extends Node
 ##   build_job_selected(anchor)       - emitted by SelectionController when a
 ##                                      queued construction job is selected.
 ##                                      UNREACHABLE clears.
+##   default_tile_clicked(grid)       - emitted when a plain left-click lands
+##                                      on visible world tile with no selectable.
 ##   structure_built(manager)         - emitted after StructureManager places
 ##                                      or changes static objects.
 ##   visibility_changed(bounds)       - emitted after FogOfWar changes sight.
@@ -79,6 +81,7 @@ signal workers_selected(workers: Array)
 signal structure_selected(id: int, anchor: Vector2i)
 signal stockpile_selected(zone: Node)
 signal build_job_selected(anchor: Vector2i)
+signal default_tile_clicked(grid: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
 signal bot_inspected(node: Node, faction: int)

@@ -69,6 +69,8 @@ const NEUTRAL_ROW: int = 0
 const HOSTILE_ROW: int = 1
 const PALETTE_WIDTH: float = 580.0
 const PALETTE_HEIGHT: float = 200.0
+const PALETTE_COLLAPSED_WIDTH: float = 132.0
+const PALETTE_COLLAPSED_HEIGHT: float = 44.0
 const TOP_STRIP_HEIGHT: float = 44.0
 const WORKER_LIST_WIDTH: float = 300.0
 const WORKER_LIST_MARGIN: float = 16.0
@@ -76,9 +78,9 @@ const WORKER_LIST_ROW_HEIGHT: float = 32.0
 const WORKER_LIST_ROW_SEP: float = 6.0
 const WORKER_LIST_INNER_PAD: float = 7.0
 const WORKER_LIST_HEADER_HEIGHT: float = 18.0
-const SELECTION_PANEL_WIDTH: float = 760.0
-const SELECTION_PANEL_HEIGHT: float = 430.0
-const WORKER_CARD_WIDTH: float = 560.0
+const SELECTION_PANEL_WIDTH: float = 640.0
+const SELECTION_PANEL_HEIGHT: float = 650.0
+const WORKER_CARD_WIDTH: float = 460.0
 const INSPECT_CARD_WIDTH: float = 300.0
 const INSPECT_CARD_HEIGHT: float = 150.0
 
@@ -120,7 +122,11 @@ var _command_buttons: Dictionary = {}            ## int -> Button
 var _tech_tree_panel: CanvasLayer = null
 const TECH_TREE_SCENE: PackedScene = preload("res://scenes/ui/TechTreePanel.tscn")
 var _selection_panel: PanelContainer
-var _selection_box: HBoxContainer
+var _selection_box: VBoxContainer
+var _palette_panel: PanelContainer
+var _palette_box: VBoxContainer
+var _palette_collapsed_label: Label
+var _palette_collapsed: bool = false
 var _npc_strip: BoxContainer
 var _selected_workers: Array[Worker] = []
 var _selected_structure_id: int = -1
@@ -181,6 +187,7 @@ func _connect_signals() -> void:
 	EventBus.structure_selected.connect(_on_structure_selected)
 	EventBus.stockpile_selected.connect(_on_stockpile_selected)
 	EventBus.build_job_selected.connect(_on_build_job_selected)
+	EventBus.default_tile_clicked.connect(_on_default_tile_clicked)
 	EventBus.bot_inspected.connect(_on_bot_inspected)
 	EventBus.worker_entered_combat.connect(_on_worker_entered_combat)
 	EventBus.combatant_died.connect(_on_combatant_died)
@@ -298,6 +305,8 @@ func _build_layout() -> void:
 	palette.offset_right = PALETTE_WIDTH * 0.5
 	palette.offset_bottom = -16.0
 	palette.add_theme_stylebox_override("panel", _panel_textured_style("command_palette", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	palette.gui_input.connect(_on_palette_gui_input)
+	_palette_panel = palette
 	add_child(palette)
 
 	var palette_margin := MarginContainer.new()
@@ -307,8 +316,20 @@ func _build_layout() -> void:
 	palette_margin.add_theme_constant_override("margin_bottom", 10)
 	palette.add_child(palette_margin)
 
+	var collapsed_label := Label.new()
+	collapsed_label.text = "Designations"
+	collapsed_label.visible = false
+	collapsed_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	collapsed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	collapsed_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	collapsed_label.add_theme_font_size_override("font_size", 12)
+	collapsed_label.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
+	_palette_collapsed_label = collapsed_label
+	palette_margin.add_child(collapsed_label)
+
 	var palette_box := VBoxContainer.new()
 	palette_box.add_theme_constant_override("separation", 8)
+	_palette_box = palette_box
 	palette_margin.add_child(palette_box)
 
 	var tabs := HBoxContainer.new()
@@ -355,9 +376,9 @@ func _build_layout() -> void:
 	selection_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	selection_margin.add_child(selection_scroll)
 
-	_selection_box = HBoxContainer.new()
+	_selection_box = VBoxContainer.new()
 	_selection_box.alignment = BoxContainer.ALIGNMENT_BEGIN
-	_selection_box.add_theme_constant_override("separation", 14)
+	_selection_box.add_theme_constant_override("separation", 12)
 	selection_scroll.add_child(_selection_box)
 
 	# NPC Inspect Card - centered above the command palette.
@@ -410,27 +431,31 @@ func _position_selection_panel() -> void:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
-	var ui_scale: float = SettingsManager.ui_scale if SettingsManager != null else 1.0
-	var palette_width: float = PALETTE_WIDTH * ui_scale
-	var palette_height: float = PALETTE_HEIGHT * ui_scale
-	var left: float = viewport_size.x * 0.5 + palette_width * 0.5 + 12.0
-	var available_right: float = viewport_size.x - left - 12.0
-	var width: float = clampf(available_right, 360.0, SELECTION_PANEL_WIDTH)
-	var bottom: float = viewport_size.y - 16.0
-	var reserved_bottom: float = viewport_size.y - palette_height - 32.0
-	var top: float = maxf(64.0, bottom - SELECTION_PANEL_HEIGHT)
-	if available_right < 420.0:
-		width = minf(SELECTION_PANEL_WIDTH, viewport_size.x - 24.0)
-		left = (viewport_size.x - width) * 0.5
-		bottom = reserved_bottom
-		top = maxf(64.0, bottom - minf(SELECTION_PANEL_HEIGHT, bottom - 64.0))
-	elif ui_scale > 1.15:
-		bottom = minf(bottom, reserved_bottom)
-		top = maxf(64.0, bottom - minf(SELECTION_PANEL_HEIGHT, bottom - 64.0))
+	var width: float = clampf(viewport_size.x * 0.34, 500.0, SELECTION_PANEL_WIDTH)
+	if viewport_size.x < 900.0:
+		width = viewport_size.x - 24.0
+	var left: float = viewport_size.x - width - 16.0
+	var top: float = 72.0
+	var bottom: float = minf(viewport_size.y - 24.0, top + SELECTION_PANEL_HEIGHT)
 	_selection_panel.offset_left = left
 	_selection_panel.offset_top = top
 	_selection_panel.offset_right = left + width
 	_selection_panel.offset_bottom = bottom
+
+
+func _position_palette_panel() -> void:
+	if _palette_panel == null:
+		return
+	if _palette_collapsed:
+		_palette_panel.offset_left = -PALETTE_COLLAPSED_WIDTH * 0.5
+		_palette_panel.offset_top = -PALETTE_COLLAPSED_HEIGHT - 16.0
+		_palette_panel.offset_right = PALETTE_COLLAPSED_WIDTH * 0.5
+		_palette_panel.offset_bottom = -16.0
+	else:
+		_palette_panel.offset_left = -PALETTE_WIDTH * 0.5
+		_palette_panel.offset_top = -PALETTE_HEIGHT - 16.0
+		_palette_panel.offset_right = PALETTE_WIDTH * 0.5
+		_palette_panel.offset_bottom = -16.0
 
 
 func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
@@ -455,6 +480,7 @@ func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String)
 	parent.add_child(button)
 
 func _set_tab(tab: StringName) -> void:
+	_set_palette_collapsed(false)
 	_current_tab = tab
 	for child in _command_grid.get_children():
 		_command_grid.remove_child(child)
@@ -601,6 +627,7 @@ func _add_command_button(
 func _on_command_pressed(mode: int) -> void:
 	if _designator == null:
 		return
+	_set_palette_collapsed(false)
 	if mode == Designator.Mode.NONE:
 		_designator.set_mode(Designator.Mode.NONE)
 	else:
@@ -651,6 +678,7 @@ func _mouse_over_selection_panel() -> bool:
 func _on_workers_selected(workers: Array[Worker]) -> void:
 	_selected_workers = workers
 	if not _selected_workers.is_empty():
+		_set_palette_collapsed(false)
 		_selected_structure_id = -1
 		_selected_stockpile = null
 		_selected_build_anchor = Pathfinder.UNREACHABLE
@@ -729,7 +757,36 @@ func _on_tech_unlocked(_tech_id: StringName) -> void:
 
 
 func _on_settings_changed() -> void:
+	_position_palette_panel()
 	_position_selection_panel()
+
+
+func _on_default_tile_clicked(_grid: Vector2i) -> void:
+	_set_palette_collapsed(true)
+
+
+func _on_palette_gui_input(event: InputEvent) -> void:
+	if not _palette_collapsed:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_set_palette_collapsed(false)
+			get_viewport().set_input_as_handled()
+
+
+func _set_palette_collapsed(collapsed: bool) -> void:
+	if _palette_panel == null:
+		return
+	if _palette_collapsed == collapsed:
+		return
+	_palette_collapsed = collapsed
+	if _palette_box != null:
+		_palette_box.visible = not collapsed
+	if _palette_collapsed_label != null:
+		_palette_collapsed_label.visible = collapsed
+	_palette_panel.tooltip_text = "Expand designations" if collapsed else ""
+	_position_palette_panel()
 
 
 func _open_tech_tree() -> void:
@@ -1011,9 +1068,8 @@ func _build_worker_cards() -> void:
 	_selected_workers = live_workers
 	if live_workers.is_empty():
 		return
-	if live_workers.size() > 1:
-		_add_worker_roster(live_workers)
-	_build_worker_detail_card(live_workers[0], live_workers.size())
+	for worker in live_workers:
+		_build_worker_detail_card(worker, 1)
 
 
 func _add_worker_roster(workers: Array[Worker]) -> void:
@@ -1049,7 +1105,7 @@ func _add_worker_roster(workers: Array[Worker]) -> void:
 		box.add_child(b)
 
 
-func _build_worker_detail_card(worker: Worker, selected_count: int) -> void:
+func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	var card_panel := PanelContainer.new()
 	card_panel.custom_minimum_size = Vector2(WORKER_CARD_WIDTH, 0)
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1068,8 +1124,6 @@ func _build_worker_detail_card(worker: Worker, selected_count: int) -> void:
 	margin.add_child(card)
 
 	_add_worker_header(card, worker)
-	if selected_count > 1:
-		_add_status_banner(card, "showing primary worker", COLOR_TEXT_MUTED)
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 14)
 	card.add_child(columns)

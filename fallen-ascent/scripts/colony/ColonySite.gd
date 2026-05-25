@@ -39,6 +39,7 @@ func _ready() -> void:
 		site.site_seed = 1234567
 	_site_seed = site.site_seed
 	chunk_manager.setup(site.site_seed)
+	structure_manager.setup(site.site_seed)
 	static_prop_manager.setup(site.site_seed)
 	camera.set_world_bounds(chunk_manager.map_world_rect())
 
@@ -201,18 +202,30 @@ func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP, count: int = 1) 
 
 
 func has_mineable_static_prop(grid: Vector2i) -> bool:
+	if structure_manager != null \
+			and structure_manager.has_method("has_scrappable_structure") \
+			and bool(structure_manager.call("has_scrappable_structure", grid)):
+		return true
 	return static_prop_manager != null \
 		and static_prop_manager.has_method("has_mineable_prop") \
 		and bool(static_prop_manager.call("has_mineable_prop", grid))
 
 
 func static_prop_mine_stand_for(grid: Vector2i, from: Vector2i, pathfinder: Pathfinder) -> Vector2i:
+	if structure_manager != null \
+			and structure_manager.has_method("has_scrappable_structure") \
+			and bool(structure_manager.call("has_scrappable_structure", grid)):
+		return structure_manager.call("scrap_stand_for", grid, from, pathfinder) as Vector2i
 	if static_prop_manager == null:
 		return Pathfinder.UNREACHABLE
 	return static_prop_manager.call("mine_stand_for", grid, from, pathfinder) as Vector2i
 
 
 func mine_static_prop_at(grid: Vector2i) -> Dictionary:
+	if structure_manager != null \
+			and structure_manager.has_method("has_scrappable_structure") \
+			and bool(structure_manager.call("has_scrappable_structure", grid)):
+		return structure_manager.call("scrap_structure_at", grid) as Dictionary
 	if static_prop_manager == null:
 		return {}
 	return static_prop_manager.call("mine_prop_at", grid) as Dictionary

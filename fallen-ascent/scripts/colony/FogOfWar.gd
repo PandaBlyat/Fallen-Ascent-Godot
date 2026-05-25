@@ -9,8 +9,8 @@ const WORKER_SIGHT_RADIUS: int = 7
 const REFRESH_SECONDS: float = 0.18
 const FOG_Z_INDEX: int = 900
 const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 0.998)
-const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.76)
-const LIT_MEMORY_MIN_ALPHA: float = 0.22
+const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.68)
+const LIT_MEMORY_MIN_ALPHA: float = 0.16
 const VISIBLE_EDGE_ALPHA: float = 0.10
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
@@ -261,6 +261,8 @@ func _rebuild_light_image(light_image: Image, bounds: Rect2i) -> void:
 		var center: Vector2i = source.get("grid", Vector2i.ZERO) as Vector2i
 		var radius: int = int(source.get("radius", 0))
 		if radius <= 0:
+			continue
+		if bool(source.get("requires_visible_source", false)) and not _visible.has(center):
 			continue
 		var color: Color = source.get("color", Color(1.0, 0.88, 0.45, 1.0)) as Color
 		var intensity: float = clampf(float(source.get("intensity", 1.0)), 0.0, 2.0)

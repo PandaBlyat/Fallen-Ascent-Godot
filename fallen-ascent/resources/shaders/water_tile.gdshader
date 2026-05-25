@@ -33,6 +33,7 @@ uniform vec3 acid_shallow_high  = vec3(0.40, 0.72, 0.22);
 uniform vec3 acid_puddle_low    = vec3(0.30, 0.52, 0.16);
 uniform vec3 acid_puddle_high   = vec3(0.58, 0.86, 0.32);
 uniform vec3 acid_sheen         = vec3(0.78, 0.92, 0.34);
+uniform float acid_glow_gain = 0.32;
 
 varying vec2 world_pos;
 
@@ -115,6 +116,11 @@ void fragment() {
 	vec3 color = mix(low_color, high_color, wave * 0.7 + ripple * ripple_gain);
 	float oil = smoothstep(0.78, 0.96, noise(p * 3.1 + vec2(t * 4.0, t * 1.6)));
 	color = mix(color, sheen_color, oil * oil_gain);
+	if (depth_band >= 3.0) {
+		float pulse = 0.72 + 0.28 * sin(TIME * 2.4 + wave * 5.0);
+		float acid_glow = (0.18 + oil * 0.35 + ripple * 0.12) * pulse * acid_glow_gain;
+		color += sheen_color * acid_glow;
+	}
 	color *= 0.78 + grit * dirty_strength * 0.22;
 
 	// Soft scum/foam edge along each tile boundary so seams between

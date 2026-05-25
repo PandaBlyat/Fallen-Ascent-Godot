@@ -98,6 +98,10 @@ func _refresh(grid: Vector2i) -> void:
 	var structure_name: String = _structure_manager.structure_name_at(grid) if _structure_manager != null else ""
 	if not structure_name.is_empty():
 		lines.append("Object: " + structure_name)
+		if _structure_manager.has_method("scrap_rewards_text_at"):
+			var scrap_rewards: String = _structure_manager.call("scrap_rewards_text_at", grid) as String
+			if not scrap_rewards.is_empty():
+				lines.append("Scrap yields: " + scrap_rewards)
 	elif _static_prop_manager != null:
 		var prop_name: String = ""
 		if _static_prop_manager.has_method("prop_name_at"):

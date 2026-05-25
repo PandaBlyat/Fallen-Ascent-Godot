@@ -128,6 +128,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			var mb_d := event as InputEventMouseButton
 			if mb_d.pressed and mb_d.button_index == MOUSE_BUTTON_LEFT:
 				_designator.cancel_active()
+				var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
+				if _chunk_manager.is_grid_in_map(grid) and (_fog == null or _fog.is_explored(grid)):
+					EventBus.default_tile_clicked.emit(grid)
 				get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton:
@@ -205,11 +208,14 @@ func _finish_drag(screen_pos: Vector2) -> void:
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 			else:
+				var grid: Vector2i = _world_to_grid(_drag_end_world)
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
 				EventBus.stockpile_selected.emit(null)
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
+				if _chunk_manager.is_grid_in_map(grid) and (_fog == null or _fog.is_explored(grid)):
+					EventBus.default_tile_clicked.emit(grid)
 	queue_redraw()
 
 
@@ -235,6 +241,18 @@ func _handle_right_click(shift_held: bool) -> void:
 			_show_order_highlight(build.anchor)
 		elif worker != null and is_instance_valid(worker):
 			_show_order_failed(grid, "No path", worker)
+		return
+	if _structure_manager != null \
+			and _structure_manager.has_method("has_scrappable_structure") \
+			and bool(_structure_manager.call("has_scrappable_structure", grid)) \
+			and (_fog == null or _fog.is_cell_visible(grid)):
+		var structure_scrapper: Worker = selected_worker()
+		if structure_scrapper != null and is_instance_valid(structure_scrapper):
+			if shift_held:
+				structure_scrapper.queue_command_mine(grid)
+			else:
+				structure_scrapper.command_mine(grid)
+			_show_order_highlight(grid)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
 	if _static_prop_manager != null \
@@ -564,6 +582,8 @@ func _update_hover_target() -> bool:
 		return _hover_changed(old_entity, old_cells)
 	var structure: Dictionary = _structure_under(grid)
 	if not structure.is_empty():
+		if bool(structure.get("generated", false)) and _fog != null and not _fog.is_cell_visible(grid):
+			return _hover_changed(old_entity, old_cells)
 		var raw_cells: Array = structure.get("cells", []) as Array
 		for cell in raw_cells:
 			_hover_cells.append(cell as Vector2i)
@@ -625,14 +645,13 @@ func _workers_in_rect(a: Vector2, b: Vector2) -> Array[Worker]:
 func _try_select_structure(world_pos: Vector2) -> bool:
 	if _structure_manager == null:
 		return false
-	var grid := Vector2i(
-		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
-		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
-	)
+	var grid: Vector2i = _world_to_grid(world_pos)
 	if _fog != null and not _fog.is_explored(grid):
 		return false
 	var structure: Dictionary = _structure_manager.structure_at(grid)
 	if structure.is_empty():
+		return false
+	if bool(structure.get("generated", false)) and _fog != null and not _fog.is_cell_visible(grid):
 		return false
 	EventBus.structure_selected.emit(int(structure["id"]), structure["anchor"] as Vector2i)
 	return true
@@ -683,6 +702,13 @@ func _select_many(workers: Array[Worker]) -> void:
 		queue_redraw()
 	EventBus.worker_selected.emit(selected_worker())
 	EventBus.workers_selected.emit(_selected.duplicate())
+
+
+func _world_to_grid(world_pos: Vector2) -> Vector2i:
+	return Vector2i(
+		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
+		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
+	)
 
 
 func _has_selected_path() -> bool:

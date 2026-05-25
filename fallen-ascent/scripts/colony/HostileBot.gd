@@ -31,8 +31,6 @@ const PICK_ATTEMPTS: int = 32
 const WANDER_HOP_RADIUS: int = 5
 const WANDER_HOP_ATTEMPTS: int = 8
 
-const PERCEPTION_TICK_MIN: float = 0.20
-const PERCEPTION_TICK_MAX: float = 0.40
 const PERCEPTION_RADIUS_TILES: int = 7
 const LOS_CACHE_TTL_MSEC: int = 300
 const CHASE_LOST_SECONDS: float = 3.0
@@ -50,7 +48,6 @@ var _state: int = State.WANDERING
 var _path: PackedVector2Array = PackedVector2Array()
 var _path_index: int = 0
 var _wander_timer: Timer
-var _perception_timer: Timer
 var _target: Node2D = null
 var _last_seen_at: float = 0.0
 var _knockback_remaining: float = 0.0
@@ -86,19 +83,15 @@ func _ready() -> void:
 	_wander_timer.one_shot = true
 	_wander_timer.timeout.connect(_on_wander_timer_timeout)
 	add_child(_wander_timer)
-	_perception_timer = Timer.new()
-	_perception_timer.one_shot = false
-	_perception_timer.wait_time = randf_range(PERCEPTION_TICK_MIN, PERCEPTION_TICK_MAX)
-	_perception_timer.timeout.connect(_on_perception_tick)
-	add_child(_perception_timer)
-	_perception_timer.start()
 	EntityGrid.register(self, FACTION_HOSTILE, current_grid())
+	AIScheduler.register(self)
 	tree_exiting.connect(_on_tree_exiting)
 	_schedule_wander(0.2, 2.0)
 
 
 func _on_tree_exiting() -> void:
 	EntityGrid.unregister(self)
+	AIScheduler.unregister(self)
 
 
 func current_grid() -> Vector2i:
@@ -236,10 +229,9 @@ func _set_facing_from_vector(delta_pos: Vector2) -> void:
 	queue_redraw()
 
 
-func _on_perception_tick() -> void:
+func ai_tick(_delta: float) -> void:
 	if _dead:
 		return
-	_perception_timer.wait_time = randf_range(PERCEPTION_TICK_MIN, PERCEPTION_TICK_MAX)
 	_apply_visibility()
 	EntityGrid.update_position(self, current_grid())
 	var best: Node2D = _scan_for_target()
@@ -424,8 +416,7 @@ func _die() -> void:
 	set_process(false)
 	if _wander_timer != null:
 		_wander_timer.stop()
-	if _perception_timer != null:
-		_perception_timer.stop()
+	AIScheduler.unregister(self)
 	EventBus.combatant_died.emit(self, FACTION_HOSTILE)
 	queue_redraw()
 	var fade := Timer.new()

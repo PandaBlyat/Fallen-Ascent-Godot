@@ -48,20 +48,25 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 
 ## Pathfinding & sim scaling
 
-- [ ] **Replace linear job-board scans with spatial / typed job queues.**
-      `JobBoard.claim_next_for` still scans all pending jobs per worker poll.
-      Hundreds of workers plus thousands of designations need job buckets by
-      kind/priority/chunk, with reachability cooldowns stored per job.
-- [ ] **Batch worker AI ticks.** Workers still own one `_process` each.
-      Current patches reduce wake storms and crowd scans, but hundreds of
-      workers should use staggered think intervals or a colony AI scheduler
-      for job polling, needs checks, and low-priority idle behavior.
+- [x] **Replace linear job-board scans with spatial / typed job queues.**
+      Phase 2a: `JobBoard` now indexes pending jobs by chunk
+      (`_pending_by_chunk`) and `claim_next_for` scans the 3x3 chunk
+      neighborhood before falling back to a global scan. `blocked_until_msec`
+      lifted onto the `Job` base class so per-job reachability cooldowns
+      apply to every kind.
+- [x] **Batch worker AI ticks (ambient bots).** Phase 2b: new
+      `AIScheduler` autoload round-robins NeutralBot/HostileBot perception
+      via `ai_tick(delta)`. Their per-instance `_perception_timer` nodes
+      were retired. Worker keeps `_idle_cooldown`-driven IDLE pacing
+      because it's intertwined with its idle-behavior state machine.
 - [ ] **Replace full-region `AStarGrid2D` with chunked / hierarchical
       pathfinding** once the colony grows past a handful of workers. The
       current `Pathfinder._rebuild` walks every cell in the loaded region on
       any chunk load/unload.
 - [ ] **Object pool for workers / items / projectiles** as soon as any of
-      them exceeds ~100 live instances. Reserve `scripts/pool/`.
+      them exceeds ~100 live instances. Phase 2b shipped the
+      `scripts/pool/NodePool.gd` infrastructure; concrete `ItemPool` /
+      `WorkerPool` / `ProjectilePool` wiring still pending.
 - [ ] **Ambient entity crowd path.** Neutral bots now sleep while idle and
       avoid duplicate path queries, but hundreds of ambient bots should move
       through a manager with batched thinking and `MultiMeshInstance2D` or
@@ -70,14 +75,13 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       ~30; ranged weapons (currently melee only); corpse → scrap drops on
       death; targeted hit zones replacing the random-limb roll inside
       `Worker._damage_limb`; a `CombatDirector` autoload to globally
-      throttle attack resolution; spatial grid for perception scans;
-      faction designer for tunable hostile waves.
-- [ ] **Pathfinder region-shift optimization.** Today, when the camera pans
-      and the AStarGrid2D's bounding region shifts (even by one chunk), the
-      grid is fully rebuilt because `AStarGrid2D.region = ...` then `update()`
-      wipes all solidness. Either grow the region without ever shrinking,
-      or keep our own solidness map and re-apply after `update()` only for
-      cells in the kept range.
+      throttle attack resolution; faction designer for tunable hostile
+      waves. (Phase 1 added a shared `EntityGrid` autoload covering the
+      spatial-grid perception scan; combat queries now use it.)
+- [x] **Pathfinder region-shift optimization.** Phase 1: `_region` grows
+      monotonically and a persistent `_solid_cache` is replayed after
+      `AStarGrid2D.update()` instead of refilling the full region from
+      `is_walkable`.
 
 ## Tech tree & economy follow-ups
 

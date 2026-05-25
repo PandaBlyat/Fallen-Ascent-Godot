@@ -38,10 +38,12 @@ const CALIBRATION_SHRINE_COLOR := Color(0.72, 0.58, 1.0, 0.95)
 const MEDITATION_PAD_COLOR := Color(0.62, 0.78, 1.0, 0.95)
 const SENTIENCE_CRADLE_COLOR := Color(0.95, 0.88, 0.55, 0.95)
 const FABRICATION_SPOT_COLOR := Color(0.90, 0.68, 0.42, 0.95)
-const STRUCTURE_ATLAS: Texture2D = preload("res://resources/objects/structures_atlas.png")
+const WORKSHOP_ATLAS: Texture2D = preload("res://resources/objects/workshops_atlas.png")
 const OBJECT_ATLAS: Texture2D = preload("res://resources/objects/craftable_objects_atlas.png")
 const DOOR_ATLAS: Texture2D = preload("res://resources/objects/doors_atlas.png")
-const STRUCTURE_SOURCE_CELL_SIZE := Vector2(32, 32)
+const OBJECT_SOURCE_CELL_SIZE := Vector2(32, 32)
+const DOOR_SOURCE_CELL_SIZE := Vector2(32, 32)
+const WORKSHOP_SOURCE_CELL_SIZE := Vector2(64, 64)
 const DOOR_OPEN_DELAY_SECONDS: float = 0.12
 const DOOR_HOLD_OPEN_SECONDS: float = 0.9
 
@@ -291,7 +293,7 @@ func visual_light_sources() -> Array[Dictionary]:
 			out.append({
 				"grid": structure["anchor"] as Vector2i,
 				"radius": SENSOR_VISUAL_RADIUS,
-				"color": _brightest_structure_color(id, Color(0.34, 0.86, 1.0, 1.0)),
+				"color": _brightest_workshop_color(id, Color(0.34, 0.86, 1.0, 1.0)),
 				"intensity": SENSOR_VISUAL_INTENSITY,
 			})
 		elif id == BuildBlueprint.Id.RUDIMENTARY_SENSOR:
@@ -670,6 +672,9 @@ func _craft_stockpile_missing_text(anchor: Vector2i) -> String:
 func _draw() -> void:
 	for structure in _structures:
 		var id: int = int(structure["id"])
+		if BuildBlueprint.is_workshop(id):
+			_draw_workshop(structure)
+			continue
 		var cells: Array = structure["cells"] as Array
 		for raw_cell in cells:
 			var cell: Vector2i = raw_cell as Vector2i
@@ -678,15 +683,24 @@ func _draw() -> void:
 			if BuildBlueprint.is_object_placement(id):
 				var object_kind: int = BuildBlueprint.object_item_kind(id)
 				var object_index: int = Item.object_atlas_index(object_kind)
-				var object_source := Rect2(Vector2(object_index * int(STRUCTURE_SOURCE_CELL_SIZE.x), 0), STRUCTURE_SOURCE_CELL_SIZE)
+				var object_source := Rect2(Vector2(object_index * int(OBJECT_SOURCE_CELL_SIZE.x), 0), OBJECT_SOURCE_CELL_SIZE)
 				draw_texture_rect_region(OBJECT_ATLAS, dest, object_source)
 			elif id == BuildBlueprint.Id.DOOR:
 				var door_index: int = 1 if is_door_open(cell) else 0
-				var door_source := Rect2(Vector2(door_index * int(STRUCTURE_SOURCE_CELL_SIZE.x), 0), STRUCTURE_SOURCE_CELL_SIZE)
+				var door_source := Rect2(Vector2(door_index * int(DOOR_SOURCE_CELL_SIZE.x), 0), DOOR_SOURCE_CELL_SIZE)
 				draw_texture_rect_region(DOOR_ATLAS, dest, door_source)
-			else:
-				var source := Rect2(Vector2(id * int(STRUCTURE_SOURCE_CELL_SIZE.x), 0), STRUCTURE_SOURCE_CELL_SIZE)
-				draw_texture_rect_region(STRUCTURE_ATLAS, dest, source)
+
+
+func _draw_workshop(structure: Dictionary) -> void:
+	var id: int = int(structure["id"])
+	var index: int = BuildBlueprint.workshop_atlas_index(id)
+	if index < 0:
+		return
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	var origin := Vector2(anchor.x * Chunk.TILE_PIXELS, anchor.y * Chunk.TILE_PIXELS)
+	var dest := Rect2(origin, Vector2(Chunk.TILE_PIXELS * 2, Chunk.TILE_PIXELS * 2))
+	var source := Rect2(Vector2(index * int(WORKSHOP_SOURCE_CELL_SIZE.x), 0), WORKSHOP_SOURCE_CELL_SIZE)
+	draw_texture_rect_region(WORKSHOP_ATLAS, dest, source)
 
 
 static func _color_for(id: int) -> Color:
@@ -746,13 +760,13 @@ func _object_color(object_kind: int, fallback: Color) -> Color:
 	var index: int = Item.object_atlas_index(object_kind)
 	if image == null or image.is_empty() or index < 0:
 		return fallback
-	var origin_x: int = index * int(STRUCTURE_SOURCE_CELL_SIZE.x)
+	var origin_x: int = index * int(OBJECT_SOURCE_CELL_SIZE.x)
 	if origin_x >= image.get_width():
 		return fallback
 	var best_color: Color = fallback
 	var best_score: float = -1.0
-	var max_x: int = mini(origin_x + int(STRUCTURE_SOURCE_CELL_SIZE.x), image.get_width())
-	var max_y: int = mini(int(STRUCTURE_SOURCE_CELL_SIZE.y), image.get_height())
+	var max_x: int = mini(origin_x + int(OBJECT_SOURCE_CELL_SIZE.x), image.get_width())
+	var max_y: int = mini(int(OBJECT_SOURCE_CELL_SIZE.y), image.get_height())
 	for y in range(0, max_y):
 		for x in range(origin_x, max_x):
 			var pixel: Color = image.get_pixel(x, y)
@@ -765,21 +779,25 @@ func _object_color(object_kind: int, fallback: Color) -> Color:
 	return best_color
 
 
-func _brightest_structure_color(id: int, fallback: Color) -> Color:
+func _brightest_workshop_color(id: int, fallback: Color) -> Color:
 	if _brightest_color_cache.has(id):
 		return _brightest_color_cache[id] as Color
-	var image: Image = STRUCTURE_ATLAS.get_image()
+	var image: Image = WORKSHOP_ATLAS.get_image()
 	if image == null or image.is_empty():
 		_brightest_color_cache[id] = fallback
 		return fallback
-	var origin_x: int = id * int(STRUCTURE_SOURCE_CELL_SIZE.x)
+	var index: int = BuildBlueprint.workshop_atlas_index(id)
+	if index < 0:
+		_brightest_color_cache[id] = fallback
+		return fallback
+	var origin_x: int = index * int(WORKSHOP_SOURCE_CELL_SIZE.x)
 	if origin_x >= image.get_width():
 		_brightest_color_cache[id] = fallback
 		return fallback
 	var best_color: Color = fallback
 	var best_score: float = -1.0
-	var max_x: int = mini(origin_x + int(STRUCTURE_SOURCE_CELL_SIZE.x), image.get_width())
-	var max_y: int = mini(int(STRUCTURE_SOURCE_CELL_SIZE.y), image.get_height())
+	var max_x: int = mini(origin_x + int(WORKSHOP_SOURCE_CELL_SIZE.x), image.get_width())
+	var max_y: int = mini(int(WORKSHOP_SOURCE_CELL_SIZE.y), image.get_height())
 	for y in range(0, max_y):
 		for x in range(origin_x, max_x):
 			var pixel: Color = image.get_pixel(x, y)

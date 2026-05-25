@@ -38,6 +38,8 @@ extends Node
 ##                                      Payload: Node (NeutralBot or HostileBot)
 ##                                      or null to clear; int faction id
 ##                                      (1=neutral, 2=hostile).
+##   worker_entered_combat(worker)    - emitted once when a worker enters
+##                                      State.FIGHTING from any non-fight state.
 ##   combat_hit(attacker, target, dmg)- emitted after a successful melee swing.
 ##                                      Payload: Node, Node, float.
 ##   combat_dodged(attacker, target)  - emitted when a target dodges a swing.
@@ -80,6 +82,7 @@ signal build_job_selected(anchor: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)
 signal bot_inspected(node: Node, faction: int)
+signal worker_entered_combat(worker: Node)
 signal combat_hit(attacker: Node, target: Node, damage: float)
 signal combat_dodged(attacker: Node, target: Node)
 signal combatant_died(node: Node, faction: int)

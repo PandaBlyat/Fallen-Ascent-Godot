@@ -1,7 +1,7 @@
 class_name CraftJob
 extends Job
 ##
-## Craft one placeable object at a fabrication spot. Workers deliver each
+## Craft one placeable object at a crafting spot. Workers deliver each
 ## ingredient, work for the object's craft duration, then output object item.
 ##
 

@@ -38,10 +38,15 @@ tile is added, also add a flat-color placeholder entry for it:
   `wall_service_core_atlas.png`.
 - Rust visuals go in `resources/tiles/rust_overlay_atlas.png`; rust draws over
   floor, not as a standalone base tile.
-- Structures go in `resources/objects/structures_atlas.png`.
+- Workshop structures go in `resources/objects/workshops_atlas.png` using
+  64 px cells. The cell order is documented beside the PNG and maps through
+  `BuildBlueprint.workshop_atlas_index`.
 - Door animation states go in `resources/objects/doors_atlas.png`.
-- Static world props that are not terrain, structures, items, UI icons, or
-  entities go in `resources/objects/placeholder_static_objects_atlas.png`.
+- Crafted placeable objects that are not workshops go in
+  `resources/objects/craftable_objects_atlas.png` using 32 px cells.
+- Static world props that are not terrain, workshops, craftable objects,
+  items, UI icons, or entities go in
+  `resources/objects/placeholder_static_objects_atlas.png`.
 - Loose items and materials go in `resources/items/placeholder_items_atlas.png`.
 - Workers go in `resources/entities/worker_atlas.png`; neutral/hostile bots go
   in `resources/entities/bots_atlas.png`.

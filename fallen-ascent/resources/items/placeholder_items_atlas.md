@@ -7,3 +7,4 @@
 - `(64,0) 32x32`: substrate
 - `(96,0) 32x32`: circuit
 - `(128,0) 32x32`: power cell
+- `(320,0) 32x32`: biomass

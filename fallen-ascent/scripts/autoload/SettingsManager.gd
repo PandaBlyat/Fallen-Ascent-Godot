@@ -49,6 +49,7 @@ var display_mode: int = DisplayMode.WINDOWED
 var vsync_mode: int = VSyncMode.ENABLED
 var max_fps: int = 0
 var window_size: Vector2i = DEFAULT_WINDOW_SIZE
+var ui_scale: float = 1.0
 ## Audio volumes are linear [0.0, 1.0]; 1.0 == 0dB on the bus.
 ## Music default starts at 0.5 (≈-6dB) per the menu music ask.
 var master_volume: float = 1.0
@@ -105,6 +106,17 @@ func set_window_size(size: Vector2i) -> void:
 	settings_changed.emit()
 
 
+func set_ui_scale(value: float) -> void:
+	value = clampf(value, 0.75, 2.0)
+	if is_equal_approx(value, ui_scale):
+		apply()
+		return
+	ui_scale = value
+	apply()
+	save_to_disk()
+	settings_changed.emit()
+
+
 func set_master_volume(value: float) -> void:
 	master_volume = clampf(value, 0.0, 1.0)
 	_apply_bus_volume(BUS_MASTER, master_volume)
@@ -144,6 +156,7 @@ func apply() -> void:
 
 	DisplayServer.window_set_vsync_mode(_to_vsync_mode(vsync_mode))
 	Engine.max_fps = max(0, max_fps)
+	get_tree().root.content_scale_factor = ui_scale
 
 	_apply_bus_volume(BUS_MASTER, master_volume)
 	_apply_bus_volume(BUS_MUSIC, music_volume)
@@ -209,6 +222,7 @@ func load_from_disk() -> void:
 		VSyncMode.ADAPTIVE,
 	)
 	max_fps = int(cfg.get_value(SECTION_DISPLAY, "max_fps", max_fps))
+	ui_scale = clampf(float(cfg.get_value(SECTION_DISPLAY, "ui_scale", ui_scale)), 0.75, 2.0)
 	var saved_size: Variant = cfg.get_value(SECTION_DISPLAY, "window_size", window_size)
 	if saved_size is Vector2i:
 		window_size = saved_size as Vector2i
@@ -227,6 +241,7 @@ func save_to_disk() -> void:
 	cfg.set_value(SECTION_DISPLAY, "vsync_mode", vsync_mode)
 	cfg.set_value(SECTION_DISPLAY, "max_fps", max_fps)
 	cfg.set_value(SECTION_DISPLAY, "window_size", window_size)
+	cfg.set_value(SECTION_DISPLAY, "ui_scale", ui_scale)
 	cfg.set_value(SECTION_AUDIO, "master_volume", master_volume)
 	cfg.set_value(SECTION_AUDIO, "music_volume", music_volume)
 	cfg.set_value(SECTION_AUDIO, "sfx_volume", sfx_volume)

@@ -29,6 +29,8 @@ const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.10)
 const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.55)
 const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.08)
 const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.55)
+const HOVER_FILL := Color(0.35, 0.88, 1.0, 0.07)
+const HOVER_BORDER := Color(0.52, 0.94, 1.0, 0.62)
 const PATH_PREVIEW_COLOR := Color(1.0, 1.0, 1.0, 0.18)
 const ORDER_FAIL_SECONDS: float = 1.2
 const ORDER_FAIL_FILL := Color(1.0, 0.12, 0.12, 0.10)
@@ -58,6 +60,8 @@ var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_highlight_timer: float = 0.0
 var _order_highlight_target: Node2D = null
 var _attack_hover_target: Node2D = null
+var _hover_entity: Node2D = null
+var _hover_cells: Array[Vector2i] = []
 var _order_fail_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_fail_timer: float = 0.0
 
@@ -79,6 +83,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	var needs_redraw: bool = false
+	if _update_hover_target():
+		needs_redraw = true
 	if _order_highlight_timer > 0.0:
 		_order_highlight_timer = maxf(0.0, _order_highlight_timer - delta)
 		if _order_highlight_timer <= 0.0:
@@ -260,6 +266,15 @@ func _handle_right_click(shift_held: bool) -> void:
 				scraper.queue_command_scrape_rust(grid)
 			else:
 				scraper.command_scrape_rust(grid)
+			_show_order_highlight(grid)
+		return
+	if _chunk_manager.has_grass(grid):
+		var biomass_scraper: Worker = selected_worker()
+		if biomass_scraper != null and is_instance_valid(biomass_scraper):
+			if shift_held:
+				biomass_scraper.queue_command_scrape_biomass(grid)
+			else:
+				biomass_scraper.command_scrape_biomass(grid)
 			_show_order_highlight(grid)
 		return
 	if tile == TerrainGenerator.TILE_OUTLET:
@@ -522,6 +537,61 @@ func _update_attack_hover() -> void:
 		queue_redraw()
 
 
+func _update_hover_target() -> bool:
+	var old_entity: Node2D = _hover_entity
+	var old_cells: Array[Vector2i] = _hover_cells.duplicate()
+	_hover_entity = null
+	_hover_cells = []
+	if _camera == null:
+		return old_entity != null or not old_cells.is_empty()
+	var vp: Viewport = get_viewport()
+	if vp != null and vp.gui_get_hovered_control() != null:
+		return old_entity != null or not old_cells.is_empty()
+	var world_pos: Vector2 = _camera.get_global_mouse_position()
+	var workers: Array[Worker] = _worker_under(world_pos)
+	if not workers.is_empty():
+		_hover_entity = workers[0]
+		return _hover_changed(old_entity, old_cells)
+	var npc: Node2D = _npc_under(world_pos)
+	if npc != null:
+		_hover_entity = npc
+		return _hover_changed(old_entity, old_cells)
+	var grid := Vector2i(
+		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
+		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
+	)
+	if _fog != null and not _fog.is_explored(grid):
+		return _hover_changed(old_entity, old_cells)
+	var structure: Dictionary = _structure_under(grid)
+	if not structure.is_empty():
+		var raw_cells: Array = structure.get("cells", []) as Array
+		for cell in raw_cells:
+			_hover_cells.append(cell as Vector2i)
+		return _hover_changed(old_entity, old_cells)
+	if _static_prop_manager != null \
+			and _static_prop_manager.has_method("has_mineable_prop") \
+			and bool(_static_prop_manager.call("has_mineable_prop", grid)):
+		_hover_cells = [grid]
+	return _hover_changed(old_entity, old_cells)
+
+
+func _hover_changed(old_entity: Node2D, old_cells: Array[Vector2i]) -> bool:
+	if old_entity != _hover_entity:
+		return true
+	if old_cells.size() != _hover_cells.size():
+		return true
+	for i in old_cells.size():
+		if old_cells[i] != _hover_cells[i]:
+			return true
+	return false
+
+
+func _structure_under(grid: Vector2i) -> Dictionary:
+	if _structure_manager == null:
+		return {}
+	return _structure_manager.structure_at(grid)
+
+
 func _worker_under(world_pos: Vector2) -> Array[Worker]:
 	var best: Worker = null
 	var best_d: float = SELECT_RADIUS_PX
@@ -627,6 +697,13 @@ func _has_selected_path() -> bool:
 func _draw() -> void:
 	_draw_selected_paths()
 	var designator_idle: bool = _designator == null or _designator.current_mode() == Designator.Mode.NONE
+	if designator_idle and _hover_entity != null and is_instance_valid(_hover_entity) and _hover_entity != _attack_hover_target:
+		_draw_entity_highlight(_hover_entity, HOVER_FILL, HOVER_BORDER, 1.0)
+	if designator_idle and not _hover_cells.is_empty():
+		for cell in _hover_cells:
+			var hover_origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
+			draw_rect(Rect2(hover_origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)), HOVER_FILL)
+			draw_rect(Rect2(hover_origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)), HOVER_BORDER, false, 1.5)
 	if designator_idle and _attack_hover_target != null and is_instance_valid(_attack_hover_target):
 		_draw_entity_highlight(_attack_hover_target, ATTACK_HOVER_FILL, ATTACK_HOVER_BORDER, 1.0)
 	if _order_fail_grid != Pathfinder.UNREACHABLE:

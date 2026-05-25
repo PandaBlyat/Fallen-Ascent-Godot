@@ -13,6 +13,7 @@ signal mode_changed(mode: int)
 enum Mode {
 	NONE,
 	MINE,
+	SCRAPE_BIOMASS,
 	STOCKPILE,
 	REMOVE_STOCKPILE,
 	BUILD_WALL,
@@ -101,6 +102,7 @@ func toggle_mode(mode: int) -> void:
 func mode_label() -> String:
 	match _mode:
 		Mode.MINE: return "MINE"
+		Mode.SCRAPE_BIOMASS: return "SCRAPE BIOMASS"
 		Mode.STOCKPILE: return "STOCKPILE"
 		Mode.REMOVE_STOCKPILE: return "REMOVE_STOCKPILE"
 		Mode.BUILD_WALL: return "BUILD WALL"
@@ -205,7 +207,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_right_press() -> void:
 	var grid := _world_to_grid(_camera.get_global_mouse_position())
 	match _mode:
-		Mode.MINE, Mode.STOCKPILE, Mode.REMOVE_STOCKPILE, \
+		Mode.MINE, Mode.SCRAPE_BIOMASS, Mode.STOCKPILE, Mode.REMOVE_STOCKPILE, \
 		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_EXTRACTOR, \
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
@@ -241,6 +243,9 @@ func _on_right_release() -> void:
 			Mode.MINE:
 				for cell in cells:
 					_apply_mine_click(cell)
+			Mode.SCRAPE_BIOMASS:
+				for cell in cells:
+					_apply_scrape_biomass_click(cell)
 			Mode.REMOVE_STOCKPILE:
 				for cell in cells:
 					_apply_remove_stockpile_click(cell)
@@ -285,6 +290,17 @@ func _apply_mine_click(grid: Vector2i) -> void:
 		_job_board.add_mine_job(grid)
 	elif tile == TerrainGenerator.TILE_RUST:
 		_job_board.add_scrape_rust_job(grid)
+
+
+func _apply_scrape_biomass_click(grid: Vector2i) -> void:
+	if _fog != null and not _fog.is_explored(grid):
+		return
+	if not _chunk_manager.has_grass(grid):
+		return
+	if _job_board.has_scrape_biomass_at(grid):
+		_job_board.cancel_scrape_biomass_at(grid)
+		return
+	_job_board.add_scrape_biomass_job(grid)
 
 
 func _apply_build_click(grid: Vector2i, blueprint_id: int) -> void:

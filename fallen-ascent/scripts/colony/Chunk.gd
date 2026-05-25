@@ -11,10 +11,12 @@ const SIZE: int = 32                ## tiles per chunk side
 const TILE_PIXELS: int = 32         ## visual size of one tile
 const TERRAIN_Z_BASE: int = -30
 const TERRAIN_Z_WALL: int = -29
-const TERRAIN_Z_OVERLAY: int = -28
+const TERRAIN_Z_GRASS: int = -28
+const TERRAIN_Z_OVERLAY: int = -27
 const _TILE_COUNT: int = SIZE * SIZE
 const _TILESET: TileSet = preload("res://resources/tiles/placeholder_tiles.tres")
 const _WATER_SHADER: Shader = preload("res://resources/shaders/water_tile.gdshader")
+const _GRASS_SHADER: Shader = preload("res://resources/shaders/grass_overlay.gdshader")
 const _REPAINT_OFFSETS: Array[Vector2i] = [
 	Vector2i.ZERO,
 	Vector2i(0, -1),
@@ -25,22 +27,35 @@ const _REPAINT_OFFSETS: Array[Vector2i] = [
 
 var chunk_coord: Vector2i = Vector2i.ZERO
 var _tiles: PackedInt32Array
+var _grass_masks: PackedInt32Array
 var _base_layer: TileMapLayer
 var _water_layer: TileMapLayer
+var _grass_layer: TileMapLayer
 var _wall_layer: TileMapLayer
 var _overlay_layer: TileMapLayer
+var _grass_material: ShaderMaterial
+var _has_grass: bool = false
+var _walker_positions: PackedVector2Array = PackedVector2Array()
+var _nearby_workers: Array = []
 
 
 func _init() -> void:
 	_tiles = PackedInt32Array()
 	_tiles.resize(_TILE_COUNT)
+	_grass_masks = PackedInt32Array()
+	_grass_masks.resize(_TILE_COUNT)
+	_walker_positions.resize(8)
 	_base_layer = _make_layer("BaseTerrain", TERRAIN_Z_BASE)
 	_water_layer = _make_layer("WaterTerrain", TERRAIN_Z_BASE + 1)
 	_water_layer.material = _water_material()
+	_grass_layer = _make_layer("GrassOverlay", TERRAIN_Z_GRASS)
+	_grass_material = _grass_material_new()
+	_grass_layer.material = _grass_material
 	_wall_layer = _make_layer("RaisedTerrain", TERRAIN_Z_WALL)
 	_overlay_layer = _make_layer("Overlays", TERRAIN_Z_OVERLAY)
 	add_child(_base_layer)
 	add_child(_water_layer)
+	add_child(_grass_layer)
 	add_child(_wall_layer)
 	add_child(_overlay_layer)
 
@@ -59,6 +74,16 @@ func get_tile(local: Vector2i) -> int:
 func set_tile(local: Vector2i, t: int) -> void:
 	_tiles[local.y * SIZE + local.x] = t
 	_repaint_plus_neighbors(local)
+
+
+func set_grass_mask(local: Vector2i, mask: int) -> void:
+	_grass_masks[local.y * SIZE + local.x] = maxi(0, mask)
+	_repaint_cell(local)
+	_has_grass = _grass_masks_has_any()
+
+
+func grass_mask(local: Vector2i) -> int:
+	return _grass_masks[local.y * SIZE + local.x]
 
 
 ## Vector2i.MAX-style sentinel returned by grid_to_chunk when called with
@@ -105,6 +130,15 @@ func _water_material() -> ShaderMaterial:
 	return shader_material
 
 
+func _grass_material_new() -> ShaderMaterial:
+	var shader_material := ShaderMaterial.new()
+	shader_material.shader = _GRASS_SHADER
+	shader_material.set_shader_parameter("wind_speed", 1.15)
+	shader_material.set_shader_parameter("wind_amplitude", 0.9)
+	shader_material.set_shader_parameter("walker_count", 0)
+	return shader_material
+
+
 func _repaint_plus_neighbors(local: Vector2i) -> void:
 	for offset in _REPAINT_OFFSETS:
 		var cell: Vector2i = local + offset
@@ -137,6 +171,12 @@ func _repaint_cell(local: Vector2i) -> void:
 	else:
 		_overlay_layer.erase_cell(local)
 
+	var overlay_mask: int = grass_mask(local)
+	if overlay_mask > 0 and TileVisuals.is_floor_family(tile):
+		_grass_layer.set_cell(local, TileVisuals.SOURCE_GRASS, TileVisuals.grass_atlas_coords(overlay_mask, _global_cell(local)))
+	else:
+		_grass_layer.erase_cell(local)
+
 
 func _connection_mask(local: Vector2i, tile: int) -> int:
 	if tile == TerrainGenerator.TILE_VOID:
@@ -166,3 +206,31 @@ func _is_local_cell(local: Vector2i) -> bool:
 
 func _global_cell(local: Vector2i) -> Vector2i:
 	return chunk_coord * SIZE + local
+
+
+func _process(_delta: float) -> void:
+	if not _has_grass or _grass_material == null:
+		return
+	var rect := Rect2(global_position, Vector2(SIZE * TILE_PIXELS, SIZE * TILE_PIXELS)).grow(24.0)
+	var center_grid: Vector2i = chunk_coord * SIZE + Vector2i(SIZE / 2, SIZE / 2)
+	EntityGrid.query_into(EntityGrid.FACTION_COLONY, center_grid, SIZE / 2 + 2, _nearby_workers)
+	var count: int = 0
+	for candidate in _nearby_workers:
+		var worker := candidate as Node2D
+		if worker == null or not is_instance_valid(worker):
+			continue
+		if not rect.has_point(worker.global_position):
+			continue
+		_walker_positions[count] = worker.global_position
+		count += 1
+		if count >= 8:
+			break
+	_grass_material.set_shader_parameter("walker_positions", _walker_positions)
+	_grass_material.set_shader_parameter("walker_count", count)
+
+
+func _grass_masks_has_any() -> bool:
+	for value in _grass_masks:
+		if value > 0:
+			return true
+	return false

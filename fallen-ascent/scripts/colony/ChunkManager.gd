@@ -25,7 +25,10 @@ extends Node2D
 @export var fog_of_war_path: NodePath
 @export var rust_spread_interval: float = 18.0
 @export var rust_spread_chance: float = 0.35
+@export var grass_spread_interval: float = 30.0
+@export var grass_spread_chance: float = 0.28
 @export var max_scrape_jobs: int = 64
+@export var max_grass_per_chunk: int = 260
 
 var _site_seed: int = 0
 var _noise: FastNoiseLite
@@ -42,9 +45,11 @@ var _initial_load_total: int = 0
 var _outlets: Dictionary = {}                      ## Vector2i -> true
 var _outlet_reservations: Dictionary = {}          ## Vector2i -> Array[Worker]
 var _rust_cells: Dictionary = {}                    ## Vector2i -> true
+var _grass_cells: Dictionary = {}                   ## Vector2i -> int border mask
 var _teleporters: Array[Vector2i] = []
 var _teleporter_lookup: Dictionary = {}             ## Vector2i -> true
 var _rust_timer: float = 0.0
+var _grass_timer: float = 0.0
 var _structure_manager: Node = null
 var _static_prop_manager: Node = null
 var _job_board: JobBoard = null
@@ -117,6 +122,7 @@ func _process(delta: float) -> void:
 	var budget: int = initial_max_loads_per_frame if _initial_loading else max_loads_per_frame
 	_drain_queue(budget)
 	_process_rust(delta)
+	_process_grass(delta)
 
 
 func _drain_queue(budget: int) -> void:
@@ -132,6 +138,7 @@ func _drain_queue(budget: int) -> void:
 		_apply_diffs(chunk, coord)
 		_loaded[coord] = chunk
 		_index_special_tiles(chunk, coord)
+		_seed_grass_for_chunk(chunk, coord)
 		EventBus.chunk_loaded.emit(coord)
 		loaded_this_call = true
 		budget -= 1
@@ -275,6 +282,10 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 	elif t == TerrainGenerator.TILE_TELEPORTER:
 		_add_teleporter(grid)
 	_record_diff(ccoord, local, t)
+	if not _can_grow_grass_on(t):
+		clear_grass(grid)
+	else:
+		_recompute_grass_masks_around(grid)
 	EventBus.tile_changed.emit(grid, t)
 
 
@@ -325,6 +336,32 @@ func is_outlet(grid: Vector2i) -> bool:
 
 func is_teleporter(grid: Vector2i) -> bool:
 	return get_tile_at(grid) == TerrainGenerator.TILE_TELEPORTER
+
+
+func has_grass(grid: Vector2i) -> bool:
+	return _grass_cells.has(grid)
+
+
+func add_grass(grid: Vector2i) -> void:
+	if not is_grid_in_map(grid) or not _can_grow_grass_on(get_tile_at(grid)):
+		return
+	_grass_cells[grid] = 1
+	_recompute_grass_masks_around(grid)
+
+
+func clear_grass(grid: Vector2i) -> void:
+	if not _grass_cells.has(grid):
+		return
+	_grass_cells.erase(grid)
+	var ccoord := Chunk.grid_to_chunk(grid)
+	if _loaded.has(ccoord):
+		var chunk: Chunk = _loaded[ccoord]
+		chunk.set_grass_mask(Chunk.grid_to_local(grid), 0)
+	_recompute_grass_masks_around(grid)
+
+
+func grass_count() -> int:
+	return _grass_cells.size()
 
 
 func random_linked_teleporter(from: Vector2i) -> Vector2i:
@@ -423,19 +460,18 @@ func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar
 
 
 func ensure_outlet_near(origin: Vector2i) -> Vector2i:
-	var seed: Vector2i = _nearest_walkable_for_outlet(origin)
+	var seed: Vector2i = _nearest_floor_family_for_outlet(origin)
 	if seed == Pathfinder.UNREACHABLE:
 		return Pathfinder.UNREACHABLE
 	const OFFSETS: Array[Vector2i] = [
 		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 	]
-	# BFS over every cell reachable by the worker walkability rules so the
-	# outlet lands in the same connected room the spawn cells live in. Within
-	# that flood we still pick a floor-family tile to host the outlet.
+	# Flood only floor-family cells. Worker walkability crosses doors and
+	# corridors, which can place spawn outlet outside the perceived room.
 	var queue: Array[Vector2i] = [seed]
 	var seen: Dictionary = {seed: true}
 	var best_floor: Vector2i = Pathfinder.UNREACHABLE
-	var best_d: int = 0x7fffffff
+	var best_score: int = -0x7fffffff
 	var head: int = 0
 	while head < queue.size() and seen.size() <= 1024:
 		var cell: Vector2i = queue[head]
@@ -444,25 +480,35 @@ func ensure_outlet_near(origin: Vector2i) -> Vector2i:
 		if tile == TerrainGenerator.TILE_OUTLET:
 			return cell
 		if _can_force_outlet_on(tile):
-			var d: int = maxi(absi(cell.x - seed.x), absi(cell.y - seed.y))
-			if d < best_d:
+			var d_seed: int = maxi(absi(cell.x - seed.x), absi(cell.y - seed.y))
+			var wall_clearance: int = _floor_wall_clearance(cell, 3)
+			var door_penalty: int = 12 if _adjacent_to_door(cell) else 0
+			var score: int = wall_clearance * 10 - d_seed - door_penalty
+			if score > best_score:
 				best_floor = cell
-				best_d = d
+				best_score = score
 		for off in OFFSETS:
 			var next: Vector2i = cell + off
 			if seen.has(next) or not is_grid_in_map(next):
 				continue
-			if not is_walkable(next) and get_tile_at(next) != TerrainGenerator.TILE_OUTLET:
+			var next_tile: int = get_tile_at(next)
+			if next_tile != TerrainGenerator.TILE_OUTLET and not _is_floor_family_for_outlet(next_tile):
 				continue
 			seen[next] = true
 			queue.append(next)
 	if best_floor != Pathfinder.UNREACHABLE:
 		set_tile_at(best_floor, TerrainGenerator.TILE_OUTLET)
+		if _floor_family_reachable(seed, best_floor):
+			return best_floor
+		var fallback: Vector2i = _fallback_outlet_next_to(seed)
+		if fallback != Pathfinder.UNREACHABLE:
+			set_tile_at(fallback, TerrainGenerator.TILE_OUTLET)
+			return fallback
 	return best_floor
 
 
-func _nearest_walkable_for_outlet(origin: Vector2i) -> Vector2i:
-	if is_walkable(origin):
+func _nearest_floor_family_for_outlet(origin: Vector2i) -> Vector2i:
+	if _is_floor_family_for_outlet(get_tile_at(origin)):
 		return origin
 	for r in range(1, 32):
 		for dy in range(-r, r + 1):
@@ -470,9 +516,17 @@ func _nearest_walkable_for_outlet(origin: Vector2i) -> Vector2i:
 				if absi(dx) != r and absi(dy) != r:
 					continue
 				var cell := origin + Vector2i(dx, dy)
-				if is_walkable(cell):
+				if _is_floor_family_for_outlet(get_tile_at(cell)):
 					return cell
 	return Pathfinder.UNREACHABLE
+
+
+static func _is_floor_family_for_outlet(tile: int) -> bool:
+	return tile == TerrainGenerator.TILE_FLOOR \
+		or tile == TerrainGenerator.TILE_DEBRIS \
+		or tile == TerrainGenerator.TILE_CONDUIT \
+		or tile == TerrainGenerator.TILE_RUST \
+		or tile == TerrainGenerator.TILE_OUTLET
 
 
 static func _can_force_outlet_on(tile: int) -> bool:
@@ -480,6 +534,66 @@ static func _can_force_outlet_on(tile: int) -> bool:
 		or tile == TerrainGenerator.TILE_DEBRIS \
 		or tile == TerrainGenerator.TILE_CONDUIT \
 		or tile == TerrainGenerator.TILE_RUST
+
+
+func _adjacent_to_door(cell: Vector2i) -> bool:
+	if _structure_manager == null or not _structure_manager.has_method("structure_at"):
+		return false
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i.ZERO, Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for off in OFFSETS:
+		var structure: Dictionary = _structure_manager.call("structure_at", cell + off) as Dictionary
+		if not structure.is_empty() and int(structure.get("id", -1)) == BuildBlueprint.Id.DOOR:
+			return true
+	return false
+
+
+func _floor_wall_clearance(cell: Vector2i, max_radius: int) -> int:
+	for radius in range(1, max_radius + 1):
+		for y in range(cell.y - radius, cell.y + radius + 1):
+			for x in range(cell.x - radius, cell.x + radius + 1):
+				if maxi(absi(x - cell.x), absi(y - cell.y)) != radius:
+					continue
+				if not _is_floor_family_for_outlet(get_tile_at(Vector2i(x, y))):
+					return radius - 1
+	return max_radius
+
+
+func _floor_family_reachable(from: Vector2i, to: Vector2i) -> bool:
+	if from == to:
+		return true
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var queue: Array[Vector2i] = [from]
+	var seen: Dictionary = {from: true}
+	var head: int = 0
+	while head < queue.size() and seen.size() <= 1024:
+		var cell: Vector2i = queue[head]
+		head += 1
+		for off in OFFSETS:
+			var next: Vector2i = cell + off
+			if next == to:
+				return true
+			if seen.has(next) or not is_grid_in_map(next):
+				continue
+			if not _is_floor_family_for_outlet(get_tile_at(next)):
+				continue
+			seen[next] = true
+			queue.append(next)
+	return false
+
+
+func _fallback_outlet_next_to(seed: Vector2i) -> Vector2i:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i.ZERO, Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for off in OFFSETS:
+		var candidate: Vector2i = seed + off
+		if _can_force_outlet_on(get_tile_at(candidate)):
+			return candidate
+	return Pathfinder.UNREACHABLE
 
 
 func random_nearby_rust(from: Vector2i, radius: int, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
@@ -553,6 +667,7 @@ func _unindex_special_tiles(coord: Vector2i) -> void:
 			var grid: Vector2i = base + Vector2i(lx, ly)
 			_outlets.erase(grid)
 			_rust_cells.erase(grid)
+			_grass_cells.erase(grid)
 			_remove_teleporter(grid)
 
 
@@ -572,6 +687,197 @@ func _process_rust(delta: float) -> void:
 	if target == Pathfinder.UNREACHABLE:
 		return
 	set_tile_at(target, TerrainGenerator.TILE_RUST)
+
+
+func _process_grass(delta: float) -> void:
+	if _grass_cells.is_empty():
+		return
+	_grass_timer += delta
+	if _grass_timer < grass_spread_interval:
+		return
+	_grass_timer = 0.0
+	if randf() > grass_spread_chance:
+		return
+	var source: Vector2i = _random_grass_cell()
+	if source == Pathfinder.UNREACHABLE:
+		return
+	var target: Vector2i = _grass_spread_target(source)
+	if target != Pathfinder.UNREACHABLE:
+		add_grass(target)
+
+
+func _seed_grass_for_chunk(chunk: Chunk, coord: Vector2i) -> void:
+	var base: Vector2i = coord * Chunk.SIZE
+	var distances: PackedInt32Array = _water_distances_for_chunk(chunk)
+	var candidates: Array[Vector2i] = []
+	for ly in Chunk.SIZE:
+		for lx in Chunk.SIZE:
+			var local := Vector2i(lx, ly)
+			if not _can_grow_grass_on(chunk.get_tile(local)):
+				continue
+			var dist: int = distances[ly * Chunk.SIZE + lx]
+			var density: float = _grass_density_for_dist(dist)
+			var grid: Vector2i = base + local
+			if _near_acid(grid, 3):
+				density = maxf(density, 0.18)
+			var rng := RandomNumberGenerator.new()
+			rng.seed = hash([_site_seed, grid.x, grid.y, "grass"])
+			if rng.randf() <= density:
+				candidates.append(grid)
+	if candidates.size() > max_grass_per_chunk:
+		candidates.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			return absi(hash([_site_seed, a.x, a.y, "grass_cap"])) < absi(hash([_site_seed, b.x, b.y, "grass_cap"]))
+		)
+		candidates.resize(max_grass_per_chunk)
+	for grid in candidates:
+		_grass_cells[grid] = 1
+	for grid in candidates:
+		_recompute_grass_masks_around(grid)
+
+
+func _water_distances_for_chunk(chunk: Chunk) -> PackedInt32Array:
+	var dist := PackedInt32Array()
+	dist.resize(Chunk.SIZE * Chunk.SIZE)
+	for i in dist.size():
+		dist[i] = 999
+	var queue: Array[Vector2i] = []
+	for ly in Chunk.SIZE:
+		for lx in Chunk.SIZE:
+			var local := Vector2i(lx, ly)
+			var tile: int = chunk.get_tile(local)
+			if tile == TerrainGenerator.TILE_WATER \
+					or tile == TerrainGenerator.TILE_WATER_SHALLOW \
+					or tile == TerrainGenerator.TILE_WATER_PUDDLE:
+				dist[ly * Chunk.SIZE + lx] = 0
+				queue.append(local)
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var head: int = 0
+	while head < queue.size():
+		var cell: Vector2i = queue[head]
+		head += 1
+		var base_d: int = dist[cell.y * Chunk.SIZE + cell.x]
+		if base_d >= 12:
+			continue
+		for off in OFFSETS:
+			var next: Vector2i = cell + off
+			if next.x < 0 or next.x >= Chunk.SIZE or next.y < 0 or next.y >= Chunk.SIZE:
+				continue
+			var idx: int = next.y * Chunk.SIZE + next.x
+			if dist[idx] <= base_d + 1:
+				continue
+			dist[idx] = base_d + 1
+			queue.append(next)
+	return dist
+
+
+func _grass_density_for_dist(dist: int) -> float:
+	if dist <= 2:
+		return 0.82
+	if dist <= 6:
+		return lerpf(0.54, 0.18, float(dist - 3) / 3.0)
+	return 0.08
+
+
+func _random_grass_cell() -> Vector2i:
+	if _grass_cells.is_empty():
+		return Pathfinder.UNREACHABLE
+	var keys: Array = _grass_cells.keys()
+	return keys[randi() % keys.size()] as Vector2i
+
+
+func _grass_spread_target(source: Vector2i) -> Vector2i:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var options: Array[Vector2i] = []
+	for off in OFFSETS:
+		var candidate: Vector2i = source + off
+		if _grass_cells.has(candidate):
+			continue
+		if not _can_grow_grass_on(get_tile_at(candidate)):
+			continue
+		var water_score: float = _grass_density_for_dist(_distance_to_water(candidate, 8))
+		if _near_acid(candidate, 3):
+			water_score = maxf(water_score, 0.18)
+		if randf() <= maxf(0.08, water_score):
+			options.append(candidate)
+	if options.is_empty():
+		return Pathfinder.UNREACHABLE
+	return options[randi() % options.size()]
+
+
+func _distance_to_water(cell: Vector2i, radius: int) -> int:
+	var best: int = 999
+	for y in range(cell.y - radius, cell.y + radius + 1):
+		for x in range(cell.x - radius, cell.x + radius + 1):
+			var candidate := Vector2i(x, y)
+			var d: int = maxi(absi(x - cell.x), absi(y - cell.y))
+			if d >= best:
+				continue
+			var tile: int = get_tile_at(candidate)
+			if tile == TerrainGenerator.TILE_WATER \
+					or tile == TerrainGenerator.TILE_WATER_SHALLOW \
+					or tile == TerrainGenerator.TILE_WATER_PUDDLE:
+				best = d
+	return best
+
+
+static func _can_grow_grass_on(tile: int) -> bool:
+	return tile == TerrainGenerator.TILE_FLOOR \
+		or tile == TerrainGenerator.TILE_DEBRIS \
+		or tile == TerrainGenerator.TILE_CONDUIT \
+		or tile == TerrainGenerator.TILE_OUTLET \
+		or tile == TerrainGenerator.TILE_TELEPORTER
+
+
+func _recompute_grass_masks_around(grid: Vector2i) -> void:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i.ZERO,
+		Vector2i(0, -1),
+		Vector2i(1, 0),
+		Vector2i(0, 1),
+		Vector2i(-1, 0),
+	]
+	for off in OFFSETS:
+		var cell: Vector2i = grid + off
+		if not _grass_cells.has(cell):
+			continue
+		var mask: int = _grass_mask_for(cell)
+		_grass_cells[cell] = mask
+		var ccoord := Chunk.grid_to_chunk(cell)
+		if _loaded.has(ccoord):
+			var chunk: Chunk = _loaded[ccoord]
+			chunk.set_grass_mask(Chunk.grid_to_local(cell), mask)
+
+
+func _grass_mask_for(cell: Vector2i) -> int:
+	var mask: int = 0
+	if _can_grow_grass_on(get_tile_at(cell + Vector2i(0, -1))):
+		mask |= TileVisuals.MASK_NORTH
+	if _can_grow_grass_on(get_tile_at(cell + Vector2i(1, 0))):
+		mask |= TileVisuals.MASK_EAST
+	if _can_grow_grass_on(get_tile_at(cell + Vector2i(0, 1))):
+		mask |= TileVisuals.MASK_SOUTH
+	if _can_grow_grass_on(get_tile_at(cell + Vector2i(-1, 0))):
+		mask |= TileVisuals.MASK_WEST
+	if mask == 0:
+		mask = 15
+	if _near_acid(cell, 3):
+		mask |= TileVisuals.GRASS_ACID_FLAG
+	return mask
+
+
+func _near_acid(cell: Vector2i, radius: int) -> bool:
+	for y in range(cell.y - radius, cell.y + radius + 1):
+		for x in range(cell.x - radius, cell.x + radius + 1):
+			var tile: int = get_tile_at(Vector2i(x, y))
+			if tile == TerrainGenerator.TILE_ACID \
+					or tile == TerrainGenerator.TILE_ACID_SHALLOW \
+					or tile == TerrainGenerator.TILE_ACID_PUDDLE:
+				return true
+	return false
 
 
 func _random_rust_cell() -> Vector2i:
@@ -606,6 +912,28 @@ func _maybe_add_scrape_job(grid: Vector2i) -> void:
 	if _job_board.scrape_rust_count() >= max_scrape_jobs:
 		return
 	_job_board.add_scrape_rust_job(grid)
+
+
+func random_nearby_grass(from: Vector2i, radius: int, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
+	if _grass_cells.is_empty():
+		return Pathfinder.UNREACHABLE
+	var keys: Array = _grass_cells.keys()
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for _attempt in range(mini(128, keys.size())):
+		var candidate: Vector2i = keys[randi() % keys.size()] as Vector2i
+		var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
+		if d > radius or d >= best_d:
+			continue
+		if fog != null and not fog.is_explored(candidate):
+			continue
+		if not has_grass(candidate):
+			continue
+		if pathfinder != null and not pathfinder.has_path(from, candidate):
+			continue
+		best = candidate
+		best_d = d
+	return best
 
 
 func _on_visibility_changed(bounds: Rect2i) -> void:

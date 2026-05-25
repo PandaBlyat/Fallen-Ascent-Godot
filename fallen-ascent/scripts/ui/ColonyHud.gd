@@ -7,9 +7,11 @@ extends Control
 ##
 
 const UI_ATLAS_PATH := "res://resources/ui/placeholder_ui_atlas.png"
-const STRUCTURE_ATLAS_PATH := "res://resources/objects/structures_atlas.png"
+const WORKSHOP_ATLAS_PATH := "res://resources/objects/workshops_atlas.png"
 const OBJECT_ATLAS_PATH := "res://resources/objects/craftable_objects_atlas.png"
+const DOOR_ATLAS_PATH := "res://resources/objects/doors_atlas.png"
 const ICON_CELL_SIZE := Vector2i(32, 32)
+const WORKSHOP_ICON_SOURCE_SIZE := Vector2i(64, 64)
 
 const TAB_ORDERS := &"orders"
 const TAB_ZONES := &"zones"
@@ -99,8 +101,9 @@ var _camera: CameraController
 var _selection_controller: SelectionController
 
 var _atlas: Texture2D
-var _structure_atlas: Texture2D
+var _workshop_atlas: Texture2D
 var _object_atlas: Texture2D
+var _door_atlas: Texture2D
 var _worker_atlas: Texture2D
 var _bot_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
@@ -132,6 +135,8 @@ var _inspected_node: Node = null
 var _inspected_faction: int = 0
 var _status_refresh_queued: bool = false
 var _last_npc_strip_count: int = -1
+var _npc_buttons_by_worker: Dictionary = {}       ## Worker -> Button
+var _combat_tweens_by_worker: Dictionary = {}     ## Worker -> Tween
 
 
 func _ready() -> void:
@@ -145,8 +150,9 @@ func _ready() -> void:
 	_camera = get_node_or_null(camera_path) as CameraController
 	_selection_controller = get_node_or_null(selection_controller_path) as SelectionController
 	_atlas = load(UI_ATLAS_PATH) as Texture2D
-	_structure_atlas = load(STRUCTURE_ATLAS_PATH) as Texture2D
+	_workshop_atlas = load(WORKSHOP_ATLAS_PATH) as Texture2D
 	_object_atlas = load(OBJECT_ATLAS_PATH) as Texture2D
+	_door_atlas = load(DOOR_ATLAS_PATH) as Texture2D
 	_worker_atlas = load(WORKER_ATLAS_PATH) as Texture2D
 	_bot_atlas = load(BOTS_ATLAS_PATH) as Texture2D
 
@@ -176,9 +182,11 @@ func _connect_signals() -> void:
 	EventBus.stockpile_selected.connect(_on_stockpile_selected)
 	EventBus.build_job_selected.connect(_on_build_job_selected)
 	EventBus.bot_inspected.connect(_on_bot_inspected)
+	EventBus.worker_entered_combat.connect(_on_worker_entered_combat)
 	EventBus.combatant_died.connect(_on_combatant_died)
 	EventBus.wisdom_changed.connect(_on_wisdom_changed)
 	EventBus.tech_unlocked.connect(_on_tech_unlocked)
+	SettingsManager.settings_changed.connect(_on_settings_changed)
 
 
 func _build_layout() -> void:
@@ -402,15 +410,22 @@ func _position_selection_panel() -> void:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
-	var left: float = viewport_size.x * 0.5 + PALETTE_WIDTH * 0.5 + 12.0
+	var ui_scale: float = SettingsManager.ui_scale if SettingsManager != null else 1.0
+	var palette_width: float = PALETTE_WIDTH * ui_scale
+	var palette_height: float = PALETTE_HEIGHT * ui_scale
+	var left: float = viewport_size.x * 0.5 + palette_width * 0.5 + 12.0
 	var available_right: float = viewport_size.x - left - 12.0
 	var width: float = clampf(available_right, 360.0, SELECTION_PANEL_WIDTH)
 	var bottom: float = viewport_size.y - 16.0
+	var reserved_bottom: float = viewport_size.y - palette_height - 32.0
 	var top: float = maxf(64.0, bottom - SELECTION_PANEL_HEIGHT)
 	if available_right < 420.0:
 		width = minf(SELECTION_PANEL_WIDTH, viewport_size.x - 24.0)
 		left = (viewport_size.x - width) * 0.5
-		bottom = viewport_size.y - PALETTE_HEIGHT - 28.0
+		bottom = reserved_bottom
+		top = maxf(64.0, bottom - minf(SELECTION_PANEL_HEIGHT, bottom - 64.0))
+	elif ui_scale > 1.15:
+		bottom = minf(bottom, reserved_bottom)
 		top = maxf(64.0, bottom - minf(SELECTION_PANEL_HEIGHT, bottom - 64.0))
 	_selection_panel.offset_left = left
 	_selection_panel.offset_top = top
@@ -517,6 +532,7 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 		_:
 			return [
 				{"mode": Designator.Mode.MINE, "label": "Mine", "tooltip": "Mine\nMark wall, service core, or rich wall cells.\nWorkers dig adjacent cells and drop salvage resources.", "icon": ICON_MINE},
+				{"mode": Designator.Mode.SCRAPE_BIOMASS, "label": "Scrape Biomass", "tooltip": "Scrape Biomass\nMark grass overgrowth cells.\nWorkers clear biomass tufts and may drop biomass for stockpiles.", "icon": ICON_STOCKPILE},
 			]
 
 
@@ -612,6 +628,7 @@ func _schedule_status_refresh() -> void:
 
 func _refresh_dynamic_status() -> void:
 	_refresh_status()
+	_refresh_combat_portraits()
 	_refresh_npc_strip_if_needed()
 	# Skip rebuilding the selection panel while the mouse is over it — the
 	# rebuild destroys/recreates buttons, which kills hover state and eats
@@ -697,6 +714,7 @@ func _on_combatant_died(node: Node, _faction: int) -> void:
 	if node == _inspected_node:
 		_inspected_node = null
 		_refresh_inspect_card()
+	_stop_combat_blink(node)
 
 
 func _on_wisdom_changed(new_total: float) -> void:
@@ -708,6 +726,10 @@ func _on_tech_unlocked(_tech_id: StringName) -> void:
 	# A new tech can flip the unlocked state of structures — re-render the
 	# current tab so locked rows refresh.
 	_set_tab(_current_tab)
+
+
+func _on_settings_changed() -> void:
+	_position_selection_panel()
 
 
 func _open_tech_tree() -> void:
@@ -1014,6 +1036,7 @@ func _add_worker_roster(workers: Array[Worker]) -> void:
 	for worker in workers:
 		var b := Button.new()
 		b.text = worker.display_name()
+		b.focus_mode = Control.FOCUS_NONE
 		b.icon = _bot_icon()
 		b.expand_icon = true
 		b.custom_minimum_size = Vector2(0, 30)
@@ -1425,6 +1448,9 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 func _refresh_npc_strip() -> void:
 	if _npc_strip == null:
 		return
+	for worker_key in _combat_tweens_by_worker.keys():
+		_stop_combat_blink(worker_key as Node)
+	_npc_buttons_by_worker.clear()
 	for child in _npc_strip.get_children():
 		_npc_strip.remove_child(child)
 		child.queue_free()
@@ -1436,6 +1462,7 @@ func _refresh_npc_strip() -> void:
 				continue
 			var button := Button.new()
 			button.text = worker.display_name()
+			button.focus_mode = Control.FOCUS_NONE
 			button.icon = _bot_icon()
 			button.expand_icon = true
 			button.custom_minimum_size = Vector2(0, WORKER_LIST_ROW_HEIGHT)
@@ -1446,6 +1473,9 @@ func _refresh_npc_strip() -> void:
 			button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
 			button.pressed.connect(_focus_worker.bind(worker))
 			_npc_strip.add_child(button)
+			_npc_buttons_by_worker[worker] = button
+			if worker.state_label() == "fighting":
+				_start_combat_blink(worker, button)
 			rows += 1
 	_last_npc_strip_count = rows
 	_resize_npc_panel(rows)
@@ -1474,6 +1504,13 @@ func _refresh_npc_strip_if_needed() -> void:
 func _focus_worker(worker: Worker) -> void:
 	if worker == null or not is_instance_valid(worker) or _camera == null:
 		return
+	if _selected_workers.size() == 1 and _selected_workers[0] == worker:
+		_selected_workers.clear()
+		if _selection_controller != null:
+			_selection_controller.clear_selection()
+		_refresh_selection_panel()
+		_refresh_inspect_card()
+		return
 	_selected_workers = [worker]
 	_selected_structure_id = -1
 	_selected_stockpile = null
@@ -1486,6 +1523,47 @@ func _focus_worker(worker: Worker) -> void:
 	_refresh_selection_panel()
 	_refresh_inspect_card()
 	_camera.center_on(worker.global_position)
+
+
+func _on_worker_entered_combat(worker: Node) -> void:
+	if worker == null or not is_instance_valid(worker):
+		return
+	GameState.set_game_speed(0.0)
+	var button := _npc_buttons_by_worker.get(worker) as Button
+	if button != null:
+		_start_combat_blink(worker, button)
+
+
+func _refresh_combat_portraits() -> void:
+	for worker_key in _combat_tweens_by_worker.keys():
+		var worker := worker_key as Worker
+		if worker == null or not is_instance_valid(worker) or worker.state_label() != "fighting":
+			_stop_combat_blink(worker_key as Node)
+
+
+func _start_combat_blink(worker: Node, button: Button) -> void:
+	if _combat_tweens_by_worker.has(worker):
+		return
+	button.modulate = Color.WHITE
+	var tween: Tween = create_tween()
+	tween.set_loops()
+	tween.set_trans(Tween.TRANS_SINE)
+	tween.set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(button, "modulate", Color(1.0, 0.35, 0.35, 1.0), 0.6)
+	tween.tween_property(button, "modulate", Color.WHITE, 0.6)
+	_combat_tweens_by_worker[worker] = tween
+
+
+func _stop_combat_blink(worker: Node) -> void:
+	if worker == null:
+		return
+	var tween := _combat_tweens_by_worker.get(worker) as Tween
+	if tween != null and is_instance_valid(tween):
+		tween.kill()
+	_combat_tweens_by_worker.erase(worker)
+	var button := _npc_buttons_by_worker.get(worker) as Button
+	if button != null:
+		button.modulate = Color.WHITE
 
 
 func _bot_icon() -> Texture2D:
@@ -1516,10 +1594,19 @@ func _structure_icon(build_id: int) -> Texture2D:
 		icon.atlas = _object_atlas
 		icon.region = Rect2(Vector2(object_index * ICON_CELL_SIZE.x, 0), Vector2(ICON_CELL_SIZE))
 		return icon
-	if _structure_atlas == null:
+	if build_id == BuildBlueprint.Id.DOOR:
+		if _door_atlas == null:
+			return null
+		icon.atlas = _door_atlas
+		icon.region = Rect2(Vector2.ZERO, Vector2(ICON_CELL_SIZE))
+		return icon
+	if not BuildBlueprint.is_workshop(build_id):
 		return null
-	icon.atlas = _structure_atlas
-	icon.region = Rect2(Vector2(build_id * ICON_CELL_SIZE.x, 0), Vector2(ICON_CELL_SIZE))
+	var workshop_index: int = BuildBlueprint.workshop_atlas_index(build_id)
+	if _workshop_atlas == null or workshop_index < 0:
+		return null
+	icon.atlas = _workshop_atlas
+	icon.region = Rect2(Vector2(workshop_index * WORKSHOP_ICON_SOURCE_SIZE.x, 0), Vector2(WORKSHOP_ICON_SOURCE_SIZE))
 	return icon
 
 

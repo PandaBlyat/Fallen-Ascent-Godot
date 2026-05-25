@@ -1,16 +1,17 @@
-[gd_scene load_steps=2 format=3 uid="uid://bfa_settingsmenu_0001"]
+[gd_scene load_steps=2 format=3 uid="uid://bhyc7d11s7one"]
 
-[ext_resource type="Script" path="res://scripts/ui/SettingsMenu.gd" id="1_settingsmenu"]
+[ext_resource type="Script" uid="uid://go7die68d8bp" path="res://scripts/ui/SettingsMenu.gd" id="1_settingsmenu"]
 
 [node name="SettingsMenu" type="CanvasLayer"]
 layer = 100
 script = ExtResource("1_settingsmenu")
 
 [node name="Dimmer" type="ColorRect" parent="."]
+anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-color = Color(0, 0, 0, 0.62)
 mouse_filter = 1
+color = Color(0, 0, 0, 0.62)
 
 [node name="Panel" type="PanelContainer" parent="."]
 anchors_preset = 8
@@ -26,200 +27,271 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="Margin" type="MarginContainer" parent="Panel"]
+layout_mode = 2
 theme_override_constants/margin_left = 22
 theme_override_constants/margin_top = 18
 theme_override_constants/margin_right = 22
 theme_override_constants/margin_bottom = 18
 
 [node name="VBox" type="VBoxContainer" parent="Panel/Margin"]
+layout_mode = 2
 theme_override_constants/separation = 12
 
 [node name="Title" type="Label" parent="Panel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 22
 text = "Settings"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 22
 
 [node name="Divider" type="HSeparator" parent="Panel/Margin/VBox"]
+layout_mode = 2
 
 [node name="Tabs" type="TabContainer" parent="Panel/Margin/VBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 260)
+layout_mode = 2
 size_flags_vertical = 3
+current_tab = 0
 
 [node name="Display" type="MarginContainer" parent="Panel/Margin/VBox/Tabs"]
+layout_mode = 2
 theme_override_constants/margin_left = 6
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 6
 theme_override_constants/margin_bottom = 6
+metadata/_tab_index = 0
 
 [node name="DisplayBox" type="VBoxContainer" parent="Panel/Margin/VBox/Tabs/Display"]
+layout_mode = 2
 theme_override_constants/separation = 10
 
 [node name="DisplaySubtitle" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox"]
-text = "Display mode, vsync, and frame limit"
-horizontal_alignment = 1
+layout_mode = 2
 theme_override_colors/font_color = Color(0.66, 0.72, 0.78, 1)
 theme_override_font_sizes/font_size = 11
+text = "Display mode, vsync, and frame limit"
+horizontal_alignment = 1
 
 [node name="Grid" type="GridContainer" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox"]
-columns = 2
+layout_mode = 2
 theme_override_constants/h_separation = 18
 theme_override_constants/v_separation = 10
+columns = 2
 
 [node name="DisplayModeLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
 text = "Display Mode"
 
 [node name="DisplayModeButton" type="OptionButton" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="ResolutionLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
 text = "Resolution"
 
 [node name="ResolutionButton" type="OptionButton" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="VSyncLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
 text = "V-Sync"
 
 [node name="VSyncButton" type="OptionButton" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="MaxFpsLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
 text = "Max FPS"
 
 [node name="MaxFpsButton" type="OptionButton" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
 
+[node name="UiScaleLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
+tooltip_text = "1080p: try 1.25x. Ultrawide 1440p: try 1.15x."
+text = "UI Scale"
+
+[node name="UiScaleRow" type="HBoxContainer" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="UiScaleSlider" type="HSlider" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid/UiScaleRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.75
+max_value = 2.0
+step = 0.05
+value = 0.75
+
+[node name="UiScaleValue" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid/UiScaleRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 0)
+layout_mode = 2
+text = "1.00x"
+horizontal_alignment = 2
+
 [node name="Audio" type="MarginContainer" parent="Panel/Margin/VBox/Tabs"]
+visible = false
+layout_mode = 2
 theme_override_constants/margin_left = 6
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 6
 theme_override_constants/margin_bottom = 6
+metadata/_tab_index = 1
 
 [node name="AudioBox" type="VBoxContainer" parent="Panel/Margin/VBox/Tabs/Audio"]
+layout_mode = 2
 theme_override_constants/separation = 14
 
 [node name="AudioSubtitle" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox"]
-text = "Master, music, and sound effect volume"
-horizontal_alignment = 1
+layout_mode = 2
 theme_override_colors/font_color = Color(0.66, 0.72, 0.78, 1)
 theme_override_font_sizes/font_size = 11
+text = "Master, music, and sound effect volume"
+horizontal_alignment = 1
 
 [node name="MasterRow" type="HBoxContainer" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox"]
+layout_mode = 2
 theme_override_constants/separation = 12
 
 [node name="MasterLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MasterRow"]
 custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
 text = "Master"
 
 [node name="MasterSlider" type="HSlider" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MasterRow"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 
 [node name="MasterValue" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MasterRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
 text = "100%"
 horizontal_alignment = 2
 
 [node name="MusicRow" type="HBoxContainer" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox"]
+layout_mode = 2
 theme_override_constants/separation = 12
 
 [node name="MusicLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MusicRow"]
 custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
 text = "Music"
 
 [node name="MusicSlider" type="HSlider" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MusicRow"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 
 [node name="MusicValue" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/MusicRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
 text = "50%"
 horizontal_alignment = 2
 
 [node name="SfxRow" type="HBoxContainer" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox"]
+layout_mode = 2
 theme_override_constants/separation = 12
 
 [node name="SfxLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/SfxRow"]
 custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
 text = "SFX"
 
 [node name="SfxSlider" type="HSlider" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/SfxRow"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
-min_value = 0.0
 max_value = 1.0
 step = 0.01
 
 [node name="SfxValue" type="Label" parent="Panel/Margin/VBox/Tabs/Audio/AudioBox/SfxRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
 text = "100%"
 horizontal_alignment = 2
 
 [node name="Controls" type="MarginContainer" parent="Panel/Margin/VBox/Tabs"]
+visible = false
+layout_mode = 2
 theme_override_constants/margin_left = 6
 theme_override_constants/margin_top = 10
 theme_override_constants/margin_right = 6
 theme_override_constants/margin_bottom = 6
+metadata/_tab_index = 2
 
 [node name="ControlsBox" type="VBoxContainer" parent="Panel/Margin/VBox/Tabs/Controls"]
+layout_mode = 2
 theme_override_constants/separation = 10
 
 [node name="ControlsSubtitle" type="Label" parent="Panel/Margin/VBox/Tabs/Controls/ControlsBox"]
-text = "Keyboard bindings"
-horizontal_alignment = 1
+layout_mode = 2
 theme_override_colors/font_color = Color(0.66, 0.72, 0.78, 1)
 theme_override_font_sizes/font_size = 11
+text = "Keyboard bindings"
+horizontal_alignment = 1
 
 [node name="CaptureLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Controls/ControlsBox"]
 unique_name_in_owner = true
-text = ""
-horizontal_alignment = 1
+layout_mode = 2
 theme_override_colors/font_color = Color(0.9, 0.85, 0.55, 1)
 theme_override_font_sizes/font_size = 11
+horizontal_alignment = 1
 
 [node name="Scroll" type="ScrollContainer" parent="Panel/Margin/VBox/Tabs/Controls/ControlsBox"]
+layout_mode = 2
 size_flags_vertical = 3
 
 [node name="ControlsList" type="VBoxContainer" parent="Panel/Margin/VBox/Tabs/Controls/ControlsBox/Scroll"]
 unique_name_in_owner = true
+layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="Spacer" type="Control" parent="Panel/Margin/VBox"]
 custom_minimum_size = Vector2(0, 8)
+layout_mode = 2
 
 [node name="ButtonRow" type="HBoxContainer" parent="Panel/Margin/VBox"]
-alignment = 1
+layout_mode = 2
 theme_override_constants/separation = 12
+alignment = 1
 
 [node name="MainMenuButton" type="Button" parent="Panel/Margin/VBox/ButtonRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(140, 36)
-text = "Main Menu"
+layout_mode = 2
 theme_override_font_sizes/font_size = 13
+text = "Main Menu"
 
 [node name="QuitButton" type="Button" parent="Panel/Margin/VBox/ButtonRow"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(140, 36)
-text = "Quit Game"
+layout_mode = 2
 theme_override_font_sizes/font_size = 13
+text = "Give Up"
 
 [node name="CloseButton" type="Button" parent="Panel/Margin/VBox"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 38)
-text = "Close"
+layout_mode = 2
 theme_override_font_sizes/font_size = 13
+text = "Close"

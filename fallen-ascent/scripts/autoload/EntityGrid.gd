@@ -74,9 +74,15 @@ func update_position(node: Node, grid: Vector2i) -> void:
 ## still filter by exact distance.
 func query(faction: int, origin: Vector2i, radius_tiles: int) -> Array:
 	var out: Array = []
+	query_into(faction, origin, radius_tiles, out)
+	return out
+
+
+func query_into(faction: int, origin: Vector2i, radius_tiles: int, out: Array) -> void:
+	out.clear()
 	var buckets: Dictionary = _buckets_by_faction.get(faction, {}) as Dictionary
 	if buckets.is_empty():
-		return out
+		return
 	var origin_bucket: Vector2i = bucket_of(origin)
 	var span: int = int(ceil(float(radius_tiles) / float(BUCKET_SIZE)))
 	for by in range(origin_bucket.y - span, origin_bucket.y + span + 1):
@@ -86,7 +92,6 @@ func query(faction: int, origin: Vector2i, radius_tiles: int) -> Array:
 				continue
 			for n in buckets[key] as Array:
 				out.append(n)
-	return out
 
 
 func _add_to_bucket(faction: int, bucket: Vector2i, node: Node) -> void:

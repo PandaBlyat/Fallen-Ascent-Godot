@@ -6,7 +6,7 @@ extends RefCounted
 ## ref, etc.) and the Worker switches on `kind`.
 ##
 
-enum Kind { MINE, HAUL, BUILD, SCRAPE_RUST, CRAFT, OPERATE_STRUCTURE }
+enum Kind { MINE, HAUL, BUILD, SCRAPE_RUST, CRAFT, OPERATE_STRUCTURE, SCRAPE_BIOMASS }
 
 var kind: int = Kind.MINE
 var claimed_by: Node = null   ## the Worker that owns this job, or null

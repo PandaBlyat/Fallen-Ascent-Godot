@@ -7,6 +7,7 @@ const SOURCE_WALL: int = 2
 const SOURCE_RICH_WALL: int = 3
 const SOURCE_SERVICE_CORE: int = 4
 const SOURCE_RUST: int = 5
+const SOURCE_GRASS: int = 6
 
 const NO_SOURCE: int = -1
 const FLOOR_ROW: int = 0
@@ -21,6 +22,8 @@ const MASK_EAST: int = 2
 const MASK_SOUTH: int = 4
 const MASK_WEST: int = 8
 const RUST_VARIANTS: int = 16
+const GRASS_VARIANTS: int = 10
+const GRASS_ACID_FLAG: int = 16
 
 
 static func base_source(tile: int) -> int:
@@ -78,6 +81,35 @@ static func wall_atlas_coords(mask: int) -> Vector2i:
 static func rust_atlas_coords(grid: Vector2i) -> Vector2i:
 	var mixed: int = absi(hash([grid.x, grid.y, "rust_overlay"]))
 	return Vector2i(mixed % RUST_VARIANTS, 0)
+
+
+static func grass_atlas_coords(mask: int, grid: Vector2i) -> Vector2i:
+	var mixed: int = absi(hash([grid.x, grid.y, "grass_overlay"]))
+	var roll: int = mixed % 100
+	var row: int = 0
+	if (mask & GRASS_ACID_FLAG) != 0:
+		if roll < 35:
+			row = 6
+		elif roll < 65:
+			row = 7
+		elif roll < 90:
+			row = 8
+		else:
+			row = 9
+	else:
+		if roll < 18:
+			row = 0
+		elif roll < 45:
+			row = 1
+		elif roll < 72:
+			row = 2
+		elif roll < 88:
+			row = 3
+		elif roll < 97:
+			row = 4
+		else:
+			row = 5
+	return Vector2i(mask & 15, row)
 
 
 static func is_floor_family(tile: int) -> bool:

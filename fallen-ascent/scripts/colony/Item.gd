@@ -26,6 +26,7 @@ enum Kind {
 	RUDIMENTARY_SENSOR,
 	SMALL_LIGHT_DEVICE,
 	LARGE_LIGHT_DEVICE,
+	BIOMASS,
 }
 
 enum Category {
@@ -46,6 +47,7 @@ const OUTLET_EXTENSION_COLOR := Color(0.35, 0.95, 1.0)
 const RUDIMENTARY_SENSOR_COLOR := Color(0.55, 0.95, 0.62)
 const SMALL_LIGHT_DEVICE_COLOR := Color(1.0, 0.85, 0.35)
 const LARGE_LIGHT_DEVICE_COLOR := Color(1.0, 0.66, 0.26)
+const BIOMASS_COLOR := Color(0.42, 0.90, 0.38)
 const SIZE_PX: float = 8.0
 const STACK_FONT_SIZE: int = 10
 const STACK_OUTLINE_SIZE: int = 2
@@ -106,6 +108,7 @@ func color() -> Color:
 		Kind.RUDIMENTARY_SENSOR: return RUDIMENTARY_SENSOR_COLOR
 		Kind.SMALL_LIGHT_DEVICE: return SMALL_LIGHT_DEVICE_COLOR
 		Kind.LARGE_LIGHT_DEVICE: return LARGE_LIGHT_DEVICE_COLOR
+		Kind.BIOMASS: return BIOMASS_COLOR
 		_: return SCRAP_COLOR
 
 
@@ -120,6 +123,7 @@ static func kind_color(k: int) -> Color:
 		Kind.RUDIMENTARY_SENSOR: return RUDIMENTARY_SENSOR_COLOR
 		Kind.SMALL_LIGHT_DEVICE: return SMALL_LIGHT_DEVICE_COLOR
 		Kind.LARGE_LIGHT_DEVICE: return LARGE_LIGHT_DEVICE_COLOR
+		Kind.BIOMASS: return BIOMASS_COLOR
 		_: return SCRAP_COLOR
 
 
@@ -143,13 +147,15 @@ static func kind_name(k: int) -> String:
 			return "small light device"
 		Kind.LARGE_LIGHT_DEVICE:
 			return "large light device"
+		Kind.BIOMASS:
+			return "biomass"
 		_:
 			return "scrap"
 
 
 static func kind_category(k: int) -> int:
 	match k:
-		Kind.SCRAP:
+		Kind.SCRAP, Kind.BIOMASS:
 			return Category.RAW
 		Kind.PLATING, Kind.STORAGE_BIN:
 			return Category.STRUCTURAL
@@ -211,6 +217,8 @@ static func kind_description(k: int) -> String:
 			return "crafted light object: small work light"
 		Kind.LARGE_LIGHT_DEVICE:
 			return "crafted light object: large work light"
+		Kind.BIOMASS:
+			return "scraped organic machine-fuzz from grass overgrowth"
 		_:
 			return "loose salvaged metal"
 
@@ -227,8 +235,10 @@ static func acquisition_text(k: int) -> String:
 			return "Mine service cores/rich walls, salvage electronics, or run a fabricator."
 		Kind.CHARGE_CELL:
 			return "Mine service cores, salvage batteries, run fabricator, or craft through assembly press."
+		Kind.BIOMASS:
+			return "Scrape biomass grass from floor tiles."
 		Kind.STORAGE_BIN, Kind.OUTLET_EXTENSION, Kind.RUDIMENTARY_SENSOR, Kind.SMALL_LIGHT_DEVICE, Kind.LARGE_LIGHT_DEVICE:
-			return "Add crafting order at fabrication spot, then place from Objects tab."
+			return "Add crafting order at crafting spot, then place from Objects tab."
 		_:
 			return "Acquire through mining, salvage, or production jobs."
 

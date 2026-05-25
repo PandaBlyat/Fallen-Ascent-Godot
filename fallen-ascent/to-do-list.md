@@ -125,6 +125,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       green placeholders sized to the existing 16-mask layout; the shared
       `water_tile.gdshader` already handles palette/ripple per band. Replace
       with proper pixel art when the visual identity lands.
+- [ ] **Author real grass / biomass art and persist grass diffs.** Grass
+      overlay + biomass item cells are placeholder atlases only. Current grass
+      growth/scraping is session-local generated state; save system should
+      store grass add/remove diffs once persistence exists.
 
 ## Tech tree & economy follow-ups
 

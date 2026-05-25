@@ -11,7 +11,6 @@ const SETTINGS_MENU_SCENE: PackedScene = preload("res://scenes/ui/SettingsMenu.t
 @onready var _settings_button: Button = %SettingsButton
 @onready var _quit_button: Button = %QuitButton
 @onready var _background: TextureRect = $Background
-@onready var _menu_music: AudioStreamPlayer = $MenuMusic
 
 
 func _ready() -> void:
@@ -20,7 +19,7 @@ func _ready() -> void:
 	_new_game_button.pressed.connect(_on_new_game_pressed)
 	_settings_button.pressed.connect(_on_settings_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
-	_menu_music.play()
+	MenuMusicPlayer.play_once_from_start()
 
 func _on_new_game_pressed() -> void:
 	GameState.set_world_seed(_resolve_seed())

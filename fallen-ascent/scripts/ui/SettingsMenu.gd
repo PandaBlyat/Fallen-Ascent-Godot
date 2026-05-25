@@ -19,6 +19,8 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 @onready var _resolution_button: OptionButton = %ResolutionButton
 @onready var _vsync_button: OptionButton = %VSyncButton
 @onready var _fps_button: OptionButton = %MaxFpsButton
+@onready var _ui_scale_slider: HSlider = %UiScaleSlider
+@onready var _ui_scale_value: Label = %UiScaleValue
 @onready var _master_slider: HSlider = %MasterSlider
 @onready var _music_slider: HSlider = %MusicSlider
 @onready var _sfx_slider: HSlider = %SfxSlider
@@ -48,6 +50,7 @@ func _ready() -> void:
 	_initialize_resolution()
 	_initialize_vsync()
 	_initialize_fps()
+	_initialize_ui_scale()
 	_initialize_audio()
 	_rebuild_controls()
 
@@ -124,6 +127,15 @@ func _initialize_fps() -> void:
 	_fps_button.item_selected.connect(_on_fps_selected)
 
 
+func _initialize_ui_scale() -> void:
+	_ui_scale_slider.min_value = 0.75
+	_ui_scale_slider.max_value = 2.0
+	_ui_scale_slider.step = 0.05
+	_ui_scale_slider.value = SettingsManager.ui_scale
+	_update_ui_scale_label(SettingsManager.ui_scale)
+	_ui_scale_slider.value_changed.connect(_on_ui_scale_changed)
+
+
 func _initialize_audio() -> void:
 	_master_slider.value = SettingsManager.master_volume
 	_music_slider.value = SettingsManager.music_volume
@@ -186,6 +198,12 @@ func _update_volume_label(label: Label, value: float) -> void:
 	label.text = "%d%%" % int(roundf(clampf(value, 0.0, 1.0) * 100.0))
 
 
+func _update_ui_scale_label(value: float) -> void:
+	if _ui_scale_value == null:
+		return
+	_ui_scale_value.text = "%.2fx" % clampf(value, 0.75, 2.0)
+
+
 func _on_display_mode_selected(index: int) -> void:
 	SettingsManager.set_display_mode(_display_mode_button.get_item_id(index))
 	_update_resolution_enabled()
@@ -203,6 +221,11 @@ func _on_vsync_selected(index: int) -> void:
 func _on_fps_selected(index: int) -> void:
 	if index < SettingsManager.FPS_PRESETS.size():
 		SettingsManager.set_max_fps(SettingsManager.FPS_PRESETS[index])
+
+
+func _on_ui_scale_changed(value: float) -> void:
+	SettingsManager.set_ui_scale(value)
+	_update_ui_scale_label(SettingsManager.ui_scale)
 
 
 func _on_main_menu_pressed() -> void:

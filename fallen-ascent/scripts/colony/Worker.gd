@@ -68,7 +68,7 @@ const ENERGY_CRITICAL: float = 10.0
 const ENERGY_IDLE_DRAIN_PER_SEC: float = 0.25
 const ENERGY_MOVE_DRAIN_PER_SEC: float = 0.7
 const ENERGY_WORK_DRAIN_PER_SEC: float = 1.1
-const ENERGY_CHARGE_PER_SEC: float = 10.0
+const ENERGY_CHARGE_PER_SEC: float = 4.0
 const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
@@ -108,6 +108,7 @@ const DOOR_SLOW_MULTIPLIER: float = 0.72
 const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
 const TELEPORT_COOLDOWN_SECONDS: float = 1.0
 const SCRAPE_RUST_DURATION: float = 1.4
+const SCRAPE_BIOMASS_DURATION: float = 0.9
 const IDLE_SAMPLE_LIMIT: int = 48
 const IDLE_SCRAPE_RUST_RADIUS: int = 28
 const ACTION_HISTORY_LIMIT: int = 96
@@ -123,6 +124,7 @@ const ASSIGNED_DOCK_MOOD_PER_SEC: float = 0.35
 const ORDER_MOVE := &"move"
 const ORDER_MINE := &"mine"
 const ORDER_SCRAPE_RUST := &"scrape_rust"
+const ORDER_SCRAPE_BIOMASS := &"scrape_biomass"
 const ORDER_BUILD := &"build"
 const ORDER_TAKE_BUILD_JOB := &"take_build_job"
 const ORDER_CHARGE := &"charge"
@@ -301,8 +303,11 @@ func command_attack(
 
 
 func _enter_fighting(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNREACHABLE) -> void:
+	var was_fighting: bool = _state == State.FIGHTING
 	_combat_target = target
 	_state = State.FIGHTING
+	if not was_fighting:
+		EventBus.worker_entered_combat.emit(self)
 	_combat_repath_cooldown = 0.0
 	_last_combat_contact_at = _now_seconds()
 	if preferred_stand != Pathfinder.UNREACHABLE and _chunk_manager != null and _chunk_manager.is_walkable(preferred_stand):
@@ -491,7 +496,9 @@ func job_label() -> String:
 		return "build " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
 	if _job is OperateStructureJob:
 		return "operate " + BuildBlueprint.display_name((_job as OperateStructureJob).structure_id)
-	if _is_scrape_job(_job):
+	if _is_scrape_biomass_job(_job):
+		return "scrape biomass"
+	if _is_scrape_rust_job(_job):
 		return "scrape rust"
 	return "none"
 
@@ -563,10 +570,11 @@ func activity_fx() -> Variant:
 				}
 			if _is_scrape_job(_job):
 				var target: Vector2i = _job.get("target") as Vector2i
+				var duration: float = SCRAPE_BIOMASS_DURATION if _is_scrape_biomass_job(_job) else SCRAPE_RUST_DURATION
 				return {
 					"grid": target,
 					"kind": 1,
-					"progress": clampf(float(_job.get("progress")) / SCRAPE_RUST_DURATION, 0.0, 1.0),
+					"progress": clampf(float(_job.get("progress")) / duration, 0.0, 1.0),
 					"intensity": 0.55,
 				}
 		State.BUILDING:
@@ -686,11 +694,16 @@ func _process(delta: float) -> void:
 				mine.progress += work_delta
 				if mine.progress >= MineJob.DURATION:
 					_complete_mine(mine)
-			elif _is_scrape_job(_job):
+			elif _is_scrape_rust_job(_job):
 				var scrape_progress: float = float(_job.get("progress")) + work_delta
 				_job.set("progress", scrape_progress)
 				if scrape_progress >= SCRAPE_RUST_DURATION:
 					_complete_scrape_rust(_job)
+			elif _is_scrape_biomass_job(_job):
+				var biomass_progress: float = float(_job.get("progress")) + work_delta
+				_job.set("progress", biomass_progress)
+				if biomass_progress >= SCRAPE_BIOMASS_DURATION:
+					_complete_scrape_biomass(_job)
 			else:
 				_abandon_job()
 				return
@@ -875,8 +888,10 @@ func _try_claim_job() -> bool:
 		_begin_craft(job as CraftJob)
 	elif job is OperateStructureJob:
 		_begin_operation(job as OperateStructureJob)
-	elif _is_scrape_job(job):
+	elif _is_scrape_rust_job(job):
 		_begin_scrape_rust(job)
+	elif _is_scrape_biomass_job(job):
+		_begin_scrape_biomass(job)
 	return true
 
 
@@ -897,6 +912,8 @@ func _start_direct_order(order: Dictionary) -> bool:
 			return command_mine(order.get("target", current_grid()) as Vector2i, false)
 		ORDER_SCRAPE_RUST:
 			return command_scrape_rust(order.get("target", current_grid()) as Vector2i, false)
+		ORDER_SCRAPE_BIOMASS:
+			return command_scrape_biomass(order.get("target", current_grid()) as Vector2i, false)
 		ORDER_BUILD:
 			return command_build(
 				order.get("target", current_grid()) as Vector2i,
@@ -939,8 +956,16 @@ func _init_limbs() -> void:
 		_limbs[limb_name] = CONDITION_MAX
 
 
-func _is_scrape_job(job: Job) -> bool:
+func _is_scrape_rust_job(job: Job) -> bool:
 	return job != null and job.kind == Job.Kind.SCRAPE_RUST
+
+
+func _is_scrape_biomass_job(job: Job) -> bool:
+	return job != null and job.kind == Job.Kind.SCRAPE_BIOMASS
+
+
+func _is_scrape_job(job: Job) -> bool:
+	return _is_scrape_rust_job(job) or _is_scrape_biomass_job(job)
 
 
 func _choose_idle_behavior() -> void:
@@ -1287,6 +1312,23 @@ func _begin_scrape_rust(job: Job) -> void:
 	if _chunk_manager.get_tile_at(target) != TerrainGenerator.TILE_RUST:
 		if _job_board != null:
 			_job_board.cancel_scrape_rust_at(target)
+		_job = null
+		_state = State.IDLE
+		return
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		_release_and_idle()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_WORK
+
+
+func _begin_scrape_biomass(job: Job) -> void:
+	var target: Vector2i = job.get("target") as Vector2i
+	if not _chunk_manager.has_grass(target):
+		if _job_board != null:
+			_job_board.cancel_scrape_biomass_at(target)
 		_job = null
 		_state = State.IDLE
 		return
@@ -1864,6 +1906,16 @@ func _complete_scrape_rust(scrape: Job) -> void:
 	_finish_job()
 
 
+func _complete_scrape_biomass(scrape: Job) -> void:
+	var target: Vector2i = scrape.get("target") as Vector2i
+	if _chunk_manager.has_grass(target):
+		_chunk_manager.clear_grass(target)
+		if _colony_site != null and _colony_site.has_method("spawn_item_at") and randf() < 0.60:
+			_colony_site.call("spawn_item_at", target, Item.Kind.BIOMASS, 1)
+		_remember("scraped biomass at %d,%d" % [target.x, target.y])
+	_finish_job()
+
+
 func _complete_build(build: BuildJob) -> void:
 	# Convert the completed blueprint to terrain or static object.
 	if _carried != null:
@@ -2211,6 +2263,15 @@ func queue_command_scrape_rust(target: Vector2i) -> bool:
 	}, "scrape rust %d,%d" % [target.x, target.y])
 
 
+func queue_command_scrape_biomass(target: Vector2i) -> bool:
+	if not _chunk_manager.has_grass(target):
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_SCRAPE_BIOMASS,
+		"target": target,
+	}, "scrape biomass %d,%d" % [target.x, target.y])
+
+
 func queue_command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> bool:
 	return _enqueue_direct_order({
 		"kind": ORDER_BUILD,
@@ -2298,6 +2359,22 @@ func command_scrape_rust(target: Vector2i, clear_queue: bool = true) -> bool:
 	_job = job
 	_remember("ordered to scrape rust %d,%d" % [target.x, target.y])
 	_begin_scrape_rust(job)
+	return true
+
+
+func command_scrape_biomass(target: Vector2i, clear_queue: bool = true) -> bool:
+	if not _chunk_manager.has_grass(target):
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
+	_abandon_job()
+	if _job_board.has_scrape_biomass_at(target):
+		_job_board.cancel_scrape_biomass_at(target)
+	var job: Job = _job_board.add_scrape_biomass_job(target)
+	job.claimed_by = self
+	_job = job
+	_remember("ordered to scrape biomass %d,%d" % [target.x, target.y])
+	_begin_scrape_biomass(job)
 	return true
 
 
@@ -2772,9 +2849,19 @@ func _refresh_action_text() -> void:
 	else:
 		match _state:
 			State.MOVING_TO_WORK:
-				next_text = "Moving to rust" if _is_scrape_job(_job) else "Moving to mine"
+				if _is_scrape_biomass_job(_job):
+					next_text = "Moving to biomass"
+				elif _is_scrape_rust_job(_job):
+					next_text = "Moving to rust"
+				else:
+					next_text = "Moving to mine"
 			State.WORKING:
-				next_text = "Scraping rust" if _is_scrape_job(_job) else "Mining"
+				if _is_scrape_biomass_job(_job):
+					next_text = "Scraping biomass"
+				elif _is_scrape_rust_job(_job):
+					next_text = "Scraping rust"
+				else:
+					next_text = "Mining"
 			State.MOVING_TO_PICKUP:
 				if _job is BuildJob:
 					next_text = "Getting " + Item.kind_name((_job as BuildJob).material_kind)

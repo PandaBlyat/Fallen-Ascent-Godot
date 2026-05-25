@@ -15,12 +15,14 @@ var pending: Array[Job] = []
 var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
 var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
 var _scrape_targets: Dictionary = {} ## Vector2i -> Job
+var _scrape_biomass_targets: Dictionary = {} ## Vector2i -> Job
 var _operation_targets: Dictionary = {} ## Vector2i -> OperateStructureJob
 ## Chunk-coord -> Array[Job]. Lets claim_next_for scan only nearby
 ## chunks first instead of the full pending list each poll.
 var _pending_by_chunk: Dictionary = {}
 
 const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
+const SCRAPE_BIOMASS_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeBiomassJob.gd")
 const CRAFT_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/CraftJob.gd")
 const OPERATE_STRUCTURE_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/OperateStructureJob.gd")
 ## Chunk-radius scanned by claim_next_for before it falls back to the
@@ -81,6 +83,35 @@ func has_scrape_rust_at(target: Vector2i) -> bool:
 
 func scrape_rust_count() -> int:
 	return _scrape_targets.size()
+
+
+func add_scrape_biomass_job(target: Vector2i) -> Job:
+	if _scrape_biomass_targets.has(target):
+		return _scrape_biomass_targets[target] as Job
+	var job: Job = SCRAPE_BIOMASS_JOB_SCRIPT.new(target) as Job
+	pending.append(job)
+	_scrape_biomass_targets[target] = job
+	_index_job(job)
+	job_added.emit(job)
+	return job
+
+
+func cancel_scrape_biomass_at(target: Vector2i) -> void:
+	if not _scrape_biomass_targets.has(target):
+		return
+	var job: Job = _scrape_biomass_targets[target] as Job
+	_scrape_biomass_targets.erase(target)
+	pending.erase(job)
+	_unindex_job(job)
+	job_cancelled.emit(job)
+
+
+func has_scrape_biomass_at(target: Vector2i) -> bool:
+	return _scrape_biomass_targets.has(target)
+
+
+func scrape_biomass_count() -> int:
+	return _scrape_biomass_targets.size()
 
 
 func add_haul_job(item: Node, zone: Node, cell: Vector2i) -> HaulJob:
@@ -295,6 +326,8 @@ func complete(job: Job) -> void:
 			_build_targets.erase(cell)
 	elif job.kind == Job.Kind.SCRAPE_RUST:
 		_scrape_targets.erase(job.get("target") as Vector2i)
+	elif job.kind == Job.Kind.SCRAPE_BIOMASS:
+		_scrape_biomass_targets.erase(job.get("target") as Vector2i)
 	elif job is OperateStructureJob:
 		_operation_targets.erase((job as OperateStructureJob).anchor)
 	job_completed.emit(job)
@@ -337,6 +370,8 @@ static func _target_grid_of(job: Job) -> Vector2i:
 		return (job as OperateStructureJob).anchor
 	if job.kind == Job.Kind.SCRAPE_RUST:
 		return job.get("target") as Vector2i
+	if job.kind == Job.Kind.SCRAPE_BIOMASS:
+		return job.get("target") as Vector2i
 	return Vector2i.ZERO
 
 
@@ -351,6 +386,6 @@ static func _priority_of(job: Job) -> int:
 		return 16
 	if job is MineJob:
 		return 40
-	if job.kind == Job.Kind.SCRAPE_RUST:
+	if job.kind == Job.Kind.SCRAPE_RUST or job.kind == Job.Kind.SCRAPE_BIOMASS:
 		return 100
 	return 50

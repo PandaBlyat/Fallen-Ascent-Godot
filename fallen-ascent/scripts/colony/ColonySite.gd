@@ -77,7 +77,13 @@ func _spawn_initial_workers() -> void:
 	# BFS origin (instead of Vector2i.ZERO) guarantees the placed outlet sits
 	# in the same connected region as the workers.
 	var outlet_seed: Vector2i = spawn_cells[0] if not spawn_cells.is_empty() else Vector2i.ZERO
-	chunk_manager.ensure_outlet_near(outlet_seed)
+	var placed_outlet: Vector2i = Pathfinder.UNREACHABLE
+	for spawn_cell in spawn_cells:
+		placed_outlet = chunk_manager.ensure_outlet_near(spawn_cell)
+		if placed_outlet != Pathfinder.UNREACHABLE:
+			break
+	if placed_outlet == Pathfinder.UNREACHABLE:
+		chunk_manager.ensure_outlet_near(outlet_seed)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
 
 

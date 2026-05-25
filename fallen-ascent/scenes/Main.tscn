@@ -1,8 +1,7 @@
-[gd_scene load_steps=4 format=3 uid="uid://bfa_main_0001"]
+[gd_scene load_steps=3 format=3 uid="uid://bfa_main_0001"]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
 [ext_resource type="Texture2D" path="res://fallenascentwallpaper.png" id="2_wallpaper"]
-[ext_resource type="AudioStream" path="res://Rust in the Vault.mp3" id="3_music"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -25,51 +24,19 @@ expand_mode = 1
 stretch_mode = 0
 mouse_filter = 2
 
-[node name="TitleBox" type="VBoxContainer" parent="."]
-layout_mode = 1
-anchors_preset = 5
-anchor_left = 0.5
-anchor_right = 0.5
-offset_left = -260.0
-offset_top = 90.0
-offset_right = 260.0
-offset_bottom = 200.0
-grow_horizontal = 2
-theme_override_constants/separation = 2
-
-[node name="Title" type="Label" parent="TitleBox"]
-layout_mode = 2
-text = "FALLEN ASCENT"
-horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.96, 0.92, 0.78, 1)
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
-theme_override_constants/shadow_offset_x = 2
-theme_override_constants/shadow_offset_y = 2
-theme_override_font_sizes/font_size = 44
-
-[node name="Subtitle" type="Label" parent="TitleBox"]
-layout_mode = 2
-text = "a colony of rust beneath the megastructure"
-horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.62, 0.7, 0.78, 1)
-theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.85)
-theme_override_constants/shadow_offset_x = 1
-theme_override_constants/shadow_offset_y = 1
-theme_override_font_sizes/font_size = 14
-
 [node name="Buttons" type="VBoxContainer" parent="."]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = 7
 anchor_left = 0.5
-anchor_top = 0.5
+anchor_top = 1.0
 anchor_right = 0.5
-anchor_bottom = 0.5
+anchor_bottom = 1.0
 offset_left = -140.0
-offset_top = -100.0
+offset_top = -300.0
 offset_right = 140.0
-offset_bottom = 100.0
+offset_bottom = -60.0
 grow_horizontal = 2
-grow_vertical = 2
+grow_vertical = 0
 theme_override_constants/separation = 14
 
 [node name="NewGameButton" type="Button" parent="Buttons"]
@@ -107,7 +74,3 @@ text = "Prototype build - placeholder art"
 horizontal_alignment = 2
 theme_override_colors/font_color = Color(0.5, 0.55, 0.6, 1)
 theme_override_font_sizes/font_size = 11
-
-[node name="MenuMusic" type="AudioStreamPlayer" parent="."]
-stream = ExtResource("3_music")
-bus = &"Music"

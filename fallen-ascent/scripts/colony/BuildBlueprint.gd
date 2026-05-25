@@ -343,11 +343,11 @@ static func requirements(id: int) -> String:
 	if id == Id.CHARGE_PAD:
 		return "Place on walkable explored floor. Becomes outlet."
 	if id == Id.STORAGE_BIN:
-		return "Place on a stockpile tile after crafting one at a fabrication spot."
+		return "Place on a stockpile tile after crafting one at a crafting spot."
 	if id == Id.OUTLET_EXTENSION:
-		return "Place on an outlet tile after crafting one at a fabrication spot."
+		return "Place on an outlet tile after crafting one at a crafting spot."
 	if is_object_placement(id):
-		return "Place on walkable explored floor after crafting one at a fabrication spot."
+		return "Place on walkable explored floor after crafting one at a crafting spot."
 	if is_worker_operated(id):
 		var outlet_text: String = ""
 		if outlet_range(id) > 0:
@@ -394,6 +394,36 @@ static func is_workshop(id: int) -> bool:
 		or id == Id.MAINTENANCE_DOCK \
 		or id == Id.FABRICATOR_ADVANCED \
 		or id == Id.SENTIENCE_CRADLE
+
+
+static func workshop_atlas_index(id: int) -> int:
+	match id:
+		Id.DOCK:
+			return 0
+		Id.REPAIR_BENCH:
+			return 1
+		Id.MEDITATION_PAD:
+			return 2
+		Id.FABRICATION_SPOT:
+			return 3
+		Id.SENSOR:
+			return 4
+		Id.EXTRACTOR:
+			return 5
+		Id.CHARGE_PAD:
+			return 6
+		Id.FABRICATOR:
+			return 7
+		Id.PARTS_LOOM:
+			return 8
+		Id.MAINTENANCE_DOCK:
+			return 9
+		Id.FABRICATOR_ADVANCED:
+			return 10
+		Id.SENTIENCE_CRADLE:
+			return 11
+		_:
+			return -1
 
 
 static func outlet_range(_id: int) -> int:

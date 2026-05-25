@@ -1,7 +1,7 @@
 # Craftable Objects Atlas
 
 `craftable_objects_atlas.png` uses 32 px cells for object items and placed
-object visuals.
+object visuals. Workshop structures use `workshops_atlas.png` instead.
 
 - `(0,0)`: storage bin
 - `(32,0)`: outlet extension

@@ -35,7 +35,7 @@ Snapshot of prototype mechanics as implemented in code.
 - Critical energy interrupts current work and forces charge seeking.
 - Charging restores energy at outlets.
 - Condition decays while moving and working.
-- Low condition makes bots seek repair bench or maintenance dock.
+- Low condition makes bots seek repair bench or mechanic dock.
 - Repair consumes colony materials when available.
 - Mental tiredness rises during work and idle life.
 - High mental tiredness makes bots seek dock rest.
@@ -78,22 +78,24 @@ These needs are current food-like pressure loop for sentient bots: colony must k
 
 - Buildable structures use blueprint definitions with footprint, cost, duration, tooltip, color, and production data.
 - Wall becomes terrain wall.
-- Door is passable controlled barrier placeholder.
-- Light reveals nearby explored machinery.
+- Door is passable controlled barrier with its own animation atlas.
 - Sensor provides longer reveal source.
-- Charge pad turns floor into outlet.
-- Extractor produces component or substrate.
-- Fabricator produces circuit or power cell.
-- Dock reduces bot mental tiredness through rest.
+- Charge turns floor into outlet.
+- Extractor pulls plating or mechanism from exposed systems.
+- Crafting bench speeds crafted-object work.
+- Dock bed reduces bot mental tiredness through rest.
 - Repair bench restores bot condition and consumes repair materials.
-- Parts loom consumes substrate and circuit to produce component or power cell.
-- Maintenance dock consumes scrap as upkeep.
-- Calibration shrine exists as buildable calibration point for later deeper mental/social mechanics.
+- Assembler press consumes scrap to produce plating or mechanism.
+- Mechanic dock heals limb damage inside Mechanic Rooms.
+- Research bench generates wisdom.
+- Fabricator assembles datacores, charge cells, and rudimentary sensors.
+- Replication cradle creates new workers from refined inputs.
+- Crafting spot crafts placeable objects.
 
 ## UI
 
 - Top HUD shows worker count, job count, active tool, and resource counts.
-- Command palette has Orders, Zones, and Structures tabs.
+- Command palette has Orders, Zones, Rooms, Workshops, Building, Storage, Visibility, and Objects tabs.
 - Tool buttons show icons and detailed tooltips.
 - Selection panel shows worker cards or structure card.
 - Worker cards show stats, meters, and scrollable thought history.

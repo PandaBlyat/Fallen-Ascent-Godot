@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d4l7xrdjtju3h"
-path="res://.godot/imported/structures_atlas.png-321c68534e46f5463bb063506a911935.ctex"
+uid="uid://bjx5057ar0w2b"
+path="res://.godot/imported/tech_tree.png-99b077494598cf06ef6f572bd751e112.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://resources/objects/structures_atlas.png"
-dest_files=["res://.godot/imported/structures_atlas.png-321c68534e46f5463bb063506a911935.ctex"]
+source_file="res://resources/ui/panels/tech_tree.png"
+dest_files=["res://.godot/imported/tech_tree.png-99b077494598cf06ef6f572bd751e112.ctex"]
 
 [params]
 

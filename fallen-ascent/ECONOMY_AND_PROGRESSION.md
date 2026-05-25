@@ -1,290 +1,192 @@
-# Economy And Progression
+# Economy, Tech Tree, and Progression
 
-Snapshot of current prototype economy, current progression tree, known clarity problems, and proposed direction for a stronger droid/sentient-AI colony economy.
+Snapshot of current prototype state. This is not a fantasy design doc. It is
+what the game actually does right now: salvage, refine, service bots, spend
+wisdom, then turn enough parts into another bot.
 
-## Current Economy
+## Current Loop
 
-### Storage
+Current economy has 5 layers:
 
-- Items exist as loose stacks or stockpile stacks.
-- One stockpile tile stores one item stack.
-- Current intended tile capacity: 16 items per tile.
-- Total stockpile capacity is `stockpile tile count * 16`.
-- HUD resource counts combine loose items plus all stored stockpile stacks.
+1. **Mine and salvage.** Walls, service cores, rich walls, and mineable props
+   feed raw parts into colony.
+2. **Process.** Extractor, Fabricator, and Assembly Press turn salvage into
+   better parts, datacores, and charge cells.
+3. **Support colony.** Docks, repair, lights, sensors, storage, and outlets
+   keep bots working longer.
+4. **Research.** Meditation turns idle time into Wisdom.
+5. **Expand population.** Replication Cradle consumes high-tier parts and
+   creates another worker.
 
-### Current Resources
+This is not trade economy, food economy, or market economy. It is salvage
+throughput plus colony maintenance.
 
-| Resource | Main Sources | Main Uses | Current Role |
-| --- | --- | --- | --- |
-| scrap | Any mined wall, service core, rich wall | Walls, doors, extractors, charge pads, fabricators, docks, repair benches, maintenance docks, bot repair | Basic material and repair feedstock |
-| substrate | Random mining drop, service cores, rich walls, extractor | Extractor, fabricator, dock, parts loom | Structural feedstock |
-| component | Rare mining drop, service cores, extractor, parts loom | Door, light, extractor, sensor, charge pad, repair bench, maintenance dock, fallback repair | Mid-tier machine part |
-| circuit | Service core, rich wall, fabricator | Sensor, fabricator, parts loom, calibration shrine | Advanced logic material |
-| power cell | Service core, fabricator, parts loom | Charge pad, maintenance dock, calibration shrine | Portable stored power |
+## Resource Ledger
 
-### Current Terrain And Resource Nodes
-
-| Tile | Gameplay Role |
-| --- | --- |
-| floor | Walkable base tile |
-| wall | Mineable; always drops scrap |
-| rich wall | Mineable; drops scrap, substrate, chance of circuit |
-| service core | Mineable; drops scrap, substrate, chance of component, circuit, power cell |
-| outlet | Charges bots and powers some structures by placement adjacency/footprint |
-| conduit floor | Walkable flavor tile |
-| rust sludge | Scrape target; clears to floor |
-| void | Non-walkable blocker |
-| teleporter | Placeholder/rare tile, no full economy role yet |
-
-### Current Structures
-
-| Structure | Cost | Production / Effect | Requirement |
-| --- | --- | --- | --- |
-| wall | scrap x1 | Becomes solid wall | Floor |
-| door | scrap x1, component x1 | Passable barrier placeholder | Walkable explored floor |
-| light | component x1 | Reveals nearby explored machinery | Walkable explored floor |
-| extractor | scrap x2, substrate x2, component x1 | Every 8s: component or substrate | At least one footprint cell on outlet |
-| sensor | component x1, circuit x1 | Long reveal source | Outlet |
-| charge pad | scrap x1, component x1, power cell x1 | Turns floor into outlet | Walkable explored floor |
-| fabricator | scrap x2, substrate x1, circuit x1 | Every 12s: circuit or power cell | Outlet |
-| dock | scrap x1, substrate x1 | Rest lowers mental tiredness | Walkable explored floor |
-| repair bench | scrap x2, component x1 | Repairs bot condition; consumes scrap or component when used | Walkable explored floor |
-| parts loom | substrate x2, circuit x1 | Consumes substrate x1 + circuit x1; every 14s: component or power cell | Outlet |
-| maintenance dock | scrap x3, component x2, power cell x1 | Consumes scrap x1 every 24s; no visible benefit yet | Outlet |
-| calibration shrine | circuit x1, power cell x1 | Placeholder for future mental/social recovery | Outlet |
-
-## Current Progression Tree
-
-```text
-Start
-  -> 3 bots
-  -> explored floor/outlets nearby
-  -> mine walls
-      -> scrap
-      -> chance: substrate
-      -> rare chance: component
-      -> build basics
-          -> stockpile zones
-          -> walls
-          -> docks
-          -> repair bench
-          -> light
-          -> door
-      -> mine service cores / rich walls
-          -> substrate
-          -> component
-          -> circuit
-          -> power cell
-          -> build outlet-gated structures
-              -> extractor
-                  -> component / substrate loop
-              -> fabricator
-                  -> circuit / power cell loop
-              -> sensor
-                  -> larger reveal
-              -> parts loom
-                  -> component / power cell loop, consumes substrate + circuit
-              -> maintenance dock
-                  -> consumes scrap upkeep, future service role
-              -> calibration shrine
-                  -> future mental/social role
-```
-
-## Current Problems
-
-### Economy Clarity
-
-- `scrap`, `component`, `substrate`, `circuit`, and `power cell` read like generic placeholder names. New player cannot infer tech tier, source, or use from names.
-- `substrate` sounds biological or chemistry-heavy, but it acts as structural feedstock.
-- `component` is too broad. Door hinges, machine actuators, and advanced parts all become same word.
-- `circuit` and `power cell` are clear, but they appear before player has clear reason to care.
-- `service core` sounds important, but player can mine it like ore. If it is rare loot node, name should signal salvage.
-- `rich wall` is generic fantasy-mining language, not megastructure/droid language.
-- `calibration shrine` uses religious language. This can work if AI cult flavor is intentional, but it may confuse players expecting machine ecology.
-- `parts loom` is evocative but unclear. "Loom" implies textile unless fiction strongly supports woven circuitry.
-- `maintenance dock` currently consumes scrap but gives no visible colony benefit, so it feels like resource deletion.
-
-### Progression Clarity
-
-- Fabricator needs circuit to build, then makes circuit. This creates bootstrap dependency: player must find circuit before building circuit production.
-- Parts loom needs circuit and consumes circuit to make component or power cell. Since component is lower-tier than circuit, this can feel like downgrade.
-- Extractor creates both component and substrate from nothing except outlet/time. Good prototype loop, but weak fiction: what material is being extracted?
-- Power network is binary. Outlet exists or not. No throughput, battery, brownout, or grid planning pressure yet.
-- Maintenance loop lacks feedback. Bots have condition decay and repair needs, but machine upkeep is not visible enough.
-- Room progression is shallow: dock room satisfies one mood need, but no workshop/rec/recharge room economy yet.
-- No research or tech gate. Current progression is resource-drop gated only.
-- Stockpile has no filters/priorities. RimWorld-like economy needs storage specialization once resources grow.
-
-## Better Economy Direction
-
-Design goal: RimWorld-like colony economy, but every resource should feel like salvaged machine ecology inside a megastructure. Player should understand: mine wreckage, refine feedstock, fabricate parts, maintain minds/bodies, expand power, unlock deeper systems.
-
-### Proposed Resource Set
-
-| Tier | Proposed Name | Replaces / Adds | Meaning | Main Source | Main Use |
-| --- | --- | --- | --- | --- | --- |
-| 0 | scrap metal | scrap | Low-grade salvage | Common wall/debris mining | Walls, rough repairs, crude structures |
-| 0 | polymer substrate | substrate | Printable structural feedstock | Debris, recycler, extractor | Floors, docks, casings, printer recipes |
-| 1 | actuator parts | component | Mechanical/electromechanical parts | Salvage nodes, assembler | Doors, benches, limbs, machines |
-| 1 | logic boards | circuit | Control boards | Service nodes, electronics bench | Sensors, AI workstations, fabricators |
-| 1 | charge cells | power cell | Portable energy storage | Cell charger, service nodes | Charge pads, batteries, emergency power |
-| 2 | memory cores | new | Identity/personality storage | Deep service cores, data extractor | AI upgrades, research, resurrection |
-| 2 | servo limbs | new | Replacement body parts | Limb bench | Repair severe damage, worker upgrades |
-| 2 | neural gel | new | Synthetic cooling/compute medium | Chem vat or rare nodes | Mood/mental recovery, advanced AI rooms |
-| 3 | machine plasteel | new | High-grade megastructure alloy | Smelter/refiner | Strong walls, advanced machines |
-| 3 | quantum relays | new | High-tier signal/power component | Advanced fab | Teleporters, long-range control, endgame |
-
-### Rename Suggestions
-
-| Current | Better Name | Reason |
+| Resource | How to get it | Main use |
 | --- | --- | --- |
-| scrap | scrap metal | Clear physical material |
-| substrate | polymer substrate or printstock | Explains feedstock role |
-| component | actuator parts | More concrete, droid-flavored |
-| circuit | logic board | Clearer to non-technical players |
-| power cell | charge cell | Shorter, ties to bot charge |
-| service core | salvage core | Signals loot node, not base system player should preserve |
-| rich wall | dense conduit vein | Fits megastructure material source |
-| extractor | salvage extractor | Tells source and purpose |
-| fabricator | microfab | Shorter, sci-fi, clear maker |
-| parts loom | actuator loom or parts assembler | Less textile confusion |
-| calibration shrine | calibration alcove | Keeps ritual tone without fantasy confusion |
-| dock | rest dock | Clear bot bed equivalent |
-| maintenance dock | service bay | Better colony maintenance meaning |
+| Wisdom | Bot meditates at Meditation Pad; Focused Mind raises rate by 25% | Unlock techs |
+| Scrap | Mine walls, service cores, rich walls, static props, or craft outputs from some prop salvage | Baseline build and craft fuel |
+| Plating | Mine walls, service cores, rich walls, static props, or run Extractor | Mid-tier construction and crafting |
+| Mechanism | Mine service cores, rich walls, props, or run Extractor / Assembly Press / some prop salvage | Machines, sensors, lights, service gear |
+| Datacore | Mine service cores, rich walls, props, or run Fabricator / some prop salvage | Sensors, research-adjacent gear, advanced crafting |
+| Charge cell | Mine service cores, props, or run Fabricator / Assembly Press / some prop salvage | Power-adjacent items, late service structures |
+| Storage bin item | Craft at Fabrication Spot, then place on stockpile tile | Raises storage capacity |
+| Outlet extension item | Craft at Fabrication Spot, then place on outlet tile | Lets 2 workers recharge from one outlet |
+| Rudimentary sensor item | Craft at Fabrication Spot, then place on floor | Short-range reveal source |
+| Small light device item | Craft at Fabrication Spot, then place on floor | Small work light |
+| Large light device item | Craft at Fabrication Spot, then place on floor | Large work light |
 
-## Proposed Progression Tree
+Wisdom is abstract. Not an item. Not hauled. Not stored as physical stock.
 
-```text
-Phase 1 - Survival Salvage
-  Mine debris/walls
-    -> scrap metal
-    -> polymer substrate
-  Build
-    -> stockpile
-    -> rest dock
-    -> repair bench
-    -> crude walls/doors
-  Pressure
-    -> bot energy
-    -> condition decay
-    -> sleep/mental tiredness
+## Terrain And Salvage Sources
 
-Phase 2 - Stable Workshop
-  Build powered work area around outlet
-    -> charge pad / battery
-    -> salvage extractor
-    -> parts assembler
-  Produce
-    -> actuator parts
-    -> logic boards
-  Unlock
-    -> sensor mast
-    -> better doors
-    -> service bay
-  Pressure
-    -> machine upkeep
-    -> stockpile filtering
-    -> power demand
+| Source | Yields | Notes |
+| --- | --- | --- |
+| Wall | Scrap, plating, rare mechanism | Main early mining target |
+| Service core | Wall loot plus extra plating, mechanism, datacore, charge cell | Best all-round mine target |
+| Rich wall | Wall loot plus extra plating and datacore | Better than wall, worse than service core |
+| Rust | No item yield | Scrape to floor only |
+| Teleporter, water, conduit, debris, floor | No direct loot | Map features only, not economy nodes |
 
-Phase 3 - Sentient AI Care
-  Build rooms
-    -> assigned rest dock room
-    -> calibration alcove
-    -> diagnostics room
-  Produce
-    -> memory cores
-    -> neural gel
-    -> servo limbs
-  Unlock
-    -> personality stabilization
-    -> damaged bot recovery
-    -> role specialization
-  Pressure
-    -> mood breaks
-    -> identity degradation
-    -> social needs
+### Mineable Static Props
 
-Phase 4 - Megastructure Expansion
-  Refine high-tier materials
-    -> machine plasteel
-    -> quantum relays
-  Build
-    -> long-range scanner
-    -> power relays
-    -> hostile defense grid
-    -> teleporter repair
-  Pressure
-    -> raids/hostiles
-    -> power brownouts
-    -> rare node control
+Static props are deterministic salvage nodes. They matter because they are the
+cleanest source of mid-tier parts.
 
-Phase 5 - Ascent Objective
-  Recover ancient systems
-    -> root keys
-    -> archive shards
-    -> gate relays
-  Build final chain
-    -> uplink spire
-    -> ascent gate
-    -> colony mind backup
-  Endgame choice
-    -> escape upward
-    -> merge with megastructure
-    -> preserve droid colony
-```
+| Prop | Main drops |
+| --- | --- |
+| Rusty storage bin | 2-4 scrap, 1-2 plating at 55%, 1 mechanism at 18% |
+| Rusty broken grille | 1-2 scrap, 1 plating at 45% |
+| Rusty fan | 1-2 scrap, 1 mechanism at 32%, 1 plating at 25% |
+| Pile of scrap | 2-5 scrap, 1 plating at 28% |
+| Broken thermometor box | 1 scrap, 1 mechanism at 24%, 1 datacore at 10% |
+| Broken vent | 1-2 scrap, 1 plating at 36% |
+| Pile of rusty girdle | 1-3 scrap, 1-2 plating at 72% |
+| 2nd pile of rusty girdle | 1-2 scrap, 1-2 plating at 68% |
+| Pile of components | 1-2 scrap, 1-2 mechanism at 78%, 1 datacore at 12% |
+| Broken batteries | 1-2 scrap, 1 charge cell at 42%, 1 mechanism at 18% |
+| Pile of batteries | 1-2 scrap, 1-2 charge cell at 72% |
+| Storage tank | 2-3 scrap, 1-2 plating at 75%, 1 charge cell at 12% |
+| Satellite dish | 1-2 scrap, 1-2 mechanism at 58%, 1 datacore at 28% |
 
-## Proposed Production Chains
+## Structure And Object Economy
+
+There are two build paths:
+
+1. **Direct structures.** Spend raw materials at build site, structure appears.
+2. **Crafted objects.** First craft object item at Fabrication Spot, then place
+   that item as a structure from Objects tab.
+
+That split matters. It is the main reason this economy feels like colony sim
+instead of simple placement game.
+
+### Direct Structures
+
+| Structure | Cost | Size | Build time | Placement | Role | Unlock |
+| --- | --- | --- | --- | --- | --- | --- |
+| Wall | 1 scrap | 1x1 | 2.0s | Floor only | Turns tile into wall | Awakening |
+| Door | 1 scrap, 1 mechanism | 1x1 | 2.5s | Walkable floor | Controlled barrier | Awakening |
+| Light | 1 mechanism | 1x1 | 2.5s | Walkable floor, within 15 tiles of outlet | Basic work light | Awakening |
+| Charge Pad | 1 scrap, 1 mechanism, 1 charge cell | 1x1 | 2.5s | Walkable explored floor | Converts floor into outlet | Power I |
+| Extractor | 2 scrap, 2 plating, 1 mechanism | 2x2 | 4.0s | Machine Room, one footprint cell on outlet | Worker job, no inputs, outputs plating / mechanism | Refining I |
+| Sensor | 1 mechanism, 1 datacore | 1x1 | 2.5s | One footprint cell on outlet | Long-range reveal source | Sensors I |
+| Fabricator | 2 scrap, 1 plating, 1 datacore | 2x1 | 3.5s | Machine Room, one footprint cell on outlet | Worker job, no inputs, outputs datacore / charge cell | Power II |
+| Dock | 1 scrap, 1 plating | 2x1 | 3.0s | Walkable explored floor | Rest node | Awakening |
+| Repair Bench | 2 scrap, 1 mechanism | 2x1 | 3.0s | Walkable explored floor | Repairs bot condition, spends scrap first, then mechanism | Awakening |
+| Assembly Press | 2 plating, 1 datacore | 2x1 | 3.0s | Machine Room | Worker job, consumes plating + datacore, outputs mechanism / charge cell | Refining II |
+| Mechanic Dock | 3 scrap, 2 mechanism, 1 charge cell | 2x2 | 4.5s | One footprint cell on outlet | Anchors Mechanic Room, heals limbs of workers inside | Mechanic Dock |
+| Calibration Shrine | 1 datacore, 1 charge cell | 2x1 | 3.0s | One footprint cell on outlet | Future mental / social recovery hook | Calibration |
+| Meditation Pad | 2 scrap, 1 plating | 2x1 | 3.0s | One footprint cell on outlet | Wisdom source | Awakening |
+| Replication Cradle | 8 scrap, 6 plating, 4 mechanism, 2 datacore | 2x2 | 8.0s | Machine Room, one footprint cell on outlet | Worker job, consumes 20 scrap, 10 plating, 8 mechanism, 4 datacore, 2 charge cell over 120s to spawn new bot | Replication Cradle |
+| Fabrication Spot | 1 scrap, 1 plating | 1x1 | 1.5s | Walkable explored floor, outside stockpiles | Local craft station for placeable objects | Awakening |
+
+### Crafted Placeable Objects
+
+These are made at Fabrication Spot first. Then the resulting object item is
+placed as a build job.
+
+| Object item | Craft recipe | Craft time | Placement | Role | Unlock |
+| --- | --- | --- | --- | --- | --- |
+| Storage bin | 2 scrap, 1 plating | 5.0s | On stockpile tile | Raises cell capacity from 4 to 12 | Awakening |
+| Outlet extension | 1 mechanism, 1 charge cell | 6.0s | On outlet tile | Lets two workers recharge from one outlet | Awakening |
+| Rudimentary sensor | 1 mechanism, 1 datacore | 7.0s | On walkable floor | Short-range reveal source | Awakening |
+| Small light device | 1 scrap, 1 mechanism | 4.0s | On walkable floor | Small work light, 4 tile radius | Awakening |
+| Large light device | 2 plating, 1 mechanism, 1 charge cell | 8.0s | On walkable floor | Large work light, 8 tile radius | Awakening |
+
+## Tech Tree
+
+Current tree is broad, not deep. One free root, 5 branches, 2 deferred tier-3
+placeholders, 1 capstone.
 
 ```text
-scrap metal + polymer substrate
-  -> walls, docks, basic benches
-
-scrap metal + actuator parts
-  -> doors, repair bench, limb repairs
-
-polymer substrate + logic boards
-  -> parts assembler recipes
-
-scrap metal + charge cells
-  -> batteries, charge pads, emergency power
-
-logic boards + memory cores + neural gel
-  -> AI care, calibration, advanced research
-
-machine plasteel + quantum relays + memory cores
-  -> endgame scanners, teleporters, ascent systems
+Awakening
+|- Power I -> Power II -> Power III (deferred)
+|- Refining I -> Refining II -> Refining III (deferred)
+|- Sensors I
+|- Focused Mind -> Calibration
+|- Mechanic Dock -> Mechanic Room
+`- Replication Cradle (requires Power II + Refining II + Mechanic Dock)
 ```
 
-## Systems Needed To Support This
+| Tech | Wisdom cost | Prereq | Unlocks | Current read |
+| --- | --- | --- | --- | --- |
+| Awakening | 0 | none | Wall, Door, Light, Dock, Repair Bench, Meditation Pad, Fabrication Spot, Storage Bin, Outlet Extension, Rudimentary Sensor, Small Light Device, Large Light Device | Free starter layer |
+| Power I | 40 | Awakening | Charge Pad | First outlet expansion |
+| Power II | 90 | Power I | Fabricator | Mid-game power/process pivot |
+| Power III | 180 | Power II | nothing yet | Placeholder |
+| Refining I | 60 | Awakening | Extractor | First salvage machine |
+| Refining II | 120 | Refining I | Assembly Press | Real conversion step |
+| Refining III | 220 | Refining II | nothing yet | Placeholder |
+| Sensors I | 50 | Awakening | Sensor | Basic map reveal |
+| Focused Mind | 80 | Awakening | no build unlock | Meditation 25% faster |
+| Calibration | 160 | Focused Mind | Calibration Shrine | Future mental / social support |
+| Mechanic Dock | 100 | Awakening | Mechanic Dock | Service branch starter |
+| Mechanic Room | 180 | Mechanic Dock | no build unlock | Room unlock for limb repair service |
+| Replication Cradle | 400 | Refining II, Power II, Mechanic Dock | Replication Cradle | Late-game population growth capstone |
 
-- Stockpile filters and priorities: critical once resources split into tiers.
-- Work priorities: mining, hauling, crafting, repair, research, doctor/service work.
-- Recipe data resources: move `BuildBlueprint` costs/production from code into data once list grows.
-- Research or analysis bench: gates advanced recipes without only relying on rare random drops.
-- Power grid model: generation, storage, draw, disabled machines during brownouts.
-- Room stats: enclosure, cleanliness/rust, light, size, assigned owner, workshop type.
-- Visible upkeep: service bay should prevent machine breakdown or improve repair speed, not silently eat scrap.
-- Better source labels in tooltips: show "Drops: scrap metal, chance substrate" on mine targets.
+## What A Colony Sim Player Reads Here
 
-## Short-Term Implementation Plan
+From RimWorld / Dwarf Fortress angle, this economy says:
 
-1. Rename resources in UI only, keeping enum values stable to avoid save/data churn before save system exists.
-2. Add stockpile tile capacity display and per-zone total display.
-3. Add stockpile filters by item kind.
-4. Change fabricator bootstrap:
-   - extractor produces actuator parts + polymer substrate.
-   - electronics bench turns actuator parts + charge into logic boards.
-   - fabricator becomes tier-2, not first logic-board source.
-5. Replace `maintenance dock` passive scrap sink with visible `service bay` effect:
-   - repairs bots faster.
-   - reduces condition decay for assigned bots.
-   - later prevents machine breakdowns.
-6. Rename `calibration shrine` to `calibration alcove` unless religious AI cult tone becomes explicit.
-7. Add first research object: `analysis bench`.
-   - consumes memory cores or salvage cores.
-   - unlocks sensor, microfab, service bay, power storage.
-8. Add room progression:
-   - rest dock room for sleep/mood.
-   - workshop for crafting speed.
-   - diagnostics room for repair/mental recovery.
+- Early game is not about food. It is about **access**: power, rest, repair,
+  storage, light, and a place to turn scrap into parts.
+- Mid game is about **throughput**: extractor, fabricator, assembly press,
+  better sensing, and room control.
+- Late game is about **replication**: enough wisdom and parts to make another
+  worker.
+- Service structures carry a lot of weight. This is a robot colony, so colony
+  health is energy, condition, limb repair, and mental tiredness, not hunger.
 
+## Naming And Logic Notes
+
+These are player-facing observations, not code changes.
+
+- `Parts Loom` is already better as `Assembly Press`. Keep that line.
+- `Mechanic Dock`, `Maintenance Dock`, and `Dock Room` are too close. Pick one
+  family and stick to it. `Service Dock` or `Maintenance Bay` would read
+  cleaner.
+- `Dock Room` does not instantly read like a sleeping or rest space. A colony
+  sim player will probably understand `Dormitory`, `Rest Quarters`, or `Bunk
+  Room` faster.
+- `Calibration Shrine` feels mystical against rest of industrial language. If
+  tone is meant to stay hard industrial, `Calibration Bench` or `Tuning Station`
+  reads clearer.
+- `Rudimentary Sensor`, `Outlet Extension`, `Small Light Device`, and `Large
+  Light Device` are mechanically clear but bland. `Sensor Mast`, `Power
+  Splitter`, `Work Light`, and `Floodlight` would land faster.
+- `Replication Cradle` reads like birth, not smelting. Output is a worker, so `Replication
+  Cradle`, `Assembly Cradle`, or `Birth Cradle` would read more honest.
+- `Broken thermometor box` has a typo in prop naming. If this is meant to ship,
+  it should be `thermometer`.
+- `Power III` and `Refining III` are pure placeholders. That is fine for now,
+  but they are dead nodes in current tree and should be called out as such in
+  UI or removed until they do something.
+
+## Current Gaps
+
+- Meditation Chamber exists as room type, but current code does not wire a
+  distinct meditation-room bonus into Wisdom gain yet.
+- Power network is still outlet-based, not a real energy distribution system.
+- No trade, food, or market loop yet.
+- No save layer yet for wisdom or unlocked techs.

@@ -83,7 +83,7 @@ static func display_name(id: int) -> String:
 		Id.MEDITATION_PAD:
 			return "meditation pad"
 		Id.SENTIENCE_CRADLE:
-			return "sentience cradle"
+			return "replication cradle"
 		Id.FABRICATION_SPOT:
 			return "fabrication spot"
 		Id.STORAGE_BIN:
@@ -119,7 +119,7 @@ static func description(id: int) -> String:
 		Id.DOCK:
 			return "Rest cradle for reducing mental exhaustion."
 		Id.REPAIR_BENCH:
-			return "Service station where bots restore condition."
+			return "Service station where bots restore condition. Uses scrap first, then mechanisms for advanced repairs."
 		Id.PARTS_LOOM:
 			return "Worker-operated machine that consumes plating and datacores to make advanced parts."
 		Id.MAINTENANCE_DOCK:
@@ -129,7 +129,7 @@ static func description(id: int) -> String:
 		Id.MEDITATION_PAD:
 			return "A still spot where bots gather wisdom over time. Place inside a Meditation Chamber for the room bonus."
 		Id.SENTIENCE_CRADLE:
-			return "Worker-operated machine that forges a new worker over a long cycle. Hungry for refined parts."
+			return "Worker-operated machine that replicates a new worker over a long cycle. Hungry for refined parts."
 		Id.FABRICATION_SPOT:
 			return "Tiny work marker where workers craft placeable objects from stored parts."
 		Id.STORAGE_BIN:

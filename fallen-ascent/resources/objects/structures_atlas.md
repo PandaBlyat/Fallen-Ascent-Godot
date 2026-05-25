@@ -17,7 +17,7 @@ Columns:
 - `(320,0)`: mechanic dock
 - `(352,0)`: calibration shrine
 - `(384,0)`: meditation pad
-- `(416,0)`: sentience cradle
+- `(416,0)`: replication cradle
 - `(448,0)`: fabrication spot
 
 Column order matches `BuildBlueprint.Id`.

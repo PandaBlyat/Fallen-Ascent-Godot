@@ -8,7 +8,7 @@ extends RefCounted
 ## Branch layout in grid space:
 ##   col 0 = Awakening (root)
 ##   col 1..3 = each branch's three rungs
-##   col 4    = Sentience Forge capstone
+##   col 4    = Replication Cradle capstone
 ##
 ## Branches by row:
 ##   row 0: Power
@@ -171,7 +171,7 @@ static func all() -> Array[TechData]:
 	out.append(TechData.new(
 		MECHANIC_ROOM,
 		"Mechanic Room",
-		"Designate enclosed Mechanic Rooms where an assigned bot can heal limbs of room occupants. (Healing effect itself lands in a follow-up pass.)",
+		"Unlocks the Mechanic Room designation. A valid room around a Mechanic Dock lets the dock heal room occupants.",
 		180,
 		[MECHANIC_DOCK],
 		[],
@@ -182,8 +182,8 @@ static func all() -> Array[TechData]:
 	# Capstone
 	out.append(TechData.new(
 		SENTIENCE_FORGE,
-		"Sentience Forge",
-		"Unlocks the Sentience Cradle: build, fuel, wait, gain a new bot.",
+		"Replication Cradle",
+		"Unlocks the Replication Cradle: build, fuel, wait, gain a new bot.",
 		400,
 		[REFINING_II, POWER_II, MECHANIC_DOCK],
 		[BuildBlueprint.Id.SENTIENCE_CRADLE],

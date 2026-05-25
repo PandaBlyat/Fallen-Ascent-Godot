@@ -54,7 +54,7 @@ extends Node
 ##                                      node is unlocked. Payload: StringName.
 ##   worker_spawned_from_cradle(worker)
 ##                                    - emitted by StructureManager after a
-##                                      Sentience Cradle finishes a build cycle
+##                                      Replication Cradle finishes a build cycle
 ##                                      and a new Worker is added to the tree.
 ##   fabricator_needs_inputs(anchor,missing_kinds)
 ##                                    - emitted when automatic production stalls

@@ -441,7 +441,6 @@ func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String)
 	button.pressed.connect(_set_tab.bind(tab))
 	parent.add_child(button)
 
-
 func _set_tab(tab: StringName) -> void:
 	_current_tab = tab
 	for child in _command_grid.get_children():
@@ -451,6 +450,8 @@ func _set_tab(tab: StringName) -> void:
 
 	for command in _commands_for_tab(tab):
 		var build_id: int = int(command.get("build_id", -1))
+		var required_tech_id: StringName = StringName(command.get("required_tech_id", &""))
+		var lock_build: bool = bool(command.get("lock_build", true))
 		var icon_texture: Texture2D = null
 		if build_id >= 0 and (tab == TAB_STRUCTURES or tab == TAB_OBJECTS):
 			icon_texture = _structure_icon(build_id)
@@ -460,7 +461,9 @@ func _set_tab(tab: StringName) -> void:
 			command["tooltip"] as String,
 			command["icon"] as Vector2i,
 			build_id,
-			icon_texture
+			icon_texture,
+			required_tech_id,
+			lock_build
 		)
 	_refresh_mode_buttons()
 
@@ -476,8 +479,8 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 			return [
 				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
 				{"mode": Designator.Mode.DESIGNATE_MEDITATION_CHAMBER, "label": "Meditate", "tooltip": "Meditation Chamber\nMust contain a Meditation Pad.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
-				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nGates limb-heal services for room occupants (heal effect lands later).", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
-				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nRequired for worker-operated production structures.\nDesignate floor first, then build Extractor, Fabricator, Assembly Press, or Sentience Cradle inside.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nWhen valid, that dock heals room occupants.", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK, "required_tech_id": TechDatabase.MECHANIC_ROOM, "lock_build": false},
+				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nRequired for worker-operated production structures.\nDesignate floor first, then build Extractor, Fabricator, Assembly Press, or Replication Cradle inside.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
 				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
@@ -518,15 +521,23 @@ func _add_command_button(
 	tooltip: String,
 	icon_cell: Vector2i,
 	build_id: int = -1,
-	icon_texture: Texture2D = null
+	icon_texture: Texture2D = null,
+	required_tech_id: StringName = &"",
+	lock_build: bool = true
 ) -> void:
 	var locked: bool = false
 	var lock_tooltip: String = tooltip
-	if build_id >= 0 and TechManager != null and not TechManager.is_build_unlocked(build_id):
+	var gate: TechData = null
+	if lock_build and build_id >= 0 and TechManager != null and not TechManager.is_build_unlocked(build_id):
 		locked = true
-		var gate: TechData = TechManager.tech_unlocking(build_id)
+		gate = TechManager.tech_unlocking(build_id)
 		var gate_name: String = gate.display_name if gate != null else "an unknown tech"
-		lock_tooltip = "Locked â€” research \"%s\"\n\n%s" % [gate_name, tooltip]
+		lock_tooltip = "Locked — research \"%s\"\n\n%s" % [gate_name, tooltip]
+	if not locked and required_tech_id != &"" and TechManager != null and not TechManager.is_unlocked(required_tech_id):
+		locked = true
+		gate = TechDatabase.by_id(required_tech_id)
+		var gate_name: String = gate.display_name if gate != null else "an unknown tech"
+		lock_tooltip = "Locked — research \"%s\"\n\n%s" % [gate_name, tooltip]
 
 	var button := Button.new()
 	button.text = ("[locked] " + label_text) if locked else label_text

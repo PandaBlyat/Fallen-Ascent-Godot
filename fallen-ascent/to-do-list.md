@@ -85,7 +85,7 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 ## Tech tree & economy follow-ups
 
 - [ ] **Real art for new placeholder structures.** Meditation Pad and
-      Sentience Cradle currently reuse the existing flat-color squares in
+      Replication Cradle currently reuse the existing flat-color squares in
       the multi-tile atlas; the wisdom badge and tech-tab icon also reuse
       existing UI atlas cells. Author dedicated cells in
       `resources/tiles/placeholder_atlas_multi_tile.png` and
@@ -101,7 +101,7 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 - [ ] **Tune the wisdom curve.** The 0.6 / sec base rate (+25% with Focused
       Mind) plus 8-14 s sessions was eyeballed. Once a real playthrough
       exists, tune session lengths, base rate, and tech costs together so
-      Refining II + Power Grid II + Mechanic Dock + Sentience Forge lands
+      Refining II + Power Grid II + Mechanic Dock + Replication Cradle lands
       around the intended several-hour mark.
 - [ ] **Wisdom decay / mood gate.** Currently meditating is free and
       always positive. Consider a fatigue mechanic (consecutive sessions

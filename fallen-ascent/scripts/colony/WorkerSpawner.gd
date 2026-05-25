@@ -45,7 +45,7 @@ static func spawn(
 
 
 ## Spawns a single Worker at a walkable cell adjacent to `anchor`. Used by the
-## Sentience Cradle to drop a fresh bot next to its footprint after a cycle.
+## Replication Cradle to drop a fresh bot next to its footprint after a cycle.
 ## Returns null if no walkable adjacent cell exists.
 static func spawn_one_at(
 	anchor: Vector2i,

@@ -27,9 +27,17 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       at `resources/shaders/water_tile.gdshader` keys ripple intensity
       off the atlas row. Tune palettes/animations once real art lands.
 - [ ] **Move fog/lighting overlay data to a dirty-tile GPU mask pipeline.**
-      `FogOfWar` still rebuilds CPU `Image` masks with per-pixel `set_pixel`
-      and LOS loops. Next step: keep dirty rects, update only changed mask
-      regions, and push more blend/falloff/noise work into shaders.
+      Per-pixel `set_pixel` is gone — `FogOfWar` now writes both visibility
+      and light masks straight into `PackedByteArray`s and uploads via
+      `Image.create_from_data`, and the light buffer is gated by a
+      `_light_dirty` flag so it only rebuilds on tile/structure/explored
+      changes. Next step: keep dirty rects per refresh, update only changed
+      mask regions, and push more LOS / falloff work into shaders.
+- [ ] **Floor variation shader has fixed params.** `floor_variation.gdshader`
+      now adds per-tile brightness/tint/wear hashed from world-tile coords
+      via a single shared `ShaderMaterial` on every base TileMapLayer. Tune
+      `brightness_min/max`, `wear_threshold`, `hue_jitter` once real art
+      lands — current defaults are deliberately subtle.
 - [x] **Swap `draw_rect` chunks for `TileMapLayer`.** Current `Chunk._draw`
       iterates 1024 cells per chunk per redraw. Won't scale to many visible
       chunks. Public API on `Chunk` (`get_tile/set_tile/SIZE/TILE_PIXELS`)

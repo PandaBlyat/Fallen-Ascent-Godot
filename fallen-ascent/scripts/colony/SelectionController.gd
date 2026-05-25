@@ -129,7 +129,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if mb_d.pressed and mb_d.button_index == MOUSE_BUTTON_LEFT:
 				_designator.cancel_active()
 				var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
-				if _chunk_manager.is_grid_in_map(grid) and (_fog == null or _fog.is_explored(grid)):
+				# Collapse the designation palette on any in-map tile click,
+				# whether the cell is explored or still under fog of war.
+				if _chunk_manager.is_grid_in_map(grid):
 					EventBus.default_tile_clicked.emit(grid)
 				get_viewport().set_input_as_handled()
 		return

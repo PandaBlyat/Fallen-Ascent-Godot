@@ -394,7 +394,9 @@ func _build_layout() -> void:
 	_inspect_panel.offset_top = -PALETTE_HEIGHT - 16.0 - INSPECT_CARD_HEIGHT - 10.0
 	_inspect_panel.offset_right = INSPECT_CARD_WIDTH * 0.5
 	_inspect_panel.offset_bottom = -PALETTE_HEIGHT - 16.0 - 10.0
-	_inspect_panel.add_theme_stylebox_override("panel", _panel_textured_style("inspect_card", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	# Inspect card sits on top of the HUD strip; no outer panel chrome so it
+	# doesn't look like a panel nested inside the larger HUD background.
+	_inspect_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	add_child(_inspect_panel)
 
 	var inspect_margin := MarginContainer.new()
@@ -964,6 +966,12 @@ func _toggle_resource_popup(category: int) -> void:
 	if popup.visible:
 		popup.visible = false
 		return
+	for other_key in _resource_popups.keys():
+		if other_key == category:
+			continue
+		var other_popup := _resource_popups[other_key] as PanelContainer
+		if other_popup != null:
+			other_popup.visible = false
 	var pos: Vector2 = button.global_position + Vector2(0.0, button.size.y + 3.0)
 	popup.position = pos
 	popup.visible = true

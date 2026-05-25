@@ -33,6 +33,11 @@ var _visibility_mask_texture: ImageTexture = null
 var _light_mask_texture: ImageTexture = null
 var _mask_origin: Vector2i = Vector2i.ZERO
 var _mask_size: Vector2i = Vector2i.ONE
+var _light_dirty: bool = true                    ## rebuild light mask only when sources / explored set actually change
+var _light_buffer: PackedByteArray = PackedByteArray()
+var _visibility_buffer: PackedByteArray = PackedByteArray()
+var _vis_default_buffer: PackedByteArray = PackedByteArray()
+var _light_default_buffer: PackedByteArray = PackedByteArray()
 
 
 func _ready() -> void:
@@ -108,11 +113,13 @@ func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:
 
 func _on_structure_built(_manager: Node) -> void:
 	_visibility_dirty = true
+	_light_dirty = true
 	_refresh_visibility()
 
 
 func _on_tile_changed(_grid: Vector2i, _new_tile: int) -> void:
 	_visibility_dirty = true
+	_light_dirty = true
 
 
 func _refresh_visibility(signature: PackedInt32Array = PackedInt32Array()) -> void:
@@ -123,8 +130,13 @@ func _refresh_visibility(signature: PackedInt32Array = PackedInt32Array()) -> vo
 		_reveal_into(next_visible, Vector2i(signature[i], signature[i + 1]), signature[i + 2])
 	var changed_bounds: Rect2i = _changed_visibility_bounds(_visible, next_visible)
 	_visible = next_visible
+	var prev_explored_size: int = _explored.size()
 	for key in _visible.keys():
 		_explored[key] = true
+	# Light memory depends on the explored set; if it grew this tick, the
+	# light mask buffer needs another pass.
+	if _explored.size() != prev_explored_size:
+		_light_dirty = true
 	_last_source_signature = signature
 	_visibility_dirty = false
 	_rebuild_mask_textures()
@@ -220,25 +232,56 @@ func _rebuild_mask_textures() -> void:
 		return
 	var bounds: Rect2i = _chunk_manager.map_grid_bounds()
 	_mask_origin = bounds.position
+	var prev_size: Vector2i = _mask_size
 	_mask_size = Vector2i(maxi(1, bounds.size.x), maxi(1, bounds.size.y))
-	var visibility_image := Image.create(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8)
-	var light_image := Image.create(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8)
-	visibility_image.fill(Color(0.0, 0.0, 0.0, 1.0))
-	light_image.fill(Color(0.0, 0.0, 0.0, 0.0))
+	var pixel_count: int = _mask_size.x * _mask_size.y
+	var byte_count: int = pixel_count * 4
+	if _vis_default_buffer.size() != byte_count or prev_size != _mask_size:
+		_vis_default_buffer.resize(byte_count)
+		_light_default_buffer.resize(byte_count)
+		# Default visibility: unexplored black (a=255). Default light: zero.
+		for i in pixel_count:
+			var b: int = i * 4
+			_vis_default_buffer[b] = 0
+			_vis_default_buffer[b + 1] = 0
+			_vis_default_buffer[b + 2] = 0
+			_vis_default_buffer[b + 3] = 255
+			_light_default_buffer[b] = 0
+			_light_default_buffer[b + 1] = 0
+			_light_default_buffer[b + 2] = 0
+			_light_default_buffer[b + 3] = 0
+		_light_dirty = true
+	_visibility_buffer = _vis_default_buffer.duplicate()
+	var width: int = _mask_size.x
+	var bx0: int = bounds.position.x
+	var by0: int = bounds.position.y
+	var bx1: int = bx0 + bounds.size.x
+	var by1: int = by0 + bounds.size.y
 	for key in _explored.keys():
 		var cell: Vector2i = key as Vector2i
-		if not bounds.has_point(cell):
+		if cell.x < bx0 or cell.x >= bx1 or cell.y < by0 or cell.y >= by1:
 			continue
-		var local: Vector2i = cell - _mask_origin
-		visibility_image.set_pixel(local.x, local.y, Color(1.0, 0.0, 0.0, 1.0))
+		var idx: int = ((cell.y - _mask_origin.y) * width + (cell.x - _mask_origin.x)) * 4
+		_visibility_buffer[idx] = 255          # R: explored flag
+		_visibility_buffer[idx + 1] = 0        # G: visible strength (0 = explored-only)
+		_visibility_buffer[idx + 2] = 0
+		_visibility_buffer[idx + 3] = 255
 	for key in _visible.keys():
-		var cell: Vector2i = key as Vector2i
-		if not bounds.has_point(cell):
+		var cell2: Vector2i = key as Vector2i
+		if cell2.x < bx0 or cell2.x >= bx1 or cell2.y < by0 or cell2.y >= by1:
 			continue
-		var local: Vector2i = cell - _mask_origin
-		var strength: float = clampf(float(_visible.get(cell, 1.0)), 0.0, 1.0)
-		visibility_image.set_pixel(local.x, local.y, Color(1.0, strength, strength, 1.0))
-	_rebuild_light_image(light_image, bounds)
+		var strength: float = clampf(float(_visible.get(cell2, 1.0)), 0.0, 1.0)
+		var s_byte: int = int(strength * 255.0)
+		var idx2: int = ((cell2.y - _mask_origin.y) * width + (cell2.x - _mask_origin.x)) * 4
+		_visibility_buffer[idx2] = 255
+		_visibility_buffer[idx2 + 1] = s_byte
+		_visibility_buffer[idx2 + 2] = s_byte
+		_visibility_buffer[idx2 + 3] = 255
+	var visibility_image := Image.create_from_data(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8, _visibility_buffer)
+	if _light_dirty:
+		_rebuild_light_buffer(bounds)
+		_light_dirty = false
+	var light_image := Image.create_from_data(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8, _light_buffer)
 	if _visibility_mask_texture == null or _visibility_mask_texture.get_width() != _mask_size.x \
 			or _visibility_mask_texture.get_height() != _mask_size.y:
 		_visibility_mask_texture = ImageTexture.create_from_image(visibility_image)
@@ -251,11 +294,17 @@ func _rebuild_mask_textures() -> void:
 		_light_mask_texture.update(light_image)
 
 
-func _rebuild_light_image(light_image: Image, bounds: Rect2i) -> void:
+func _rebuild_light_buffer(bounds: Rect2i) -> void:
 	_lit_memory.clear()
+	_light_buffer = _light_default_buffer.duplicate()
 	if _structure_manager == null or not _structure_manager.has_method("visual_light_sources"):
 		return
 	var sources: Array = _structure_manager.call("visual_light_sources") as Array
+	var width: int = _mask_size.x
+	var bx0: int = bounds.position.x
+	var by0: int = bounds.position.y
+	var bx1: int = bx0 + bounds.size.x
+	var by1: int = by0 + bounds.size.y
 	for raw_source in sources:
 		var source := raw_source as Dictionary
 		var center: Vector2i = source.get("grid", Vector2i.ZERO) as Vector2i
@@ -267,29 +316,35 @@ func _rebuild_light_image(light_image: Image, bounds: Rect2i) -> void:
 		var color: Color = source.get("color", Color(1.0, 0.88, 0.45, 1.0)) as Color
 		var intensity: float = clampf(float(source.get("intensity", 1.0)), 0.0, 2.0)
 		var r2: int = radius * radius
+		var inv_r: float = 1.0 / float(radius)
 		for y in range(center.y - radius, center.y + radius + 1):
+			if y < by0 or y >= by1:
+				continue
 			for x in range(center.x - radius, center.x + radius + 1):
-				var g := Vector2i(x, y)
-				if not bounds.has_point(g) or not _explored.has(g):
+				if x < bx0 or x >= bx1:
 					continue
-				var d := g - center
-				var dist2: int = d.x * d.x + d.y * d.y
+				var g := Vector2i(x, y)
+				if not _explored.has(g):
+					continue
+				var dx: int = x - center.x
+				var dy: int = y - center.y
+				var dist2: int = dx * dx + dy * dy
 				if dist2 > r2:
 					continue
 				if not LineOfSight.has_los(_chunk_manager, center, g):
 					continue
 				var dist: float = sqrt(float(dist2))
-				var falloff: float = pow(maxf(0.0, 1.0 - dist / float(radius)), 1.65) * intensity
+				var falloff: float = pow(maxf(0.0, 1.0 - dist * inv_r), 1.65) * intensity
 				_lit_memory[g] = maxf(float(_lit_memory.get(g, 0.0)), falloff)
-				var local: Vector2i = g - _mask_origin
-				var previous: Color = light_image.get_pixel(local.x, local.y)
-				var next := Color(
-					minf(1.0, previous.r + color.r * falloff),
-					minf(1.0, previous.g + color.g * falloff),
-					minf(1.0, previous.b + color.b * falloff),
-					minf(1.0, previous.a + falloff),
-				)
-				light_image.set_pixel(local.x, local.y, next)
+				var idx: int = ((y - _mask_origin.y) * width + (x - _mask_origin.x)) * 4
+				var pr: int = _light_buffer[idx]
+				var pg: int = _light_buffer[idx + 1]
+				var pb: int = _light_buffer[idx + 2]
+				var pa: int = _light_buffer[idx + 3]
+				_light_buffer[idx] = mini(255, pr + int(color.r * falloff * 255.0))
+				_light_buffer[idx + 1] = mini(255, pg + int(color.g * falloff * 255.0))
+				_light_buffer[idx + 2] = mini(255, pb + int(color.b * falloff * 255.0))
+				_light_buffer[idx + 3] = mini(255, pa + int(falloff * 255.0))
 
 
 func _draw() -> void:

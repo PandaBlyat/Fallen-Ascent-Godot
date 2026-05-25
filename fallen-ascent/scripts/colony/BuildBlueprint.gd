@@ -151,7 +151,7 @@ static func footprint(id: int, anchor: Vector2i, rotation: int = 0) -> Array[Vec
 			offsets.append(Vector2i(1, 0))
 			offsets.append(Vector2i(0, 1))
 			offsets.append(Vector2i(1, 1))
-		Id.FABRICATOR, Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.MEDITATION_PAD:
+		Id.FABRICATOR, Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM:
 			offsets.append(Vector2i.ZERO)
 			offsets.append(Vector2i(1, 0))
 		Id.MAINTENANCE_DOCK, Id.SENTIENCE_CRADLE, Id.FABRICATOR_ADVANCED:

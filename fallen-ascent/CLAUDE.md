@@ -50,6 +50,10 @@ tile is added, also add a flat-color placeholder entry for it:
 - Loose items and materials go in `resources/items/placeholder_items_atlas.png`.
 - Workers go in `resources/entities/worker_atlas.png`; neutral/hostile bots go
   in `resources/entities/bots_atlas.png`.
+- Base floor variation is GPU-side via `resources/shaders/floor_variation.gdshader`
+  — a single shared `ShaderMaterial` on every chunk's base `TileMapLayer`
+  hashes world-tile coords to vary brightness/tint and dust on a fraction
+  of tiles. Tune via uniforms; don't paint dozens of variation atlases.
 - UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
 - UI panel backgrounds go in `resources/ui/panels/<panel_name>.png` (48x48
   with 16 px corners for 9-slice). Each PNG has a sibling `.md`

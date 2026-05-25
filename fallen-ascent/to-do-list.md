@@ -94,6 +94,30 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       `AStarGrid2D.update()` instead of refilling the full region from
       `is_walkable`.
 
+## UI follow-ups
+
+- [ ] **In-place dynamic refresh for the selection panel.** `_refresh_dynamic_status`
+      currently skips the selection-panel rebuild while the mouse is over it
+      to keep fabrication-spot craft buttons clickable. Side effect:
+      progress meters / queued counts only update when the user moves the
+      cursor off the panel. Next pass: keep the buttons alive between
+      ticks and update label / meter values in place instead of nuking and
+      re-creating the whole card.
+- [ ] **Re-purpose the Machine Room designation.** Worker-operated
+      structures no longer require a Machine Room to function (Extractor,
+      Fabricator, Assembly Press, Replication Cradle work anywhere). The
+      designation still exists in the Rooms tab for organisation but is
+      currently a no-op gameplay-wise. Either give it a real bonus
+      (production speed, maintenance, hazard suppression) or remove it.
+
+## World gen follow-ups
+
+- [ ] **Water can carve through walls/rooms.** Lake/river/puddle generation
+      runs only on `TILE_FLOOR` cells, so rivers stop at corridor walls and
+      lakes can't intrude into chambers. Once it's gameplay-relevant,
+      either let the water field overwrite walls (with intentional shore
+      cleanup) or carve rivers into the chunk before rooms are placed.
+
 ## Tech tree & economy follow-ups
 
 - [ ] **Real art for new placeholder structures.** Meditation Pad and

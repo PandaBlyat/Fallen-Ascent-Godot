@@ -28,20 +28,20 @@ static func spawn(
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
 	room_manager: Node = null,
-) -> int:
-	var spawned: int = 0
+) -> Array[Vector2i]:
+	var used: Array[Vector2i] = []
 	for cell in _walkable_cells_near(origin, count, chunk_manager):
-		var index: int = workers_root.get_child_count() + spawned
+		var index: int = workers_root.get_child_count() + used.size()
 		var worker: Worker = _make_worker(
 			cell, index, chunk_manager, job_board, pathfinder,
 			stockpile_manager, items_root, colony_site, fog,
 			structure_manager, room_manager,
 		)
 		workers_root.add_child(worker)
-		spawned += 1
-		if spawned >= count:
+		used.append(cell)
+		if used.size() >= count:
 			break
-	return spawned
+	return used
 
 
 ## Spawns a single Worker at a walkable cell adjacent to `anchor`. Used by the

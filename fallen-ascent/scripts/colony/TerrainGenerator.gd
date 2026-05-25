@@ -243,19 +243,24 @@ static func populate(
 
 			var floor_noise: float = noise.get_noise_2d(base_x + lx, base_y + ly)
 			var detail_noise: float = noise.get_noise_2d((base_x + lx) * 2.1, (base_y + ly) * 2.1)
-			if floor_noise < water_threshold:
-				# Three-band water depth: the deeper the noise dips below the
-				# water_threshold, the deeper the cell. Outer rim of any
-				# water blob becomes puddle, the middle band is shallow, and
-				# only the inner cores are impassable deep water.
-				var depth: float = water_threshold - floor_noise
-				if depth > 0.10:
-					out[idx] = TILE_WATER
-				elif depth > 0.04:
-					out[idx] = TILE_WATER_SHALLOW
-				else:
-					out[idx] = TILE_WATER_PUDDLE
-			elif detail_noise > conduit_threshold:
+			# Layered water field: lake basins (low-frequency depressions),
+			# rivers (thin ridge bands), and stray puddles (high-frequency
+			# spots). Each contributes its own depth band, and the deepest
+			# kind wins per cell so shores transition deep -> shallow -> puddle.
+			var water_kind: int = _water_kind_at(
+				noise,
+				base_x + lx,
+				base_y + ly,
+				zone,
+				water_threshold,
+				lx,
+				ly,
+				chunk_size,
+			)
+			if water_kind >= 0:
+				out[idx] = water_kind
+				continue
+			if detail_noise > conduit_threshold:
 				out[idx] = TILE_CONDUIT
 			elif floor_noise < rust_threshold:
 				out[idx] = TILE_RUST
@@ -1098,3 +1103,110 @@ static func _is_local_noise_peak(noise: FastNoiseLite, x: int, y: int, scale: fl
 		if sample > center:
 			return false
 	return true
+
+
+## Returns one of TILE_WATER / TILE_WATER_SHALLOW / TILE_WATER_PUDDLE, or -1
+## when the cell is dry. Combines three water sources so the world gets a mix
+## of lakes (broad continuous basins), rivers (long thin channels), and stray
+## puddles (small isolated spots). Each source is bucketed into deep/shallow/
+## puddle bands, then the deepest among them wins. We also keep the legacy
+## `floor_noise < water_threshold` branch so existing per-zone tuning still
+## modulates the moisture density.
+##
+## To keep cross-chunk traversal alive, deep water is never placed inside a
+## 2-cell margin from a chunk edge (so doorway corridors don't get cut by a
+## lake straddling the boundary).
+static func _water_kind_at(
+	noise: FastNoiseLite,
+	wx: int,
+	wy: int,
+	zone: int,
+	water_threshold: float,
+	lx: int,
+	ly: int,
+	chunk_size: int,
+) -> int:
+	var lake_enabled: bool = true
+	var river_enabled: bool = true
+	var puddle_enabled: bool = true
+	var lake_bias: float = 0.0
+	var river_bias: float = 0.0
+	var puddle_bias: float = 0.0
+	match zone:
+		0:  # The Abyss — flooded chasms, ground-water seeps
+			lake_bias = 0.10
+			river_bias = 0.04
+			puddle_bias = 0.06
+		1:  # The Industrial Core — coolant puddles only, no open lakes
+			lake_enabled = false
+			river_bias = -0.04
+			puddle_bias = 0.04
+		2:  # Habitation Blocks — mostly dry, occasional puddle
+			lake_bias = -0.10
+			river_bias = -0.06
+			puddle_bias = -0.02
+		3:  # Lithic Vault — underground aquifers and runoff streams
+			lake_bias = 0.04
+			river_bias = 0.08
+			puddle_bias = 0.02
+		4:  # Structural Grid — broad shallow lakes between pillars
+			lake_bias = 0.08
+			river_bias = -0.04
+			puddle_bias = 0.0
+
+	# Threshold scaling so per-zone water_threshold tuning still nudges all
+	# bands together (-0.72 → wetter, -0.82 → drier).
+	var moisture: float = (-0.72 - water_threshold) * 0.6
+	lake_bias -= moisture
+	river_bias -= moisture
+	puddle_bias -= moisture
+
+	var depth: int = -1  # -1 dry, 0 puddle, 1 shallow, 2 deep
+
+	if lake_enabled:
+		# Broad basin: low-frequency noise centred near zero. Negative values
+		# are "below water-line".
+		var lake_n: float = noise.get_noise_2d(float(wx) * 0.18, float(wy) * 0.18)
+		var lake_score: float = -lake_n + lake_bias
+		if lake_score > 0.42:
+			depth = maxi(depth, 2)
+		elif lake_score > 0.26:
+			depth = maxi(depth, 1)
+		elif lake_score > 0.12:
+			depth = maxi(depth, 0)
+
+	if river_enabled:
+		# Ridged noise: |n| close to 0 traces zero-crossings, producing
+		# long sinuous curves. Tight bands -> deep channel, wider rim ->
+		# shallow + puddle, so rivers feel like they actually have shores.
+		var river_n: float = noise.get_noise_2d(float(wx) * 0.11 + 941.0, float(wy) * 0.11 - 533.0)
+		var river_raw: float = absf(river_n) - river_bias
+		if river_raw < 0.025:
+			depth = maxi(depth, 2)
+		elif river_raw < 0.06:
+			depth = maxi(depth, 1)
+		elif river_raw < 0.11:
+			depth = maxi(depth, 0)
+
+	if puddle_enabled:
+		# Higher-frequency speckle for isolated puddles in otherwise dry
+		# corridors. Only ever puddle depth, never deep.
+		var puddle_n: float = noise.get_noise_2d(float(wx) * 0.55 + 2137.0, float(wy) * 0.55 + 3719.0)
+		if puddle_n + puddle_bias > 0.66:
+			depth = maxi(depth, 0)
+
+	if depth < 0:
+		return -1
+
+	# Keep deep water away from chunk edges so doors / corridor seams stay
+	# walkable across chunk boundaries. Shallow/puddle is walkable and fine.
+	var edge_margin: int = 2
+	if depth == 2 and (
+			lx < edge_margin or lx >= chunk_size - edge_margin
+			or ly < edge_margin or ly >= chunk_size - edge_margin):
+		depth = 1
+
+	match depth:
+		2: return TILE_WATER
+		1: return TILE_WATER_SHALLOW
+		_: return TILE_WATER_PUDDLE

@@ -53,6 +53,11 @@ const ACID_SHALLOW_SPEED_MULT: float = 0.4
 const ACID_PUDDLE_SPEED_MULT: float = 0.75
 const ACID_SHALLOW_DPS: float = 2.0
 const ACID_PUDDLE_DPS: float = 0.5
+const ACID_DEEP_DPS: float = 6.0
+const ACID_SHALLOW_MOOD_DRAIN_PER_SEC: float = 4.0
+const ACID_PUDDLE_MOOD_DRAIN_PER_SEC: float = 1.5
+const ACID_DEEP_MOOD_DRAIN_PER_SEC: float = 9.0
+const ACID_MOOD_SPIKE_PER_HP: float = 2.0
 ## Must match ActivityFxManager.KIND_BUILD_DUST.
 const BUILD_DUST_FX_KIND: int = 7
 const ARRIVE_EPSILON_PX: float = 1.0
@@ -2500,18 +2505,29 @@ func _tick_acid_damage(delta: float) -> void:
 		return
 	var tile: int = _chunk_manager.get_tile_at(current_grid())
 	var dps: float = 0.0
+	var mood_drain: float = 0.0
 	if tile == TerrainGenerator.TILE_ACID_SHALLOW:
 		dps = ACID_SHALLOW_DPS
+		mood_drain = ACID_SHALLOW_MOOD_DRAIN_PER_SEC
 	elif tile == TerrainGenerator.TILE_ACID_PUDDLE:
 		dps = ACID_PUDDLE_DPS
+		mood_drain = ACID_PUDDLE_MOOD_DRAIN_PER_SEC
+	elif tile == TerrainGenerator.TILE_ACID:
+		dps = ACID_DEEP_DPS
+		mood_drain = ACID_DEEP_MOOD_DRAIN_PER_SEC
 	if dps <= 0.0:
 		_acid_damage_accum = 0.0
 		return
+	# Standing on acid is miserable — drain mood every frame while exposed.
+	if mood_drain > 0.0:
+		_mood = maxf(0.0, _mood - mood_drain * delta)
 	_acid_damage_accum += dps * delta
 	if _acid_damage_accum >= 1.0:
 		var whole: float = floorf(_acid_damage_accum)
 		_acid_damage_accum -= whole
 		_damage_limb(whole)
+		# Spike mood every time acid burns enough to register HP loss.
+		_mood = maxf(0.0, _mood - ACID_MOOD_SPIKE_PER_HP * whole)
 
 
 ## Shallow water/acid and puddles slow the worker; deep variants are impassable

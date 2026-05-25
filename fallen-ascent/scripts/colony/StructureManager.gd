@@ -988,8 +988,19 @@ func _draw_workshop(structure: Dictionary) -> void:
 		return
 	var anchor: Vector2i = structure["anchor"] as Vector2i
 	var origin := Vector2(anchor.x * Chunk.TILE_PIXELS, anchor.y * Chunk.TILE_PIXELS)
+	# Atlas cells are 64x64. 1x1-footprint workshops (research bench,
+	# crafting spot, sensor) carry their art in the top-left 32x32; draw
+	# only that quadrant so the structure visually fits its tile footprint.
+	var rotation: int = int(structure.get("rotation", 0))
+	var cells: int = BuildBlueprint.footprint(id, anchor, rotation).size()
+	var atlas_x: int = index * int(WORKSHOP_SOURCE_CELL_SIZE.x)
+	if cells <= 1:
+		var dest_small := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		var source_small := Rect2(Vector2(atlas_x, 0), Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_texture_rect_region(WORKSHOP_ATLAS, dest_small, source_small)
+		return
 	var dest := Rect2(origin, Vector2(Chunk.TILE_PIXELS * 2, Chunk.TILE_PIXELS * 2))
-	var source := Rect2(Vector2(index * int(WORKSHOP_SOURCE_CELL_SIZE.x), 0), WORKSHOP_SOURCE_CELL_SIZE)
+	var source := Rect2(Vector2(atlas_x, 0), WORKSHOP_SOURCE_CELL_SIZE)
 	draw_texture_rect_region(WORKSHOP_ATLAS, dest, source)
 
 

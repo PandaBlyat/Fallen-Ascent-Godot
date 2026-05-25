@@ -710,6 +710,11 @@ func _seed_grass_for_chunk(chunk: Chunk, coord: Vector2i) -> void:
 	var base: Vector2i = coord * Chunk.SIZE
 	var distances: PackedInt32Array = _water_distances_for_chunk(chunk)
 	var candidates: Array[Vector2i] = []
+	# Single deterministic RNG seeded by chunk — calling randf() instead of
+	# rebuilding RandomNumberGenerator per cell saves ~1024 allocations per
+	# chunk load. Cell determinism is still preserved per chunk.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([_site_seed, coord.x, coord.y, "grass_seed"])
 	for ly in Chunk.SIZE:
 		for lx in Chunk.SIZE:
 			var local := Vector2i(lx, ly)
@@ -720,8 +725,6 @@ func _seed_grass_for_chunk(chunk: Chunk, coord: Vector2i) -> void:
 			var grid: Vector2i = base + local
 			if _near_acid(grid, 3):
 				density = maxf(density, 0.18)
-			var rng := RandomNumberGenerator.new()
-			rng.seed = hash([_site_seed, grid.x, grid.y, "grass"])
 			if rng.randf() <= density:
 				candidates.append(grid)
 	if candidates.size() > max_grass_per_chunk:
@@ -731,8 +734,26 @@ func _seed_grass_for_chunk(chunk: Chunk, coord: Vector2i) -> void:
 		candidates.resize(max_grass_per_chunk)
 	for grid in candidates:
 		_grass_cells[grid] = 1
+	# Batch the per-cell mask cascade: collect every cell that needs a fresh
+	# mask once (each candidate marks itself + 4 neighbors) so we don't redo
+	# the same neighbor lookup N times when N adjacent cells get seeded.
+	var dirty: Dictionary = {}
 	for grid in candidates:
-		_recompute_grass_masks_around(grid)
+		dirty[grid] = true
+		dirty[grid + Vector2i(0, -1)] = true
+		dirty[grid + Vector2i(1, 0)] = true
+		dirty[grid + Vector2i(0, 1)] = true
+		dirty[grid + Vector2i(-1, 0)] = true
+	for raw in dirty.keys():
+		var cell: Vector2i = raw as Vector2i
+		if not _grass_cells.has(cell):
+			continue
+		var mask: int = _grass_mask_for(cell)
+		_grass_cells[cell] = mask
+		var ccoord := Chunk.grid_to_chunk(cell)
+		if _loaded.has(ccoord):
+			var loaded_chunk: Chunk = _loaded[ccoord]
+			loaded_chunk.set_grass_mask(Chunk.grid_to_local(cell), mask)
 
 
 func _water_distances_for_chunk(chunk: Chunk) -> PackedInt32Array:

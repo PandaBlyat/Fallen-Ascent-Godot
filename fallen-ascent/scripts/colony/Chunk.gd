@@ -17,6 +17,10 @@ const _TILE_COUNT: int = SIZE * SIZE
 const _TILESET: TileSet = preload("res://resources/tiles/placeholder_tiles.tres")
 const _WATER_SHADER: Shader = preload("res://resources/shaders/water_tile.gdshader")
 const _GRASS_SHADER: Shader = preload("res://resources/shaders/grass_overlay.gdshader")
+const _FLOOR_VARIATION_SHADER: Shader = preload("res://resources/shaders/floor_variation.gdshader")
+## Single material shared across every chunk's base layer — the shader keys
+## off world-space tile coords, so one material handles all of them.
+static var _floor_variation_material: ShaderMaterial = null
 const _REPAINT_OFFSETS: Array[Vector2i] = [
 	Vector2i.ZERO,
 	Vector2i(0, -1),
@@ -37,6 +41,11 @@ var _grass_material: ShaderMaterial
 var _has_grass: bool = false
 var _walker_positions: PackedVector2Array = PackedVector2Array()
 var _nearby_workers: Array = []
+## Throttle the grass-walker shader update — 10Hz is more than smooth enough
+## for the visual wake effect and cuts EntityGrid queries by 6x.
+const _WALKER_UPDATE_INTERVAL: float = 0.1
+var _walker_update_accum: float = 0.0
+var _last_walker_count: int = -1
 
 
 func _init() -> void:
@@ -46,6 +55,7 @@ func _init() -> void:
 	_grass_masks.resize(_TILE_COUNT)
 	_walker_positions.resize(8)
 	_base_layer = _make_layer("BaseTerrain", TERRAIN_Z_BASE)
+	_base_layer.material = _floor_variation_material_shared()
 	_water_layer = _make_layer("WaterTerrain", TERRAIN_Z_BASE + 1)
 	_water_layer.material = _water_material()
 	_grass_layer = _make_layer("GrassOverlay", TERRAIN_Z_GRASS)
@@ -130,6 +140,14 @@ func _water_material() -> ShaderMaterial:
 	return shader_material
 
 
+static func _floor_variation_material_shared() -> ShaderMaterial:
+	if _floor_variation_material == null:
+		_floor_variation_material = ShaderMaterial.new()
+		_floor_variation_material.shader = _FLOOR_VARIATION_SHADER
+		_floor_variation_material.set_shader_parameter("tile_size", float(TILE_PIXELS))
+	return _floor_variation_material
+
+
 func _grass_material_new() -> ShaderMaterial:
 	var shader_material := ShaderMaterial.new()
 	shader_material.shader = _GRASS_SHADER
@@ -208,9 +226,17 @@ func _global_cell(local: Vector2i) -> Vector2i:
 	return chunk_coord * SIZE + local
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not _has_grass or _grass_material == null:
 		return
+	# Off-screen chunks: don't query workers or update shader params at all.
+	# (TileMapLayer culls draw calls but _process still runs on the node.)
+	if not _grass_layer.is_visible_in_tree():
+		return
+	_walker_update_accum += delta
+	if _walker_update_accum < _WALKER_UPDATE_INTERVAL:
+		return
+	_walker_update_accum = 0.0
 	var rect := Rect2(global_position, Vector2(SIZE * TILE_PIXELS, SIZE * TILE_PIXELS)).grow(24.0)
 	var center_grid: Vector2i = chunk_coord * SIZE + Vector2i(SIZE / 2, SIZE / 2)
 	EntityGrid.query_into(EntityGrid.FACTION_COLONY, center_grid, SIZE / 2 + 2, _nearby_workers)
@@ -225,8 +251,13 @@ func _process(_delta: float) -> void:
 		count += 1
 		if count >= 8:
 			break
+	# Skip the shader parameter sync when there's nothing to push and last
+	# tick was already zero — the most common case in unpopulated areas.
+	if count == 0 and _last_walker_count == 0:
+		return
 	_grass_material.set_shader_parameter("walker_positions", _walker_positions)
 	_grass_material.set_shader_parameter("walker_count", count)
+	_last_walker_count = count
 
 
 func _grass_masks_has_any() -> bool:

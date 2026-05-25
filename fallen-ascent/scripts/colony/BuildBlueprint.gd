@@ -354,10 +354,10 @@ static func requirements(id: int) -> String:
 	if is_worker_operated(id):
 		var outlet_text: String = ""
 		if outlet_range(id) > 0:
-			outlet_text = " and within %d tiles of an outlet" % outlet_range(id)
+			outlet_text = " within %d tiles of an outlet" % outlet_range(id)
 		if requires_outlet(id):
-			outlet_text = " and with at least one footprint cell on an outlet"
-		return "Place in a Machine Room%s." % outlet_text
+			outlet_text = " with at least one footprint cell on an outlet"
+		return "Place on walkable floor%s." % outlet_text
 	if outlet_range(id) > 0:
 		return "Place within %d tiles of an outlet." % outlet_range(id)
 	if requires_outlet(id):

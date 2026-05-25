@@ -116,11 +116,6 @@ func can_place_blueprint(id: int, anchor: Vector2i, rotation: int = 0) -> bool:
 			return false
 	if BuildBlueprint.requires_outlet(id) and not has_outlet:
 		return false
-	if BuildBlueprint.is_worker_operated(id):
-		if _room_manager == null or not _room_manager.has_method("footprint_inside_room"):
-			return false
-		if not bool(_room_manager.call("footprint_inside_room", BuildBlueprint.footprint(id, anchor, rotation), RoomManager.Kind.MACHINE_ROOM)):
-			return false
 	var outlet_range: int = BuildBlueprint.outlet_range(id)
 	if outlet_range > 0:
 		var nearest: Vector2i = _chunk_manager.nearest_outlet(anchor)
@@ -356,9 +351,6 @@ func can_operate_structure(anchor: Vector2i) -> bool:
 	var id: int = int(structure["id"])
 	if not BuildBlueprint.is_worker_operated(id):
 		return false
-	if not _has_valid_machine_room(structure):
-		structure["blocked"] = "needs machine room"
-		return false
 	if _first_output_cell(structure) == Pathfinder.UNREACHABLE:
 		structure["blocked"] = "output blocked"
 		return false
@@ -579,16 +571,6 @@ func _missing_recipe_kinds(recipe: Dictionary) -> Array:
 	return missing
 
 
-func _has_valid_machine_room(structure: Dictionary) -> bool:
-	if _room_manager == null or not _room_manager.has_method("has_valid_room_for_structure"):
-		return false
-	return bool(_room_manager.call(
-		"has_valid_room_for_structure",
-		structure["anchor"] as Vector2i,
-		int(structure["id"]),
-	))
-
-
 func _process_doors() -> void:
 	if _door_close_at_msec.is_empty():
 		return
@@ -642,8 +624,6 @@ func _status_for(structure: Dictionary) -> Dictionary:
 	var timer: float = float(structure["timer"])
 	var output: Vector2i = _first_output_cell(structure)
 	var blocked: String = structure.get("blocked", "") as String
-	if BuildBlueprint.is_worker_operated(id) and not _has_valid_machine_room(structure):
-		blocked = "needs machine room"
 	if interval > 0.0 and output == Pathfinder.UNREACHABLE:
 		blocked = "output blocked"
 	var operation_job: OperateStructureJob = _job_board.operation_job_at(structure["anchor"] as Vector2i) if _job_board != null else null

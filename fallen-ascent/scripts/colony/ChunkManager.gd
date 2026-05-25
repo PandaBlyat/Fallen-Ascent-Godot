@@ -427,12 +427,15 @@ func ensure_outlet_near(origin: Vector2i) -> Vector2i:
 	const OFFSETS: Array[Vector2i] = [
 		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 	]
+	# BFS over every cell reachable by the worker walkability rules so the
+	# outlet lands in the same connected room the spawn cells live in. Within
+	# that flood we still pick a floor-family tile to host the outlet.
 	var queue: Array[Vector2i] = [seed]
 	var seen: Dictionary = {seed: true}
 	var best_floor: Vector2i = Pathfinder.UNREACHABLE
 	var best_d: int = 0x7fffffff
 	var head: int = 0
-	while head < queue.size() and seen.size() <= 512:
+	while head < queue.size() and seen.size() <= 1024:
 		var cell: Vector2i = queue[head]
 		head += 1
 		var tile: int = get_tile_at(cell)
@@ -447,8 +450,7 @@ func ensure_outlet_near(origin: Vector2i) -> Vector2i:
 			var next: Vector2i = cell + off
 			if seen.has(next) or not is_grid_in_map(next):
 				continue
-			var next_tile: int = get_tile_at(next)
-			if not _can_force_outlet_on(next_tile) and next_tile != TerrainGenerator.TILE_OUTLET:
+			if not is_walkable(next) and get_tile_at(next) != TerrainGenerator.TILE_OUTLET:
 				continue
 			seen[next] = true
 			queue.append(next)

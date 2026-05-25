@@ -220,11 +220,11 @@ static func acquisition_text(k: int) -> String:
 		Kind.SCRAP:
 			return "Mine walls, scrape rust, or salvage loose machinery."
 		Kind.PLATING:
-			return "Mine walls/service cores/rich walls, salvage machinery, or run extractor in machine room."
+			return "Mine walls/service cores/rich walls, salvage machinery, or run an extractor."
 		Kind.MECHANISM:
 			return "Mine service cores/rich walls, salvage machinery, run extractor, or craft through assembly press."
 		Kind.DATACORE:
-			return "Mine service cores/rich walls, salvage electronics, or run fabricator in machine room."
+			return "Mine service cores/rich walls, salvage electronics, or run a fabricator."
 		Kind.CHARGE_CELL:
 			return "Mine service cores, salvage batteries, run fabricator, or craft through assembly press."
 		Kind.STORAGE_BIN, Kind.OUTLET_EXTENSION, Kind.RUDIMENTARY_SENSOR, Kind.SMALL_LIGHT_DEVICE, Kind.LARGE_LIGHT_DEVICE:

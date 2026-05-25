@@ -66,8 +66,12 @@ const HOSTILE_ROW: int = 1
 const PALETTE_WIDTH: float = 580.0
 const PALETTE_HEIGHT: float = 200.0
 const TOP_STRIP_HEIGHT: float = 44.0
-const WORKER_LIST_WIDTH: float = 260.0
-const WORKER_LIST_HEIGHT: float = 126.0
+const WORKER_LIST_WIDTH: float = 300.0
+const WORKER_LIST_MARGIN: float = 16.0
+const WORKER_LIST_ROW_HEIGHT: float = 32.0
+const WORKER_LIST_ROW_SEP: float = 6.0
+const WORKER_LIST_INNER_PAD: float = 7.0
+const WORKER_LIST_HEADER_HEIGHT: float = 18.0
 const SELECTION_PANEL_WIDTH: float = 760.0
 const SELECTION_PANEL_HEIGHT: float = 430.0
 const WORKER_CARD_WIDTH: float = 560.0
@@ -247,36 +251,29 @@ func _build_layout() -> void:
 	var npc_panel := PanelContainer.new()
 	npc_panel.name = "NpcStrip"
 	npc_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	npc_panel.anchor_left = 0.5
+	npc_panel.anchor_left = 0.0
 	npc_panel.anchor_top = 0.0
-	npc_panel.anchor_right = 0.5
+	npc_panel.anchor_right = 0.0
 	npc_panel.anchor_bottom = 0.0
-	npc_panel.offset_left = -WORKER_LIST_WIDTH * 0.5
-	npc_panel.offset_top = 62.0
-	npc_panel.offset_right = WORKER_LIST_WIDTH * 0.5
-	npc_panel.offset_bottom = 62.0 + WORKER_LIST_HEIGHT
+	npc_panel.offset_left = WORKER_LIST_MARGIN
+	npc_panel.offset_top = WORKER_LIST_MARGIN
+	npc_panel.offset_right = WORKER_LIST_MARGIN + WORKER_LIST_WIDTH
+	npc_panel.offset_bottom = WORKER_LIST_MARGIN + _npc_panel_height_for(0)
 	npc_panel.add_theme_stylebox_override("panel", _panel_textured_style("npc_strip", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	_npc_panel = npc_panel
 	add_child(npc_panel)
 
 	var npc_margin := MarginContainer.new()
-	npc_margin.add_theme_constant_override("margin_left", 7)
-	npc_margin.add_theme_constant_override("margin_top", 7)
-	npc_margin.add_theme_constant_override("margin_right", 7)
-	npc_margin.add_theme_constant_override("margin_bottom", 7)
+	npc_margin.add_theme_constant_override("margin_left", int(WORKER_LIST_INNER_PAD))
+	npc_margin.add_theme_constant_override("margin_top", int(WORKER_LIST_INNER_PAD))
+	npc_margin.add_theme_constant_override("margin_right", int(WORKER_LIST_INNER_PAD))
+	npc_margin.add_theme_constant_override("margin_bottom", int(WORKER_LIST_INNER_PAD))
 	npc_panel.add_child(npc_margin)
-
-	var npc_scroll := ScrollContainer.new()
-	npc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	npc_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	npc_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	npc_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	npc_margin.add_child(npc_scroll)
 
 	_npc_strip = VBoxContainer.new()
 	_npc_strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_npc_strip.add_theme_constant_override("separation", 6)
-	npc_scroll.add_child(_npc_strip)
+	_npc_strip.add_theme_constant_override("separation", int(WORKER_LIST_ROW_SEP))
+	npc_margin.add_child(_npc_strip)
 
 	# Command Palette Panel - centered horizontally at bottom.
 	var palette := PanelContainer.new()
@@ -392,10 +389,6 @@ func _recenter_top_strip() -> void:
 		return
 	_top_strip.offset_left = -w * 0.5
 	_top_strip.offset_right = w * 0.5
-	if _npc_panel != null:
-		var npc_w: float = maxf(WORKER_LIST_WIDTH, minf(w, 420.0))
-		_npc_panel.offset_left = -npc_w * 0.5
-		_npc_panel.offset_right = npc_w * 0.5
 
 
 func _position_selection_panel() -> void:
@@ -480,7 +473,7 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
 				{"mode": Designator.Mode.DESIGNATE_MEDITATION_CHAMBER, "label": "Meditate", "tooltip": "Meditation Chamber\nMust contain a Meditation Pad.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
 				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nWhen valid, that dock heals room occupants.", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK, "required_tech_id": TechDatabase.MECHANIC_ROOM, "lock_build": false},
-				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nRequired for worker-operated production structures.\nDesignate floor first, then build Extractor, Fabricator, Assembly Press, or Replication Cradle inside.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nOptional designation for a production area.\nGroups Extractors, Fabricators, Assembly Presses, and Replication Cradles.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
 				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
@@ -608,8 +601,22 @@ func _schedule_status_refresh() -> void:
 func _refresh_dynamic_status() -> void:
 	_refresh_status()
 	_refresh_npc_strip_if_needed()
-	_refresh_selection_panel()
+	# Skip rebuilding the selection panel while the mouse is over it — the
+	# rebuild destroys/recreates buttons, which kills hover state and eats
+	# clicks (notably on the fabrication-spot craft order buttons). Explicit
+	# selection / job / stockpile signal handlers will still refresh it.
+	if not _mouse_over_selection_panel():
+		_refresh_selection_panel()
 	_refresh_inspect_card()
+
+
+func _mouse_over_selection_panel() -> bool:
+	if _selection_panel == null or not _selection_panel.visible:
+		return false
+	var vp: Viewport = get_viewport()
+	if vp == null:
+		return false
+	return _selection_panel.get_global_rect().has_point(vp.get_mouse_position())
 
 
 func _on_workers_selected(workers: Array[Worker]) -> void:
@@ -1409,25 +1416,41 @@ func _refresh_npc_strip() -> void:
 	for child in _npc_strip.get_children():
 		_npc_strip.remove_child(child)
 		child.queue_free()
-	if _workers_root == null:
+	var rows: int = 0
+	if _workers_root != null:
+		for child in _workers_root.get_children():
+			var worker := child as Worker
+			if worker == null:
+				continue
+			var button := Button.new()
+			button.text = worker.display_name()
+			button.icon = _bot_icon()
+			button.expand_icon = true
+			button.custom_minimum_size = Vector2(0, WORKER_LIST_ROW_HEIGHT)
+			button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			button.add_theme_font_size_override("font_size", 12)
+			button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+			button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+			button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+			button.pressed.connect(_focus_worker.bind(worker))
+			_npc_strip.add_child(button)
+			rows += 1
+	_last_npc_strip_count = rows
+	_resize_npc_panel(rows)
+
+
+func _resize_npc_panel(rows: int) -> void:
+	if _npc_panel == null:
 		return
-	for child in _workers_root.get_children():
-		var worker := child as Worker
-		if worker == null:
-			continue
-		var button := Button.new()
-		button.text = worker.display_name()
-		button.icon = _bot_icon()
-		button.expand_icon = true
-		button.custom_minimum_size = Vector2(176, 32)
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.add_theme_font_size_override("font_size", 11)
-		button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
-		button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
-		button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
-		button.pressed.connect(_focus_worker.bind(worker))
-		_npc_strip.add_child(button)
-	_last_npc_strip_count = _workers_root.get_child_count() if _workers_root != null else 0
+	_npc_panel.offset_bottom = _npc_panel.offset_top + _npc_panel_height_for(rows)
+
+
+func _npc_panel_height_for(rows: int) -> float:
+	var inner_pad: float = WORKER_LIST_INNER_PAD * 2.0
+	if rows <= 0:
+		return inner_pad + WORKER_LIST_HEADER_HEIGHT
+	var body: float = float(rows) * WORKER_LIST_ROW_HEIGHT + float(rows - 1) * WORKER_LIST_ROW_SEP
+	return inner_pad + body
 
 
 func _refresh_npc_strip_if_needed() -> void:

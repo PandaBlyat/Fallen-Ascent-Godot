@@ -252,27 +252,6 @@ func _room_has_structure(room: Dictionary, ids: Array) -> bool:
 	return false
 
 
-func has_valid_room_for_structure(anchor: Vector2i, structure_id: int) -> bool:
-	if not BuildBlueprint.is_worker_operated(structure_id):
-		return true
-	var room: Dictionary = room_at(anchor)
-	if room.is_empty() or int(room["kind"]) != Kind.MACHINE_ROOM:
-		return false
-	return is_room_valid(room)
-
-
-func footprint_inside_room(cells: Array[Vector2i], kind: int) -> bool:
-	if cells.is_empty():
-		return false
-	var room: Dictionary = room_at(cells[0])
-	if room.is_empty() or int(room["kind"]) != kind:
-		return false
-	for raw_cell in cells:
-		if room_at(raw_cell as Vector2i) != room:
-			return false
-	return true
-
-
 func ensure_dock_room_for(worker: Node) -> Dictionary:
 	# If worker already has a valid assigned room, return it.
 	var existing: Dictionary = _assigned_room_for(worker)

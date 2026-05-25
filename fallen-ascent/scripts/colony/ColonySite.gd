@@ -59,8 +59,7 @@ func _spawn_initial_workers() -> void:
 	_spawned_initial_workers = true
 	if static_prop_manager != null and static_prop_manager.has_method("generate_now_at"):
 		static_prop_manager.call("generate_now_at", Vector2i.ZERO)
-	chunk_manager.ensure_outlet_near(Vector2i.ZERO)
-	WorkerSpawner.spawn(
+	var spawn_cells: Array[Vector2i] = WorkerSpawner.spawn(
 		WorkerSpawner.INITIAL_WORKERS,
 		Vector2i.ZERO,
 		chunk_manager,
@@ -74,6 +73,11 @@ func _spawn_initial_workers() -> void:
 		structure_manager,
 		room_manager,
 	)
+	# Seed an outlet inside the actual spawn room. Using a spawn cell as the
+	# BFS origin (instead of Vector2i.ZERO) guarantees the placed outlet sits
+	# in the same connected region as the workers.
+	var outlet_seed: Vector2i = spawn_cells[0] if not spawn_cells.is_empty() else Vector2i.ZERO
+	chunk_manager.ensure_outlet_near(outlet_seed)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
 
 

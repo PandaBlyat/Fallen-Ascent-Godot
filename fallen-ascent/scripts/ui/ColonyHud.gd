@@ -532,12 +532,12 @@ func _add_command_button(
 		locked = true
 		gate = TechManager.tech_unlocking(build_id)
 		var gate_name: String = gate.display_name if gate != null else "an unknown tech"
-		lock_tooltip = "Locked — research \"%s\"\n\n%s" % [gate_name, tooltip]
+		lock_tooltip = "Locked â€” research \"%s\"\n\n%s" % [gate_name, tooltip]
 	if not locked and required_tech_id != &"" and TechManager != null and not TechManager.is_unlocked(required_tech_id):
 		locked = true
 		gate = TechDatabase.by_id(required_tech_id)
 		var gate_name: String = gate.display_name if gate != null else "an unknown tech"
-		lock_tooltip = "Locked — research \"%s\"\n\n%s" % [gate_name, tooltip]
+		lock_tooltip = "Locked â€” research \"%s\"\n\n%s" % [gate_name, tooltip]
 
 	var button := Button.new()
 	button.text = ("[locked] " + label_text) if locked else label_text

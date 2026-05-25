@@ -79,6 +79,7 @@ func _ready() -> void:
 	_static_prop_manager = get_node_or_null(static_prop_manager_path)
 	_neutrals_root = get_node_or_null(neutrals_root_path) as Node2D
 	_hostiles_root = get_node_or_null(hostiles_root_path) as Node2D
+	EventBus.tile_changed.connect(func(_grid: Vector2i, _new_tile: int) -> void: queue_redraw())
 
 
 func _process(delta: float) -> void:
@@ -216,7 +217,13 @@ func _finish_drag(screen_pos: Vector2) -> void:
 				EventBus.stockpile_selected.emit(null)
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
-				if _chunk_manager.is_grid_in_map(grid) and (_fog == null or _fog.is_explored(grid)):
+				# Left-click on a teleporter toggles its blocked state so workers
+				# won't step on or use it (player-facing kill switch).
+				var explored: bool = _fog == null or _fog.is_explored(grid)
+				if explored and _chunk_manager.get_tile_at(grid) == TerrainGenerator.TILE_TELEPORTER:
+					_chunk_manager.toggle_teleporter_block(grid)
+					_show_order_highlight(grid)
+				if _chunk_manager.is_grid_in_map(grid):
 					EventBus.default_tile_clicked.emit(grid)
 	queue_redraw()
 
@@ -724,6 +731,7 @@ func _has_selected_path() -> bool:
 
 func _draw() -> void:
 	_draw_selected_paths()
+	_draw_blocked_teleporters()
 	var designator_idle: bool = _designator == null or _designator.current_mode() == Designator.Mode.NONE
 	if designator_idle and _hover_entity != null and is_instance_valid(_hover_entity) and _hover_entity != _attack_hover_target:
 		_draw_entity_highlight(_hover_entity, HOVER_FILL, HOVER_BORDER, 1.0)
@@ -758,6 +766,26 @@ func _draw() -> void:
 		var drag_rect := Rect2(drag_origin, size)
 		draw_rect(drag_rect, DRAG_FILL)
 		draw_rect(drag_rect, DRAG_BORDER, false, DRAG_BORDER_PX)
+
+
+func _draw_blocked_teleporters() -> void:
+	if _chunk_manager == null:
+		return
+	for cell in _chunk_manager.teleporter_cells_all():
+		if not _chunk_manager.is_teleporter_blocked(cell):
+			continue
+		if _fog != null and not _fog.is_explored(cell):
+			continue
+		var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
+		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(rect, Color(0.9, 0.2, 0.2, 0.18))
+		var p0: Vector2 = origin + Vector2(4, 4)
+		var p1: Vector2 = origin + Vector2(Chunk.TILE_PIXELS - 4, Chunk.TILE_PIXELS - 4)
+		var p2: Vector2 = origin + Vector2(Chunk.TILE_PIXELS - 4, 4)
+		var p3: Vector2 = origin + Vector2(4, Chunk.TILE_PIXELS - 4)
+		var color := Color(1.0, 0.32, 0.28, 0.9)
+		draw_line(p0, p1, color, 2.0, true)
+		draw_line(p2, p3, color, 2.0, true)
 
 
 func _draw_selected_paths() -> void:

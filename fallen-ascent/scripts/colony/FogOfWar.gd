@@ -8,8 +8,10 @@ extends Node2D
 const WORKER_SIGHT_RADIUS: int = 7
 const REFRESH_SECONDS: float = 0.18
 const FOG_Z_INDEX: int = 900
-const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 0.998)
-const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.68)
+## Fully opaque so glowing tiles (acid, lights) under undiscovered fog
+## don't leak through.
+const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 1.0)
+const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.80)
 const LIT_MEMORY_MIN_ALPHA: float = 0.16
 const VISIBLE_EDGE_ALPHA: float = 0.10
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
@@ -27,6 +29,10 @@ var _explored: Dictionary = {}                   ## Vector2i -> true
 var _visible: Dictionary = {}                    ## Vector2i -> sight strength 0..1
 var _lit_memory: Dictionary = {}                 ## Vector2i -> light strength 0..1
 var _accum: float = 0.0
+## Wall-clock guard so visibility rebuilds don't pile up at high game speeds —
+## the player can crank `Engine.time_scale` without the LOS recompute and
+## mask upload dominating real-frame time.
+var _last_refresh_ms: int = 0
 var _visibility_dirty: bool = true
 var _last_source_signature: PackedInt32Array = PackedInt32Array()
 var _visibility_mask_texture: ImageTexture = null
@@ -52,11 +58,14 @@ func _ready() -> void:
 	call_deferred("_refresh_visibility")
 
 
-func _process(delta: float) -> void:
-	_accum += delta
-	if _accum < REFRESH_SECONDS:
+func _process(_delta: float) -> void:
+	# Gate on wall clock, not delta — at high `Engine.time_scale` delta is
+	# multiplied, which would call _refresh_visibility many times per real
+	# second even though nothing on screen needs it.
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms - _last_refresh_ms < int(REFRESH_SECONDS * 1000.0):
 		return
-	_accum = 0.0
+	_last_refresh_ms = now_ms
 	var signature: PackedInt32Array = _collect_source_signature()
 	if not _visibility_dirty and _same_signature(signature, _last_source_signature):
 		return

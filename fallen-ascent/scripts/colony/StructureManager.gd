@@ -592,18 +592,24 @@ func _is_world_light_candidate(cell: Vector2i, room_size: int) -> bool:
 	if room_size < WORLD_LIGHT_MIN_ROOM_SIZE or not _can_place_world_light(cell):
 		return false
 	var tile: int = _chunk_manager.get_tile_at(cell)
-	if tile == TerrainGenerator.TILE_OUTLET or tile == TerrainGenerator.TILE_CONDUIT:
-		return true
+	# Never place lights directly on outlets — they should sit next to one so
+	# workers can still reach the outlet to recharge.
+	if tile == TerrainGenerator.TILE_OUTLET:
+		return false
+	if _has_outlet_neighbor_at(cell):
+		return _floor_clearance(cell, 1)
+	if tile == TerrainGenerator.TILE_CONDUIT:
+		return _floor_clearance(cell, 1)
 	return _has_wall_neighbor_at(cell) and _floor_clearance(cell, 2)
 
 
 func _world_light_score(cell: Vector2i, room_size: int) -> float:
 	var tile: int = _chunk_manager.get_tile_at(cell)
 	var score: float = 0.02
-	if tile == TerrainGenerator.TILE_OUTLET:
-		score += 0.42
+	if _has_outlet_neighbor_at(cell):
+		score += 0.50
 	elif tile == TerrainGenerator.TILE_CONDUIT:
-		score += 0.28
+		score += 0.22
 	if _has_wall_neighbor_at(cell):
 		score += 0.20
 	if room_size >= WORLD_LIGHT_LARGE_ROOM_SIZE:
@@ -611,6 +617,16 @@ func _world_light_score(cell: Vector2i, room_size: int) -> float:
 	elif room_size >= 32:
 		score += 0.12
 	return score
+
+
+func _has_outlet_neighbor_at(cell: Vector2i) -> bool:
+	for y in range(-1, 2):
+		for x in range(-1, 2):
+			if x == 0 and y == 0:
+				continue
+			if _chunk_manager.get_tile_at(cell + Vector2i(x, y)) == TerrainGenerator.TILE_OUTLET:
+				return true
+	return false
 
 
 func _walkable_component_sizes(chunk_coord: Vector2i) -> Dictionary:

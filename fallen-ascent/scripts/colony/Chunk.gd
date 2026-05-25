@@ -44,7 +44,9 @@ var _nearby_workers: Array = []
 ## Throttle the grass-walker shader update — 10Hz is more than smooth enough
 ## for the visual wake effect and cuts EntityGrid queries by 6x.
 const _WALKER_UPDATE_INTERVAL: float = 0.1
+const _WALKER_UPDATE_INTERVAL_MS: int = 100
 var _walker_update_accum: float = 0.0
+var _last_walker_update_ms: int = 0
 var _last_walker_count: int = -1
 
 
@@ -226,17 +228,19 @@ func _global_cell(local: Vector2i) -> Vector2i:
 	return chunk_coord * SIZE + local
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if not _has_grass or _grass_material == null:
 		return
 	# Off-screen chunks: don't query workers or update shader params at all.
 	# (TileMapLayer culls draw calls but _process still runs on the node.)
 	if not _grass_layer.is_visible_in_tree():
 		return
-	_walker_update_accum += delta
-	if _walker_update_accum < _WALKER_UPDATE_INTERVAL:
+	# Wall-clock throttle so high `Engine.time_scale` doesn't drive grass
+	# walker queries 3-4x per real second per chunk.
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms - _last_walker_update_ms < _WALKER_UPDATE_INTERVAL_MS:
 		return
-	_walker_update_accum = 0.0
+	_last_walker_update_ms = now_ms
 	var rect := Rect2(global_position, Vector2(SIZE * TILE_PIXELS, SIZE * TILE_PIXELS)).grow(24.0)
 	var center_grid: Vector2i = chunk_coord * SIZE + Vector2i(SIZE / 2, SIZE / 2)
 	EntityGrid.query_into(EntityGrid.FACTION_COLONY, center_grid, SIZE / 2 + 2, _nearby_workers)

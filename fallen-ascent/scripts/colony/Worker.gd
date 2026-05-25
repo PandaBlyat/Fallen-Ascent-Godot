@@ -114,6 +114,11 @@ const ORDER_BUILD := &"build"
 const ORDER_TAKE_BUILD_JOB := &"take_build_job"
 const ORDER_CHARGE := &"charge"
 const ORDER_ATTACK := &"attack"
+## Throttle for RoomManager interaction in _update_mood; per-frame calls
+## were O(workers * rooms) and dominated `_process` cost.
+const NEEDS_REFRESH_SECONDS: float = 0.5
+## Throttle for EntityGrid bucket sync; cheap dict op but no point per-frame.
+const ENTITY_GRID_SYNC_SECONDS: float = 0.25
 
 var _state: int = State.IDLE
 var _job: Job = null
@@ -161,6 +166,8 @@ var _dead: bool = false
 var _crowd_slow_remaining: float = 0.0
 var _crowd_contacts: Dictionary = {}
 var _direct_order_queue: Array[Dictionary] = []
+var _needs_refresh_timer: float = 0.0
+var _entity_grid_timer: float = 0.0
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -211,7 +218,13 @@ func _ready() -> void:
 	if _job_board != null:
 		_job_board.job_cancelled.connect(_on_job_cancelled)
 	EventBus.tile_changed.connect(_on_tile_changed)
+	EntityGrid.register(self, FACTION_COLONY, current_grid())
+	tree_exiting.connect(_on_tree_exiting)
 	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
+
+
+func _on_tree_exiting() -> void:
+	EntityGrid.unregister(self)
 
 
 func is_alive() -> bool:
@@ -614,6 +627,10 @@ func _process(delta: float) -> void:
 		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
 	_update_energy(delta)
 	_update_body_stats(delta)
+	_entity_grid_timer -= delta
+	if _entity_grid_timer <= 0.0:
+		_entity_grid_timer = ENTITY_GRID_SYNC_SECONDS
+		EntityGrid.update_position(self, current_grid())
 	if _state != State.FIGHTING and _should_seek_charge():
 		_begin_auto_charge()
 		return
@@ -2076,15 +2093,10 @@ func _update_body_stats(delta: float) -> void:
 
 
 func _update_mood(delta: float) -> void:
-	_unsatisfied_needs.clear()
-	# Need: dock room. Try to claim/keep a room from the RoomManager.
-	if _room_manager != null and _room_manager.has_method("ensure_dock_room_for"):
-		_room_manager.call("ensure_dock_room_for", self)
-		var has_room: bool = false
-		if _room_manager.has_method("has_dock_room"):
-			has_room = bool(_room_manager.call("has_dock_room", self))
-		if not has_room:
-			_unsatisfied_needs.append("Needs dock room")
+	_needs_refresh_timer -= delta
+	if _needs_refresh_timer <= 0.0:
+		_needs_refresh_timer = NEEDS_REFRESH_SECONDS
+		_refresh_unsatisfied_needs()
 	# Mood drift: recover toward baseline, but suffer per unsatisfied need.
 	var target: float = MOOD_BASELINE
 	if _social < 25.0:
@@ -2100,6 +2112,17 @@ func _update_mood(delta: float) -> void:
 		_mood = maxf(0.0, _mood - penalty * delta)
 	# Hard ceiling clamp.
 	_mood = clampf(_mood, 0.0, MOOD_MAX)
+
+
+func _refresh_unsatisfied_needs() -> void:
+	_unsatisfied_needs.clear()
+	if _room_manager != null and _room_manager.has_method("ensure_dock_room_for"):
+		_room_manager.call("ensure_dock_room_for", self)
+		var has_room: bool = false
+		if _room_manager.has_method("has_dock_room"):
+			has_room = bool(_room_manager.call("has_dock_room", self))
+		if not has_room:
+			_unsatisfied_needs.append("Needs dock room")
 
 
 func _damage_limb(amount: float) -> void:

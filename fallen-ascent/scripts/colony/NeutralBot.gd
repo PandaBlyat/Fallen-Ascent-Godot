@@ -23,11 +23,16 @@ const MOVE_SPEED_PX_PER_SEC: float = 34.0
 const ARRIVE_EPSILON_PX: float = 1.0
 const WANDER_RADIUS: int = 28
 const PICK_ATTEMPTS: int = 36
+## Short-hop wander uses a tighter radius; long paths are kept for flee/retaliate
+## so per-tick A* cost stays near zero for the ambient population.
+const WANDER_HOP_RADIUS: int = 5
+const WANDER_HOP_ATTEMPTS: int = 8
 const FLEE_RADIUS: int = 14
 
 const PERCEPTION_TICK_MIN: float = 0.35
 const PERCEPTION_TICK_MAX: float = 0.55
 const PERCEPTION_RADIUS_TILES: int = 5
+const LOS_CACHE_TTL_MSEC: int = 400
 const RETALIATE_DURATION: float = 3.0
 const KNOCKBACK_DURATION: float = 0.12
 
@@ -39,7 +44,6 @@ var stats: CombatStats
 
 var _chunk_manager: ChunkManager
 var _pathfinder: Pathfinder
-var _hostiles_root: Node2D
 var _fog: FogOfWar
 var _state: int = State.WANDERING
 var _path: PackedVector2Array = PackedVector2Array()
@@ -53,12 +57,14 @@ var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
 var _dead: bool = false
 var _facing: int = FACING_SOUTH
+## LOS cache: target_instance_id -> {result: bool, expires_at_msec: int}.
+## Halves LOS calls when the same hostile candidate is rescanned within TTL.
+var _los_cache: Dictionary = {}
 
 
-func setup(chunk_manager: ChunkManager, pathfinder: Pathfinder, hostiles_root: Node2D = null, fog: FogOfWar = null) -> void:
+func setup(chunk_manager: ChunkManager, pathfinder: Pathfinder, fog: FogOfWar = null) -> void:
 	_chunk_manager = chunk_manager
 	_pathfinder = pathfinder
-	_hostiles_root = hostiles_root
 	_fog = fog
 	if _fog != null:
 		EventBus.visibility_changed.connect(_on_visibility_changed)
@@ -87,7 +93,13 @@ func _ready() -> void:
 	add_child(_perception_timer)
 	_perception_timer.start()
 	set_process(false)
+	EntityGrid.register(self, FACTION_NEUTRAL, current_grid())
+	tree_exiting.connect(_on_tree_exiting)
 	_schedule_wander(0.2, 2.0)
+
+
+func _on_tree_exiting() -> void:
+	EntityGrid.unregister(self)
 
 
 func current_grid() -> Vector2i:
@@ -228,6 +240,7 @@ func _on_perception_tick() -> void:
 		return
 	_perception_timer.wait_time = randf_range(PERCEPTION_TICK_MIN, PERCEPTION_TICK_MAX)
 	_apply_visibility()
+	EntityGrid.update_position(self, current_grid())
 	if _state == State.RETALIATING:
 		return
 	var threat: Node2D = _scan_for_hostile()
@@ -238,12 +251,18 @@ func _on_perception_tick() -> void:
 
 
 func _scan_for_hostile() -> Node2D:
-	if _hostiles_root == null or _chunk_manager == null:
+	if _chunk_manager == null:
 		return null
 	var origin: Vector2i = current_grid()
+	var candidates: Array = EntityGrid.query(
+		EntityGrid.FACTION_HOSTILE, origin, PERCEPTION_RADIUS_TILES
+	)
+	if candidates.is_empty():
+		return null
 	var best: Node2D = null
 	var best_d: int = PERCEPTION_RADIUS_TILES + 1
-	for child in _hostiles_root.get_children():
+	var now_msec: int = Time.get_ticks_msec()
+	for child in candidates:
 		if not is_instance_valid(child):
 			continue
 		if child.has_method("is_alive") and not bool(child.call("is_alive")):
@@ -254,11 +273,24 @@ func _scan_for_hostile() -> Node2D:
 		var d: int = maxi(absi(g.x - origin.x), absi(g.y - origin.y))
 		if d > PERCEPTION_RADIUS_TILES or d >= best_d:
 			continue
-		if not LineOfSight.has_los(_chunk_manager, origin, g):
+		if not _cached_has_los(child, origin, g, now_msec):
 			continue
 		best = child as Node2D
 		best_d = d
 	return best
+
+
+func _cached_has_los(target: Node, origin: Vector2i, target_grid: Vector2i, now_msec: int) -> bool:
+	var id: int = target.get_instance_id()
+	var entry: Dictionary = _los_cache.get(id, {}) as Dictionary
+	if not entry.is_empty() and int(entry.get("expires_at_msec", 0)) > now_msec:
+		return bool(entry.get("result", false))
+	var result: bool = LineOfSight.has_los(_chunk_manager, origin, target_grid)
+	_los_cache[id] = {
+		"result": result,
+		"expires_at_msec": now_msec + LOS_CACHE_TTL_MSEC,
+	}
+	return result
 
 
 func _flee_from(threat: Node2D) -> void:
@@ -335,25 +367,57 @@ func _snap_to_walkable() -> void:
 
 
 func _pick_next_wander() -> void:
-	if _chunk_manager == null or _pathfinder == null:
+	if _chunk_manager == null:
 		_schedule_wander(1.0, 4.0)
 		return
 	var origin: Vector2i = current_grid()
-	for _i in range(PICK_ATTEMPTS):
+	# Short-hop wander: skip A* entirely, pick a nearby tile with a clear
+	# straight walk. Long paths only happen on flee/retaliate triggers.
+	for _i in range(WANDER_HOP_ATTEMPTS):
 		var candidate := origin + Vector2i(
-			randi_range(-WANDER_RADIUS, WANDER_RADIUS),
-			randi_range(-WANDER_RADIUS, WANDER_RADIUS),
+			randi_range(-WANDER_HOP_RADIUS, WANDER_HOP_RADIUS),
+			randi_range(-WANDER_HOP_RADIUS, WANDER_HOP_RADIUS),
 		)
+		if candidate == origin:
+			continue
 		if not _chunk_manager.is_walkable(candidate):
 			continue
-		var candidate_path: PackedVector2Array = _pathfinder.find_path(origin, candidate)
-		if candidate_path.is_empty():
+		if not _clear_walk(origin, candidate):
 			continue
-		_path = candidate_path
+		_path = PackedVector2Array([Chunk.grid_to_pixel_center(candidate)])
 		_path_index = 0
 		set_process(true)
 		return
 	_schedule_wander(1.0, 4.0)
+
+
+## Bresenham walk from `from` to `to`; returns true only if every cell is
+## walkable. Cheap enough to run per wander attempt instead of full A*.
+func _clear_walk(from: Vector2i, to: Vector2i) -> bool:
+	if _chunk_manager == null:
+		return false
+	var x0: int = from.x
+	var y0: int = from.y
+	var x1: int = to.x
+	var y1: int = to.y
+	var dx: int = absi(x1 - x0)
+	var dy: int = -absi(y1 - y0)
+	var sx: int = 1 if x0 < x1 else -1
+	var sy: int = 1 if y0 < y1 else -1
+	var err: int = dx + dy
+	var x: int = x0
+	var y: int = y0
+	while x != x1 or y != y1:
+		var e2: int = 2 * err
+		if e2 >= dy:
+			err += dy
+			x += sx
+		if e2 <= dx:
+			err += dx
+			y += sy
+		if not _chunk_manager.is_walkable(Vector2i(x, y)):
+			return false
+	return true
 
 
 func _schedule_wander(min_seconds: float, max_seconds: float) -> void:

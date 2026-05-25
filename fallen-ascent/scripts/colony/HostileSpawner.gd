@@ -81,7 +81,7 @@ func _try_spawn_one() -> bool:
 			continue
 		var bot := HOSTILE_SCRIPT.new() as HostileBot
 		bot.name = "Hostile_%02d" % (_alive + 1)
-		bot.setup(_chunk_manager, _pathfinder, _workers_root, _neutrals_root, _fog)
+		bot.setup(_chunk_manager, _pathfinder, _fog)
 		bot.position = Chunk.grid_to_pixel_center(cell)
 		_hostiles_root.add_child(bot)
 		_alive += 1

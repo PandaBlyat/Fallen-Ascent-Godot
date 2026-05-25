@@ -10,9 +10,13 @@ const CombatStatsScript: Script = preload("res://scripts/combat/CombatStats.gd")
 const CombatService: Script = preload("res://scripts/combat/CombatService.gd")
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
-const ENTITY_ATLAS: Texture2D = preload("res://resources/entities/placeholder_entities_atlas.png")
-const NEUTRAL_REGION := Rect2(Vector2(16, 0), Vector2(16, 16))
-const HOSTILE_MODULATE := Color(1.0, 0.36, 0.30, 1.0)
+const ENTITY_ATLAS: Texture2D = preload("res://resources/entities/bots_atlas.png")
+const ENTITY_REGION_SIZE := Vector2(32, 32)
+const HOSTILE_ROW: int = 1
+const FACING_SOUTH: int = 0
+const FACING_EAST: int = 1
+const FACING_NORTH: int = 2
+const FACING_WEST: int = 3
 const HP_BAR_BG := Color(0.05, 0.05, 0.06, 0.9)
 const HP_BAR_FILL := Color(0.95, 0.30, 0.30)
 
@@ -50,6 +54,7 @@ var _knockback_remaining: float = 0.0
 var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
 var _dead: bool = false
+var _facing: int = FACING_SOUTH
 
 
 func setup(chunk_manager: ChunkManager, pathfinder: Pathfinder, workers_root: Node2D, neutrals_root: Node2D, fog: FogOfWar = null) -> void:
@@ -202,6 +207,8 @@ func _advance_path(delta: float) -> bool:
 		var target_px: Vector2 = _path[_path_index]
 		var to_target: Vector2 = target_px - position
 		var dist: float = to_target.length()
+		if dist > ARRIVE_EPSILON_PX:
+			_set_facing_from_vector(to_target)
 		if dist <= step + ARRIVE_EPSILON_PX:
 			position = target_px
 			step -= dist
@@ -210,6 +217,14 @@ func _advance_path(delta: float) -> bool:
 			position += to_target / dist * step
 			step = 0.0
 	return _path_index >= _path.size()
+
+
+func _set_facing_from_vector(delta_pos: Vector2) -> void:
+	if absf(delta_pos.x) > absf(delta_pos.y):
+		_facing = FACING_EAST if delta_pos.x > 0.0 else FACING_WEST
+	else:
+		_facing = FACING_SOUTH if delta_pos.y > 0.0 else FACING_NORTH
+	queue_redraw()
 
 
 func _on_perception_tick() -> void:
@@ -379,13 +394,15 @@ func _apply_visibility() -> void:
 
 
 func _draw() -> void:
-	var modulate_color: Color = HOSTILE_MODULATE
+	var modulate_color: Color = Color.WHITE
 	if _dead:
 		modulate_color = Color(0.4, 0.1, 0.1, 0.6)
-	draw_texture_rect_region(ENTITY_ATLAS, Rect2(Vector2(-8, -8), Vector2(16, 16)), NEUTRAL_REGION, modulate_color)
+	var source := Rect2(Vector2(_facing * int(ENTITY_REGION_SIZE.x), HOSTILE_ROW * int(ENTITY_REGION_SIZE.y)), ENTITY_REGION_SIZE)
+	var dest_size := Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
+	draw_texture_rect_region(ENTITY_ATLAS, Rect2(-dest_size * 0.5, dest_size), source, modulate_color)
 	if _dead or stats == null:
 		return
-	var bar_pos := Vector2(-8, 9)
-	var bar_size := Vector2(16, 2)
+	var bar_pos := Vector2(-16, 17)
+	var bar_size := Vector2(32, 3)
 	draw_rect(Rect2(bar_pos, bar_size), HP_BAR_BG)
 	draw_rect(Rect2(bar_pos, Vector2(bar_size.x * stats.hp_ratio(), bar_size.y)), HP_BAR_FILL)

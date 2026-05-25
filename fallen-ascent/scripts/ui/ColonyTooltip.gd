@@ -29,10 +29,11 @@ var _fog: FogOfWar
 var _room_manager: Node
 var _last_grid: Vector2i = Vector2i(2147483647, 2147483647)
 var _hover_grid: Vector2i = Vector2i(2147483647, 2147483647)
-var _hover_timer: float = 0.0
+var _hover_started_msec: int = 0
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_theme_font_size_override("font_size", 12)
 	add_theme_color_override("font_color", Color(0.91, 0.94, 0.92, 1.0))
@@ -52,7 +53,7 @@ func _ready() -> void:
 	EventBus.visibility_changed.connect(_on_visibility_changed)
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	var mouse_screen: Vector2 = get_viewport().get_mouse_position()
 	var desired := mouse_screen + TOOLTIP_OFFSET
 	var viewport_size := get_viewport_rect().size
@@ -63,12 +64,12 @@ func _process(delta: float) -> void:
 	var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
 	if grid != _hover_grid:
 		_hover_grid = grid
-		_hover_timer = 0.0
+		_hover_started_msec = Time.get_ticks_msec()
 		_last_grid = Vector2i(2147483647, 2147483647)
 		visible = false
 		return
-	_hover_timer += delta
-	if _hover_timer < HOVER_DWELL_SECONDS:
+	var hover_seconds: float = float(Time.get_ticks_msec() - _hover_started_msec) / 1000.0
+	if hover_seconds < HOVER_DWELL_SECONDS:
 		visible = false
 		return
 	if grid == _last_grid and visible:

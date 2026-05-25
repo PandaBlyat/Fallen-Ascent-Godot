@@ -12,12 +12,35 @@ signal settings_changed
 const CONFIG_PATH := "user://settings.cfg"
 const SECTION_DISPLAY := "display"
 const SECTION_AUDIO := "audio"
+const SECTION_INPUT := "input"
 
 enum DisplayMode { WINDOWED, BORDERLESS, FULLSCREEN }
 enum VSyncMode { DISABLED, ENABLED, ADAPTIVE }
 
 const FPS_PRESETS: Array[int] = [30, 60, 120, 144, 165, 240, 0]
 const DEFAULT_WINDOW_SIZE := Vector2i(1280, 720)
+const REBINDABLE_ACTIONS: Array[StringName] = [
+	&"cam_up",
+	&"cam_down",
+	&"cam_left",
+	&"cam_right",
+	&"cam_drag",
+	&"select_site",
+	&"pause_toggle",
+	&"speed_pause",
+	&"speed_1x",
+	&"speed_2x",
+	&"speed_3x",
+	&"speed_10x",
+	&"designate_mine",
+	&"designate_stockpile",
+	&"designate_remove_stockpile",
+	&"designate_build",
+	&"designate_build_door",
+	&"designate_build_light",
+	&"designate_build_extractor",
+	&"cancel_mode",
+]
 
 const BUS_MASTER := &"Master"
 const BUS_MUSIC := &"Music"
@@ -26,6 +49,7 @@ const BUS_SFX := &"SFX"
 var display_mode: int = DisplayMode.WINDOWED
 var vsync_mode: int = VSyncMode.ENABLED
 var max_fps: int = 0
+var window_size: Vector2i = DEFAULT_WINDOW_SIZE
 ## Audio volumes are linear [0.0, 1.0]; 1.0 == 0dB on the bus.
 ## Music default starts at 0.5 (≈-6dB) per the menu music ask.
 var master_volume: float = 1.0
@@ -70,6 +94,18 @@ func set_max_fps(fps: int) -> void:
 	settings_changed.emit()
 
 
+func set_window_size(size: Vector2i) -> void:
+	size.x = clampi(size.x, 640, 7680)
+	size.y = clampi(size.y, 360, 4320)
+	if size == window_size:
+		apply()
+		return
+	window_size = size
+	apply()
+	save_to_disk()
+	settings_changed.emit()
+
+
 func set_master_volume(value: float) -> void:
 	master_volume = clampf(value, 0.0, 1.0)
 	_apply_bus_volume(BUS_MASTER, master_volume)
@@ -97,7 +133,7 @@ func apply() -> void:
 
 	match display_mode:
 		DisplayMode.WINDOWED:
-			DisplayServer.window_set_size(DEFAULT_WINDOW_SIZE)
+			DisplayServer.window_set_size(window_size)
 			_center_window()
 		DisplayMode.BORDERLESS:
 			DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, true)
@@ -113,6 +149,38 @@ func apply() -> void:
 	_apply_bus_volume(BUS_MASTER, master_volume)
 	_apply_bus_volume(BUS_MUSIC, music_volume)
 	_apply_bus_volume(BUS_SFX, sfx_volume)
+
+
+func set_action_key(action: StringName, event: InputEventKey) -> void:
+	if not InputMap.has_action(action):
+		return
+	var key_event := InputEventKey.new()
+	key_event.keycode = event.keycode
+	key_event.physical_keycode = event.physical_keycode
+	key_event.key_label = event.key_label
+	key_event.location = event.location
+	key_event.ctrl_pressed = event.ctrl_pressed
+	key_event.alt_pressed = event.alt_pressed
+	key_event.shift_pressed = event.shift_pressed
+	key_event.meta_pressed = event.meta_pressed
+	InputMap.action_erase_events(action)
+	InputMap.action_add_event(action, key_event)
+	save_to_disk()
+	settings_changed.emit()
+
+
+func action_key_text(action: StringName) -> String:
+	for event in InputMap.action_get_events(action):
+		if event is InputEventKey:
+			return (event as InputEventKey).as_text_physical_keycode()
+		if event is InputEventMouseButton:
+			return event.as_text()
+	return "Unbound"
+
+
+func action_display_name(action: StringName) -> String:
+	var text: String = String(action).replace("_", " ")
+	return text.capitalize()
 
 
 func _apply_bus_volume(bus_name: StringName, linear: float) -> void:
@@ -142,9 +210,16 @@ func load_from_disk() -> void:
 		VSyncMode.ADAPTIVE,
 	)
 	max_fps = int(cfg.get_value(SECTION_DISPLAY, "max_fps", max_fps))
+	var saved_size: Variant = cfg.get_value(SECTION_DISPLAY, "window_size", window_size)
+	if saved_size is Vector2i:
+		window_size = saved_size as Vector2i
+	elif saved_size is Vector2:
+		var saved_vec := saved_size as Vector2
+		window_size = Vector2i(int(saved_vec.x), int(saved_vec.y))
 	master_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "master_volume", master_volume)), 0.0, 1.0)
 	music_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "music_volume", music_volume)), 0.0, 1.0)
 	sfx_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "sfx_volume", sfx_volume)), 0.0, 1.0)
+	_load_keybindings(cfg)
 
 
 func save_to_disk() -> void:
@@ -152,9 +227,11 @@ func save_to_disk() -> void:
 	cfg.set_value(SECTION_DISPLAY, "display_mode", display_mode)
 	cfg.set_value(SECTION_DISPLAY, "vsync_mode", vsync_mode)
 	cfg.set_value(SECTION_DISPLAY, "max_fps", max_fps)
+	cfg.set_value(SECTION_DISPLAY, "window_size", window_size)
 	cfg.set_value(SECTION_AUDIO, "master_volume", master_volume)
 	cfg.set_value(SECTION_AUDIO, "music_volume", music_volume)
 	cfg.set_value(SECTION_AUDIO, "sfx_volume", sfx_volume)
+	_save_keybindings(cfg)
 	cfg.save(CONFIG_PATH)
 
 
@@ -172,4 +249,45 @@ func _center_window() -> void:
 	var screen: int = DisplayServer.window_get_current_screen()
 	var screen_pos: Vector2i = DisplayServer.screen_get_position(screen)
 	var screen_size: Vector2i = DisplayServer.screen_get_size(screen)
-	DisplayServer.window_set_position(screen_pos + (screen_size - DEFAULT_WINDOW_SIZE) / 2)
+	DisplayServer.window_set_position(screen_pos + (screen_size - window_size) / 2)
+
+
+func _load_keybindings(cfg: ConfigFile) -> void:
+	for action in REBINDABLE_ACTIONS:
+		if not cfg.has_section_key(SECTION_INPUT, String(action)):
+			continue
+		var data: Variant = cfg.get_value(SECTION_INPUT, String(action))
+		if not (data is Dictionary):
+			continue
+		var dict := data as Dictionary
+		var event := InputEventKey.new()
+		event.keycode = int(dict.get("keycode", 0))
+		event.physical_keycode = int(dict.get("physical_keycode", 0))
+		event.key_label = int(dict.get("key_label", 0))
+		event.location = int(dict.get("location", 0))
+		event.ctrl_pressed = bool(dict.get("ctrl", false))
+		event.alt_pressed = bool(dict.get("alt", false))
+		event.shift_pressed = bool(dict.get("shift", false))
+		event.meta_pressed = bool(dict.get("meta", false))
+		if event.keycode == 0 and event.physical_keycode == 0:
+			continue
+		InputMap.action_erase_events(action)
+		InputMap.action_add_event(action, event)
+
+
+func _save_keybindings(cfg: ConfigFile) -> void:
+	for action in REBINDABLE_ACTIONS:
+		for event in InputMap.action_get_events(action):
+			if event is InputEventKey:
+				var key := event as InputEventKey
+				cfg.set_value(SECTION_INPUT, String(action), {
+					"keycode": key.keycode,
+					"physical_keycode": key.physical_keycode,
+					"key_label": key.key_label,
+					"location": key.location,
+					"ctrl": key.ctrl_pressed,
+					"alt": key.alt_pressed,
+					"shift": key.shift_pressed,
+					"meta": key.meta_pressed,
+				})
+				break

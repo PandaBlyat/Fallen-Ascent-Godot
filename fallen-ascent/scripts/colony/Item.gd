@@ -27,7 +27,7 @@ const STACK_FONT_SIZE: int = 10
 const STACK_OUTLINE_SIZE: int = 2
 const MAX_STACK: int = 16
 const ITEM_ATLAS_PATH := "res://resources/items/placeholder_items_atlas.png"
-const ITEM_REGION_SIZE := Vector2(16, 16)
+const ITEM_REGION_SIZE := Vector2(32, 32)
 
 var kind: int = Kind.SCRAP
 var grid: Vector2i = Vector2i.ZERO
@@ -120,7 +120,7 @@ static func stack_label(k: int, amount: int) -> String:
 func _draw() -> void:
 	var r := Rect2(-Vector2(SIZE_PX, SIZE_PX) * 0.5, Vector2(SIZE_PX, SIZE_PX))
 	if _atlas != null:
-		var source := Rect2(Vector2(kind * 16, 0), ITEM_REGION_SIZE)
+		var source := Rect2(Vector2(kind * int(ITEM_REGION_SIZE.x), 0), ITEM_REGION_SIZE)
 		draw_texture_rect_region(_atlas, Rect2(-ITEM_REGION_SIZE * 0.5, ITEM_REGION_SIZE), source)
 	else:
 		draw_rect(r, color())

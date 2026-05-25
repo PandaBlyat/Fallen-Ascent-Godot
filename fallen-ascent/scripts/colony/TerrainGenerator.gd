@@ -9,7 +9,7 @@ extends RefCounted
 ## load-bearing pillars, and heavy industrial machinery cores.
 ##
 ## Tile ids: 0=floor, 1=wall, 2=debris, 3=void, 4=outlet, 5=service core,
-## 6=conduit floor, 7=rust sludge, 8=rich wall, 9=teleporter.
+## 6=conduit floor, 7=rust sludge, 8=rich wall, 9=teleporter, 10=water.
 
 const TILE_FLOOR: int = 0
 const TILE_WALL: int = 1
@@ -21,6 +21,7 @@ const TILE_CONDUIT: int = 6
 const TILE_RUST: int = 7
 const TILE_RICH_WALL: int = 8
 const TILE_TELEPORTER: int = 9
+const TILE_WATER: int = 10
 
 # Global fallbacks & boundary-critical constants
 const _DOOR_PROBABILITY: float = 0.74
@@ -33,8 +34,9 @@ const _DEAD_END_MAX_LENGTH: int = 7
 const _DEBRIS_NOISE_THRESHOLD: float = 0.45
 const _CONDUIT_NOISE_THRESHOLD: float = 0.56
 const _RUST_NOISE_THRESHOLD: float = -0.25
-const _SERVICE_CORE_NOISE_THRESHOLD: float = 0.67
-const _RICH_WALL_NOISE_THRESHOLD: float = 0.61
+const _WATER_NOISE_THRESHOLD: float = -0.72
+const _SERVICE_CORE_NOISE_THRESHOLD: float = 0.80
+const _RICH_WALL_NOISE_THRESHOLD: float = 0.76
 const _TELEPORTER_NOISE_THRESHOLD: float = 0.78
 const _VOID_NEIGHBOUR_THRESHOLD: int = 6
 const _ROOM_MIN: int = 4
@@ -102,6 +104,7 @@ static func populate(
 
 	var conduit_threshold: float = _CONDUIT_NOISE_THRESHOLD
 	var rust_threshold: float = _RUST_NOISE_THRESHOLD
+	var water_threshold: float = _WATER_NOISE_THRESHOLD
 	var debris_threshold: float = _DEBRIS_NOISE_THRESHOLD
 	var service_threshold: float = _SERVICE_CORE_NOISE_THRESHOLD
 	var rich_threshold: float = _RICH_WALL_NOISE_THRESHOLD
@@ -121,6 +124,7 @@ static func populate(
 			shortcut_prob = 0.65
 			conduit_threshold = 0.45 # More safety steel catwalks
 			rust_threshold = -0.50
+			water_threshold = -0.68
 
 		1: # The Industrial Core (Dense machinery / Conduits)
 			room_target_min = 3
@@ -129,8 +133,9 @@ static func populate(
 			room_max_size = 12
 			void_min = 0
 			void_max = 1
-			service_threshold = 0.48 # Greatly increased service cores
+			service_threshold = 0.72
 			conduit_threshold = 0.40 # Heavy floor lines
+			water_threshold = -0.78
 
 		2: # Habitation Blocks (Compartmentalized chambers)
 			room_target_min = 4
@@ -140,6 +145,7 @@ static func populate(
 			void_min = 0
 			void_max = 0 # No hazard voids in residential blocks
 			shortcut_prob = 0.15
+			water_threshold = -0.82
 
 		3: # Lithic Vault (Dense stone / Resource veins)
 			room_target_min = 1
@@ -148,7 +154,7 @@ static func populate(
 			room_max_size = 5
 			void_min = 1
 			void_max = 3
-			rich_threshold = 0.35 # Heavy concentrations of rich walls
+			rich_threshold = 0.66
 			max_corridor_width = 1 # Cramped, narrow shafts
 
 		4: # Structural Grid (Vast halls / Support pillars)
@@ -234,7 +240,9 @@ static func populate(
 
 			var floor_noise: float = noise.get_noise_2d(base_x + lx, base_y + ly)
 			var detail_noise: float = noise.get_noise_2d((base_x + lx) * 2.1, (base_y + ly) * 2.1)
-			if detail_noise > conduit_threshold:
+			if floor_noise < water_threshold:
+				out[idx] = TILE_WATER
+			elif detail_noise > conduit_threshold:
 				out[idx] = TILE_CONDUIT
 			elif floor_noise < rust_threshold:
 				out[idx] = TILE_RUST
@@ -264,6 +272,7 @@ static func tile_color(t: int) -> Color:
 		TILE_RUST: return Color(0.42, 0.18, 0.12)
 		TILE_RICH_WALL: return Color(0.46, 0.42, 0.62)
 		TILE_TELEPORTER: return Color(0.15, 0.92, 1.0)
+		TILE_WATER: return Color(0.05, 0.28, 0.55)
 	return Color.MAGENTA
 
 
@@ -279,6 +288,7 @@ static func tile_name(t: int) -> String:
 		TILE_RUST: return "rust sludge"
 		TILE_RICH_WALL: return "plated wall"
 		TILE_TELEPORTER: return "teleporter"
+		TILE_WATER: return "water"
 		_: return "unknown"
 
 
@@ -503,7 +513,20 @@ static func _carve_machinery_room(
 		var cx: int = room.position.x + (room.size.x - core_w) / 2
 		var cy: int = room.position.y + (room.size.y - core_h) / 2
 		var core_rect := Rect2i(cx, cy, core_w, core_h)
-		_fill_rect(out, chunk_size, core_rect, TILE_SERVICE_CORE)
+		_fill_rect(out, chunk_size, core_rect, TILE_WALL)
+		var core_count: int = rng.randi_range(1, 2)
+		var placed: Dictionary = {}
+		for _i in core_count:
+			for _attempt in 8:
+				var cell := Vector2i(
+					rng.randi_range(core_rect.position.x, core_rect.position.x + core_rect.size.x - 1),
+					rng.randi_range(core_rect.position.y, core_rect.position.y + core_rect.size.y - 1),
+				)
+				if placed.has(cell) or _has_special_neighbor(out, chunk_size, cell):
+					continue
+				placed[cell] = true
+				out[cell.y * chunk_size + cell.x] = TILE_SERVICE_CORE
+				break
 
 		# Edge outlets on the machinery block
 		if rng.randf() < 0.8:
@@ -881,10 +904,17 @@ static func _service_core_pass(
 			if out[idx] != TILE_WALL:
 				continue
 			var mineral_noise: float = noise.get_noise_2d((base_x + lx) * 1.9, (base_y + ly) * 1.9)
-			if mineral_noise > rich_threshold:
-				out[idx] = TILE_RICH_WALL
-			if noise.get_noise_2d((base_x + lx) * 2.7, (base_y + ly) * 2.7) > service_threshold:
+			var core_noise: float = noise.get_noise_2d((base_x + lx) * 2.7, (base_y + ly) * 2.7)
+			var rare_roll: int = absi(hash([base_x + lx, base_y + ly, "rare_wall"])) % 100
+			if core_noise > service_threshold and rare_roll < 18 \
+					and _is_local_noise_peak(noise, base_x + lx, base_y + ly, 2.7) \
+					and not _has_special_neighbor(out, chunk_size, Vector2i(lx, ly), 2):
 				out[idx] = TILE_SERVICE_CORE
+				continue
+			if mineral_noise > rich_threshold and rare_roll < 24 \
+					and _is_local_noise_peak(noise, base_x + lx, base_y + ly, 1.9) \
+					and not _has_special_neighbor(out, chunk_size, Vector2i(lx, ly), 2):
+				out[idx] = TILE_RICH_WALL
 
 
 static func _teleporter_pass(
@@ -902,3 +932,33 @@ static func _teleporter_pass(
 			var value: float = noise.get_noise_2d((base_x + lx) * 3.7 + 171.0, (base_y + ly) * 3.7 - 89.0)
 			if value > _TELEPORTER_NOISE_THRESHOLD:
 				out[idx] = TILE_TELEPORTER
+
+
+static func _has_special_neighbor(
+	out: PackedInt32Array,
+	chunk_size: int,
+	cell: Vector2i,
+	radius: int = 1,
+) -> bool:
+	for y in range(cell.y - radius, cell.y + radius + 1):
+		for x in range(cell.x - radius, cell.x + radius + 1):
+			if x < 0 or x >= chunk_size or y < 0 or y >= chunk_size:
+				continue
+			if x == cell.x and y == cell.y:
+				continue
+			var tile: int = out[y * chunk_size + x]
+			if tile == TILE_SERVICE_CORE or tile == TILE_RICH_WALL:
+				return true
+	return false
+
+
+static func _is_local_noise_peak(noise: FastNoiseLite, x: int, y: int, scale: float) -> bool:
+	var center: float = noise.get_noise_2d(float(x) * scale, float(y) * scale)
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	for off in OFFSETS:
+		var sample: float = noise.get_noise_2d(float(x + off.x) * scale, float(y + off.y) * scale)
+		if sample > center:
+			return false
+	return true

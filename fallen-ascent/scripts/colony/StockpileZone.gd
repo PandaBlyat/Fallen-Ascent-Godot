@@ -77,6 +77,36 @@ func capacity() -> int:
 	return cells.size() * MAX_STACK_PER_CELL
 
 
+func stack_capacity() -> int:
+	return cells.size()
+
+
+func stack_count() -> int:
+	var n: int = 0
+	for v in occupant.values():
+		if v is Item:
+			n += 1
+		elif v is Dictionary:
+			var d := v as Dictionary
+			var existing: Item = d.get(R_EXISTING) as Item
+			if existing != null and is_instance_valid(existing):
+				n += 1
+	return n
+
+
+func resource_counts() -> Dictionary:
+	var counts: Dictionary = {}
+	for v in occupant.values():
+		var item: Item = null
+		if v is Item:
+			item = v as Item
+		elif v is Dictionary:
+			item = (v as Dictionary).get(R_EXISTING) as Item
+		if item != null and is_instance_valid(item) and item.count > 0:
+			counts[item.kind] = int(counts.get(item.kind, 0)) + item.count
+	return counts
+
+
 func stored_count_for_kind(kind: int) -> int:
 	var n: int = 0
 	for v in occupant.values():

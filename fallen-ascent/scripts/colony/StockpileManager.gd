@@ -24,6 +24,7 @@ var _chunk_manager: ChunkManager
 var _items_root: Node2D
 var zones: Array[StockpileZone] = []
 var _rematch_queued: bool = false
+var _pending_haul_jobs: int = 0
 
 
 func _ready() -> void:
@@ -127,17 +128,12 @@ func _try_post_haul_for(item: Item) -> void:
 		zone.reserve(cell, item.kind)
 		item.reserved_by = self
 		_job_board.add_haul_job(item, zone, cell)
+		_pending_haul_jobs += 1
 		return
 
 
 func _pending_haul_count() -> int:
-	if _job_board == null:
-		return 0
-	var count: int = 0
-	for job in _job_board.pending:
-		if job is HaulJob:
-			count += 1
-	return count
+	return _pending_haul_jobs
 
 
 func _schedule_match_loose_items() -> void:
@@ -149,6 +145,7 @@ func _schedule_match_loose_items() -> void:
 
 func _on_job_changed(job: Job) -> void:
 	if job is HaulJob:
+		_pending_haul_jobs = maxi(0, _pending_haul_jobs - 1)
 		_schedule_match_loose_items()
 
 

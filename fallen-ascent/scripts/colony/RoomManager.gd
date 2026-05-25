@@ -22,21 +22,36 @@ const ROOM_INVALID_BORDER := Color(0.95, 0.45, 0.45, 0.40)
 const MEDITATION_BORDER := Color(0.62, 0.78, 1.0, 0.32)
 const MECHANIC_BORDER := Color(0.98, 0.82, 0.42, 0.32)
 const MIN_ROOM_CELLS: int = 2
+const MECHANIC_HEAL_TICK_SECONDS: float = 1.0
+const MECHANIC_LIMB_REPAIR_PER_SEC: float = 5.0
 
 @export var structure_manager_path: NodePath
 @export var chunk_manager_path: NodePath
+@export var workers_root_path: NodePath
 
 var _structure_manager: StructureManager
 var _chunk_manager: ChunkManager
+var _workers_root: Node2D
 var _rooms: Array[Dictionary] = []
 var _cell_to_room: Dictionary = {}                   ## Vector2i -> Dictionary
 var _next_id: int = 1
+var _mechanic_heal_accum: float = 0.0
 
 
 func _ready() -> void:
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
 	_chunk_manager = get_node_or_null(chunk_manager_path) as ChunkManager
+	_workers_root = get_node_or_null(workers_root_path) as Node2D
 	EventBus.structure_built.connect(_on_structure_built)
+
+
+func _process(delta: float) -> void:
+	_mechanic_heal_accum += delta
+	if _mechanic_heal_accum < MECHANIC_HEAL_TICK_SECONDS:
+		return
+	var elapsed: float = _mechanic_heal_accum
+	_mechanic_heal_accum = 0.0
+	_process_mechanic_heal(elapsed)
 
 
 func create_dock_room(cells: Array[Vector2i]) -> Dictionary:
@@ -120,6 +135,30 @@ func room_status_at(grid: Vector2i) -> String:
 
 func rooms() -> Array[Dictionary]:
 	return _rooms
+
+
+func valid_rooms_for_kind(kind: int) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for room in _rooms:
+		if int(room["kind"]) == kind and is_room_valid(room):
+			out.append(room)
+	return out
+
+
+func workers_in_room(room: Dictionary) -> Array[Worker]:
+	var out: Array[Worker] = []
+	if room.is_empty() or _workers_root == null:
+		return out
+	var cells: Dictionary = {}
+	for raw_cell in (room["cells"] as Array):
+		cells[raw_cell as Vector2i] = true
+	for child in _workers_root.get_children():
+		var worker := child as Worker
+		if worker == null or not is_instance_valid(worker):
+			continue
+		if cells.has(worker.current_grid()):
+			out.append(worker)
+	return out
 
 
 func is_room_valid(room: Dictionary) -> bool:
@@ -252,6 +291,13 @@ func _on_structure_built(_manager: Node) -> void:
 	# When new structures are placed, room validity may change.
 	rooms_changed.emit()
 	queue_redraw()
+
+
+func _process_mechanic_heal(elapsed: float) -> void:
+	for room in valid_rooms_for_kind(Kind.MECHANIC_ROOM):
+		for worker in workers_in_room(room):
+			if worker.has_method("repair_limbs_external"):
+				worker.call("repair_limbs_external", MECHANIC_LIMB_REPAIR_PER_SEC * elapsed)
 
 
 func _draw() -> void:

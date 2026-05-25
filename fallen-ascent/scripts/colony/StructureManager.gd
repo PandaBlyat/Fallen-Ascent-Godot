@@ -5,8 +5,14 @@ extends Node2D
 ## Structures are plain dictionaries for now: id, anchor, cells, produce timer.
 ##
 
-const LIGHT_SIGHT_RADIUS: int = 8
+const LIGHT_VISUAL_RADIUS: int = 13
 const SENSOR_SIGHT_RADIUS: int = 15
+const SENSOR_VISUAL_RADIUS: int = 17
+const LIGHT_VISUAL_INTENSITY: float = 1.35
+const SENSOR_VISUAL_INTENSITY: float = 0.72
+const LIGHT_WORK_BUFF_RADIUS: int = 6
+const LIGHT_WORK_BUFF_MAX: float = 1.25
+const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 const EXTRACTOR_COLOR := Color(0.25, 0.75, 0.9, 0.95)
 const DOOR_COLOR := Color(0.9, 0.55, 0.25, 0.95)
 const LIGHT_COLOR := Color(1.0, 0.9, 0.35, 0.95)
@@ -20,6 +26,8 @@ const MAINTENANCE_DOCK_COLOR := Color(0.98, 0.82, 0.42, 0.95)
 const CALIBRATION_SHRINE_COLOR := Color(0.72, 0.58, 1.0, 0.95)
 const MEDITATION_PAD_COLOR := Color(0.62, 0.78, 1.0, 0.95)
 const SENTIENCE_CRADLE_COLOR := Color(0.95, 0.88, 0.55, 0.95)
+const STRUCTURE_ATLAS: Texture2D = preload("res://resources/objects/structures_atlas.png")
+const STRUCTURE_SOURCE_CELL_SIZE := Vector2(32, 32)
 
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
@@ -43,6 +51,7 @@ var _colony_site: Node
 var _cell_to_structure: Dictionary = {}          ## Vector2i -> Dictionary
 var _structures: Array[Dictionary] = []
 var _accum: float = 0.0
+var _brightest_color_cache: Dictionary = {}      ## int -> Color
 
 
 func _ready() -> void:
@@ -186,16 +195,69 @@ func reveal_sources() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for structure in _structures:
 		var id: int = int(structure["id"])
-		if id == BuildBlueprint.Id.LIGHT:
-			out.append({
-				"grid": structure["anchor"] as Vector2i,
-				"radius": LIGHT_SIGHT_RADIUS,
-			})
-		elif id == BuildBlueprint.Id.SENSOR:
+		if id == BuildBlueprint.Id.SENSOR:
 			out.append({
 				"grid": structure["anchor"] as Vector2i,
 				"radius": SENSOR_SIGHT_RADIUS,
 			})
+	return out
+
+
+func visual_light_sources() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for structure in _structures:
+		var id: int = int(structure["id"])
+		if id == BuildBlueprint.Id.LIGHT:
+			out.append({
+				"grid": structure["anchor"] as Vector2i,
+				"radius": LIGHT_VISUAL_RADIUS,
+				"color": _brightest_structure_color(id, Color(1.0, 0.78, 0.36, 1.0)),
+				"intensity": LIGHT_VISUAL_INTENSITY,
+			})
+		elif id == BuildBlueprint.Id.SENSOR:
+			out.append({
+				"grid": structure["anchor"] as Vector2i,
+				"radius": SENSOR_VISUAL_RADIUS,
+				"color": _brightest_structure_color(id, Color(0.34, 0.86, 1.0, 1.0)),
+				"intensity": SENSOR_VISUAL_INTENSITY,
+			})
+	return out
+
+
+func light_speed_multiplier_at(grid: Vector2i) -> float:
+	var best: float = 1.0
+	for structure in _structures:
+		if int(structure["id"]) != BuildBlueprint.Id.LIGHT:
+			continue
+		var anchor: Vector2i = structure["anchor"] as Vector2i
+		var d: Vector2i = grid - anchor
+		var dist2: int = d.x * d.x + d.y * d.y
+		if dist2 > LIGHT_WORK_BUFF_RADIUS * LIGHT_WORK_BUFF_RADIUS:
+			continue
+		if _chunk_manager != null and not LineOfSight.has_los(_chunk_manager, anchor, grid):
+			continue
+		var dist: float = sqrt(float(dist2))
+		var falloff: float = clampf(1.0 - dist / float(LIGHT_WORK_BUFF_RADIUS), 0.0, 1.0)
+		best = maxf(best, lerpf(1.0, LIGHT_WORK_BUFF_MAX, falloff))
+	return best
+
+
+func activity_fx_sources() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for structure in _structures:
+		var id: int = int(structure["id"])
+		var interval: float = BuildBlueprint.production_interval(id)
+		if interval <= 0.0:
+			continue
+		var timer: float = float(structure["timer"])
+		if timer <= 0.0:
+			continue
+		out.append({
+			"grid": structure["anchor"] as Vector2i,
+			"kind": _fx_kind_for(id),
+			"progress": clampf(timer / interval, 0.0, 1.0),
+			"intensity": 0.65,
+		})
 	return out
 
 
@@ -324,6 +386,18 @@ func _roll_output(id: int) -> int:
 			return -1
 
 
+func _fx_kind_for(id: int) -> int:
+	match id:
+		BuildBlueprint.Id.EXTRACTOR:
+			return 6
+		BuildBlueprint.Id.FABRICATOR, BuildBlueprint.Id.PARTS_LOOM:
+			return 4
+		BuildBlueprint.Id.SENTIENCE_CRADLE:
+			return 5
+		_:
+			return 4
+
+
 func _consume_recipe(recipe: Dictionary) -> bool:
 	for kind in recipe.keys():
 		var needed: int = int(recipe[kind])
@@ -391,14 +465,13 @@ func _status_for(structure: Dictionary) -> Dictionary:
 func _draw() -> void:
 	for structure in _structures:
 		var id: int = int(structure["id"])
-		var color: Color = _color_for(id)
 		var cells: Array = structure["cells"] as Array
 		for raw_cell in cells:
 			var cell: Vector2i = raw_cell as Vector2i
 			var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
-			var r := Rect2(origin + Vector2(2, 2), Vector2(Chunk.TILE_PIXELS - 4, Chunk.TILE_PIXELS - 4))
-			draw_rect(r, color)
-			draw_rect(r, Color.BLACK, false, 1.0)
+			var dest := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+			var source := Rect2(Vector2(id * int(STRUCTURE_SOURCE_CELL_SIZE.x), 0), STRUCTURE_SOURCE_CELL_SIZE)
+			draw_texture_rect_region(STRUCTURE_ATLAS, dest, source)
 
 
 static func _color_for(id: int) -> Color:
@@ -431,3 +504,31 @@ static func _color_for(id: int) -> Color:
 			return SENTIENCE_CRADLE_COLOR
 		_:
 			return Color.WHITE
+
+
+func _brightest_structure_color(id: int, fallback: Color) -> Color:
+	if _brightest_color_cache.has(id):
+		return _brightest_color_cache[id] as Color
+	var image: Image = STRUCTURE_ATLAS.get_image()
+	if image == null or image.is_empty():
+		_brightest_color_cache[id] = fallback
+		return fallback
+	var origin_x: int = id * int(STRUCTURE_SOURCE_CELL_SIZE.x)
+	if origin_x >= image.get_width():
+		_brightest_color_cache[id] = fallback
+		return fallback
+	var best_color: Color = fallback
+	var best_score: float = -1.0
+	var max_x: int = mini(origin_x + int(STRUCTURE_SOURCE_CELL_SIZE.x), image.get_width())
+	var max_y: int = mini(int(STRUCTURE_SOURCE_CELL_SIZE.y), image.get_height())
+	for y in range(0, max_y):
+		for x in range(origin_x, max_x):
+			var pixel: Color = image.get_pixel(x, y)
+			if pixel.a < 0.12:
+				continue
+			var score: float = (pixel.r * 0.2126 + pixel.g * 0.7152 + pixel.b * 0.0722) * pixel.a
+			if score > best_score:
+				best_score = score
+				best_color = Color(pixel.r, pixel.g, pixel.b, 1.0)
+	_brightest_color_cache[id] = best_color
+	return best_color

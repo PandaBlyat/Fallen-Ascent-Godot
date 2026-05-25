@@ -5,10 +5,18 @@ extends CanvasLayer
 signal closed
 
 const FPS_LABELS: Array[String] = ["30", "60", "120", "144", "165", "240", "Unlimited"]
+const RESOLUTION_PRESETS: Array[Vector2i] = [
+	Vector2i(1280, 720),
+	Vector2i(1600, 900),
+	Vector2i(1920, 1080),
+	Vector2i(2560, 1440),
+	Vector2i(3440, 1440),
+]
 const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 
 @onready var _tabs: TabContainer = %Tabs
 @onready var _display_mode_button: OptionButton = %DisplayModeButton
+@onready var _resolution_button: OptionButton = %ResolutionButton
 @onready var _vsync_button: OptionButton = %VSyncButton
 @onready var _fps_button: OptionButton = %MaxFpsButton
 @onready var _master_slider: HSlider = %MasterSlider
@@ -17,9 +25,13 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 @onready var _master_value: Label = %MasterValue
 @onready var _music_value: Label = %MusicValue
 @onready var _sfx_value: Label = %SfxValue
+@onready var _controls_list: VBoxContainer = %ControlsList
+@onready var _capture_label: Label = %CaptureLabel
 @onready var _close_button: Button = %CloseButton
 @onready var _main_menu_button: Button = %MainMenuButton
 @onready var _quit_button: Button = %QuitButton
+
+var _binding_action: StringName = &""
 
 
 func _ready() -> void:
@@ -29,11 +41,15 @@ func _ready() -> void:
 		_tabs.set_tab_title(0, "Display")
 		if _tabs.get_tab_count() > 1:
 			_tabs.set_tab_title(1, "Audio")
+		if _tabs.get_tab_count() > 2:
+			_tabs.set_tab_title(2, "Controls")
 
 	_initialize_display_mode()
+	_initialize_resolution()
 	_initialize_vsync()
 	_initialize_fps()
 	_initialize_audio()
+	_rebuild_controls()
 
 	_close_button.pressed.connect(_close)
 	_main_menu_button.pressed.connect(_on_main_menu_pressed)
@@ -45,6 +61,16 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not String(_binding_action).is_empty():
+		if event is InputEventKey:
+			var key := event as InputEventKey
+			if key.pressed and not key.echo:
+				get_viewport().set_input_as_handled()
+				if key.physical_keycode != KEY_ESCAPE:
+					SettingsManager.set_action_key(_binding_action, key)
+				_binding_action = &""
+				_rebuild_controls()
+		return
 	# "ui_cancel" is the Godot default for back/escape actions
 	if event.is_action_pressed("ui_cancel") or event.is_action_pressed("cancel_mode"):
 		get_viewport().set_input_as_handled()
@@ -58,6 +84,18 @@ func _initialize_display_mode() -> void:
 	_display_mode_button.add_item("Fullscreen", SettingsManager.DisplayMode.FULLSCREEN)
 	_select_item_id(_display_mode_button, SettingsManager.display_mode)
 	_display_mode_button.item_selected.connect(_on_display_mode_selected)
+	_update_resolution_enabled()
+
+
+func _initialize_resolution() -> void:
+	_resolution_button.clear()
+	for i in RESOLUTION_PRESETS.size():
+		var size: Vector2i = RESOLUTION_PRESETS[i]
+		_resolution_button.add_item("%d x %d" % [size.x, size.y], i)
+	var current_index: int = _resolution_index(SettingsManager.window_size)
+	_resolution_button.select(current_index)
+	_resolution_button.item_selected.connect(_on_resolution_selected)
+	_update_resolution_enabled()
 
 
 func _initialize_vsync() -> void:
@@ -98,6 +136,35 @@ func _initialize_audio() -> void:
 	_sfx_slider.value_changed.connect(_on_sfx_volume_changed)
 
 
+func _rebuild_controls() -> void:
+	if _controls_list == null:
+		return
+	for child in _controls_list.get_children():
+		_controls_list.remove_child(child)
+		child.queue_free()
+	if _capture_label != null:
+		_capture_label.text = "" if String(_binding_action).is_empty() else "Press new key for " + SettingsManager.action_display_name(_binding_action)
+	for action in SettingsManager.REBINDABLE_ACTIONS:
+		var row := HBoxContainer.new()
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", 12)
+		var label := Label.new()
+		label.text = SettingsManager.action_display_name(action)
+		label.custom_minimum_size = Vector2(190, 0)
+		row.add_child(label)
+		var button := Button.new()
+		button.text = "Listening..." if action == _binding_action else SettingsManager.action_key_text(action)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.pressed.connect(_begin_rebind.bind(action))
+		row.add_child(button)
+		_controls_list.add_child(row)
+
+
+func _begin_rebind(action: StringName) -> void:
+	_binding_action = action
+	_rebuild_controls()
+
+
 func _on_master_volume_changed(value: float) -> void:
 	SettingsManager.set_master_volume(value)
 	_update_volume_label(_master_value, value)
@@ -121,6 +188,12 @@ func _update_volume_label(label: Label, value: float) -> void:
 
 func _on_display_mode_selected(index: int) -> void:
 	SettingsManager.set_display_mode(_display_mode_button.get_item_id(index))
+	_update_resolution_enabled()
+
+
+func _on_resolution_selected(index: int) -> void:
+	if index >= 0 and index < RESOLUTION_PRESETS.size():
+		SettingsManager.set_window_size(RESOLUTION_PRESETS[index])
 
 
 func _on_vsync_selected(index: int) -> void:
@@ -160,3 +233,16 @@ func _select_item_id(button: OptionButton, item_id: int) -> void:
 			button.select(i)
 			return
 	button.select(0)
+
+
+func _resolution_index(size: Vector2i) -> int:
+	for i in RESOLUTION_PRESETS.size():
+		if RESOLUTION_PRESETS[i] == size:
+			return i
+	return 0
+
+
+func _update_resolution_enabled() -> void:
+	if _resolution_button == null:
+		return
+	_resolution_button.disabled = SettingsManager.display_mode != SettingsManager.DisplayMode.WINDOWED

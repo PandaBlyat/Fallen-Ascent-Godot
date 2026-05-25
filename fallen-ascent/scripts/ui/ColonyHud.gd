@@ -47,9 +47,13 @@ const COLOR_METER_LOW := Color(1.0, 0.78, 0.2)
 const COLOR_FACTION_HOSTILE := Color(0.96, 0.36, 0.34, 1.0)
 const COLOR_FACTION_NEUTRAL := Color(0.97, 0.78, 0.32, 1.0)
 const HISTORY_VISIBLE_ROWS: int = 4
-const ENTITY_ATLAS_PATH := "res://resources/entities/placeholder_entities_atlas.png"
-const BOT_REGION := Rect2(Vector2.ZERO, Vector2(16, 16))
-const NEUTRAL_REGION := Rect2(Vector2(16, 0), Vector2(16, 16))
+const WORKER_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
+const BOTS_ATLAS_PATH := "res://resources/entities/bots_atlas.png"
+const WORKER_REGION_SIZE := Vector2(32, 32)
+const BOT_REGION_SIZE := Vector2(32, 32)
+const FACING_SOUTH: int = 0
+const NEUTRAL_ROW: int = 0
+const HOSTILE_ROW: int = 1
 const PALETTE_WIDTH: float = 580.0
 const PALETTE_HEIGHT: float = 200.0
 const TOP_STRIP_HEIGHT: float = 44.0
@@ -80,7 +84,8 @@ var _camera: CameraController
 var _selection_controller: SelectionController
 
 var _atlas: Texture2D
-var _entity_atlas: Texture2D
+var _worker_atlas: Texture2D
+var _bot_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
 var _current_tab: StringName = TAB_ORDERS
 var _command_grid: GridContainer
@@ -98,6 +103,7 @@ var _npc_strip: BoxContainer
 var _selected_workers: Array[Worker] = []
 var _selected_structure_id: int = -1
 var _selected_structure_anchor: Vector2i = Vector2i.ZERO
+var _selected_stockpile: StockpileZone = null
 var _selected_build_anchor: Vector2i = Pathfinder.UNREACHABLE
 var _top_strip: PanelContainer
 var _npc_panel: PanelContainer
@@ -105,6 +111,8 @@ var _inspect_panel: PanelContainer
 var _inspect_box: VBoxContainer
 var _inspected_node: Node = null
 var _inspected_faction: int = 0
+var _status_refresh_queued: bool = false
+var _last_npc_strip_count: int = -1
 
 
 func _ready() -> void:
@@ -118,7 +126,8 @@ func _ready() -> void:
 	_camera = get_node_or_null(camera_path) as CameraController
 	_selection_controller = get_node_or_null(selection_controller_path) as SelectionController
 	_atlas = load(UI_ATLAS_PATH) as Texture2D
-	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
+	_worker_atlas = load(WORKER_ATLAS_PATH) as Texture2D
+	_bot_atlas = load(BOTS_ATLAS_PATH) as Texture2D
 
 	_build_layout()
 	_connect_signals()
@@ -127,7 +136,7 @@ func _ready() -> void:
 
 	var refresh_timer := Timer.new()
 	refresh_timer.wait_time = 0.5
-	refresh_timer.timeout.connect(_refresh_status)
+	refresh_timer.timeout.connect(_refresh_dynamic_status)
 	add_child(refresh_timer)
 	refresh_timer.start()
 
@@ -140,9 +149,10 @@ func _connect_signals() -> void:
 		_job_board.job_completed.connect(_on_job_changed)
 		_job_board.job_cancelled.connect(_on_job_changed)
 	if _stockpile_manager != null:
-		_stockpile_manager.stockpile_changed.connect(_refresh_status)
+		_stockpile_manager.stockpile_changed.connect(_schedule_status_refresh)
 	EventBus.workers_selected.connect(_on_workers_selected)
 	EventBus.structure_selected.connect(_on_structure_selected)
+	EventBus.stockpile_selected.connect(_on_stockpile_selected)
 	EventBus.build_job_selected.connect(_on_build_job_selected)
 	EventBus.bot_inspected.connect(_on_bot_inspected)
 	EventBus.combatant_died.connect(_on_combatant_died)
@@ -533,20 +543,35 @@ func _on_command_pressed(mode: int) -> void:
 
 func _on_mode_changed(_mode: int) -> void:
 	_refresh_mode_buttons()
-	_refresh_status()
+	_schedule_status_refresh()
 
 
 func _on_job_changed(_job: Job) -> void:
 	if _selected_build_anchor != Pathfinder.UNREACHABLE and _job_board != null:
 		if _job_board.build_job_at(_selected_build_anchor) == null:
 			_selected_build_anchor = Pathfinder.UNREACHABLE
+	_schedule_status_refresh()
+
+
+func _schedule_status_refresh() -> void:
+	if _status_refresh_queued:
+		return
+	_status_refresh_queued = true
+	call_deferred("_refresh_status")
+
+
+func _refresh_dynamic_status() -> void:
 	_refresh_status()
+	_refresh_npc_strip_if_needed()
+	_refresh_selection_panel()
+	_refresh_inspect_card()
 
 
 func _on_workers_selected(workers: Array[Worker]) -> void:
 	_selected_workers = workers
 	if not _selected_workers.is_empty():
 		_selected_structure_id = -1
+		_selected_stockpile = null
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
@@ -560,6 +585,19 @@ func _on_structure_selected(id: int, anchor: Vector2i) -> void:
 	_selected_structure_anchor = anchor
 	if id >= 0:
 		_selected_workers.clear()
+		_selected_stockpile = null
+		_selected_build_anchor = Pathfinder.UNREACHABLE
+		_inspected_node = null
+		_inspected_faction = 0
+	_refresh_selection_panel()
+	_refresh_inspect_card()
+
+
+func _on_stockpile_selected(zone: Node) -> void:
+	_selected_stockpile = zone as StockpileZone
+	if _selected_stockpile != null:
+		_selected_workers.clear()
+		_selected_structure_id = -1
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
@@ -572,6 +610,7 @@ func _on_build_job_selected(anchor: Vector2i) -> void:
 	if anchor != Pathfinder.UNREACHABLE:
 		_selected_workers.clear()
 		_selected_structure_id = -1
+		_selected_stockpile = null
 		_inspected_node = null
 		_inspected_faction = 0
 	_refresh_selection_panel()
@@ -584,6 +623,7 @@ func _on_bot_inspected(node: Node, faction: int) -> void:
 	if node != null:
 		_selected_workers.clear()
 		_selected_structure_id = -1
+		_selected_stockpile = null
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_refresh_selection_panel()
 	_refresh_inspect_card()
@@ -637,6 +677,7 @@ func _refresh_mode_buttons() -> void:
 
 
 func _refresh_status() -> void:
+	_status_refresh_queued = false
 	var worker_count: int = _workers_root.get_child_count() if _workers_root != null else 0
 	var job_count: int = _job_board.pending_count() if _job_board != null else 0
 	_workers_label.text = "workers %d" % worker_count
@@ -650,9 +691,7 @@ func _refresh_status() -> void:
 			label.text = "%s %d" % [Item.kind_name(int(kind)), int(counts.get(kind, 0))]
 	if _wisdom_label != null and TechManager != null:
 		_wisdom_label.text = "wisdom %d" % int(roundf(TechManager.wisdom))
-	_refresh_npc_strip()
-	_refresh_selection_panel()
-	_refresh_inspect_card()
+	_refresh_npc_strip_if_needed()
 
 
 func _resource_counts() -> Dictionary:
@@ -748,11 +787,12 @@ func _refresh_inspect_card() -> void:
 
 
 func _npc_portrait() -> Texture2D:
-	if _entity_atlas == null:
+	if _bot_atlas == null:
 		return null
 	var icon := AtlasTexture.new()
-	icon.atlas = _entity_atlas
-	icon.region = NEUTRAL_REGION
+	icon.atlas = _bot_atlas
+	var row: int = HOSTILE_ROW if _inspected_faction == 2 else NEUTRAL_ROW
+	icon.region = Rect2(Vector2(FACING_SOUTH * int(BOT_REGION_SIZE.x), row * int(BOT_REGION_SIZE.y)), BOT_REGION_SIZE)
 	return icon
 
 
@@ -766,6 +806,8 @@ func _refresh_selection_panel() -> void:
 		_build_construction_card()
 	elif _selected_structure_id >= 0:
 		_build_structure_card()
+	elif _selected_stockpile != null and is_instance_valid(_selected_stockpile):
+		_build_stockpile_card()
 	elif not _selected_workers.is_empty():
 		_build_worker_cards()
 	_selection_panel.visible = _selection_box.get_child_count() > 0
@@ -996,6 +1038,30 @@ func _build_structure_card() -> void:
 		_add_card_line(card, "blocked", blocked, Color(1.0, 0.5, 0.35))
 
 
+func _build_stockpile_card() -> void:
+	if _selected_stockpile == null or not is_instance_valid(_selected_stockpile):
+		_selected_stockpile = null
+		return
+	var card := VBoxContainer.new()
+	card.custom_minimum_size = Vector2(360, 0)
+	card.add_theme_constant_override("separation", 5)
+	_selection_box.add_child(card)
+	_add_card_title(card, "Stockpile")
+	_add_card_line(card, "cells", "%d" % _selected_stockpile.cells.size())
+	_add_card_line(card, "stacks", "%d / %d" % [_selected_stockpile.stack_count(), _selected_stockpile.stack_capacity()])
+	_add_card_line(card, "items", "%d / %d" % [_selected_stockpile.stored_count(), _selected_stockpile.capacity()])
+	var counts: Dictionary = _selected_stockpile.resource_counts()
+	if counts.is_empty():
+		_add_card_line(card, "resources", "empty", COLOR_TEXT_MUTED)
+		return
+	_add_section_label(card, "resources")
+	for kind in _tracked_item_kinds():
+		var count: int = int(counts.get(kind, 0))
+		if count <= 0:
+			continue
+		_add_card_line(card, Item.kind_name(kind), "%d" % count, Item.kind_color(kind).lerp(Color.WHITE, 0.35))
+
+
 func _build_construction_card() -> void:
 	if _job_board == null:
 		return
@@ -1155,23 +1221,38 @@ func _refresh_npc_strip() -> void:
 		button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
 		button.pressed.connect(_focus_worker.bind(worker))
 		_npc_strip.add_child(button)
+	_last_npc_strip_count = _workers_root.get_child_count() if _workers_root != null else 0
+
+
+func _refresh_npc_strip_if_needed() -> void:
+	var count: int = _workers_root.get_child_count() if _workers_root != null else 0
+	if count != _last_npc_strip_count:
+		_refresh_npc_strip()
 
 
 func _focus_worker(worker: Worker) -> void:
 	if worker == null or not is_instance_valid(worker) or _camera == null:
 		return
+	_selected_workers = [worker]
+	_selected_structure_id = -1
+	_selected_stockpile = null
+	_selected_build_anchor = Pathfinder.UNREACHABLE
+	_inspected_node = null
+	_inspected_faction = 0
 	if _selection_controller != null:
 		var picked: Array[Worker] = [worker]
 		_selection_controller.select_workers(picked)
+	_refresh_selection_panel()
+	_refresh_inspect_card()
 	_camera.center_on(worker.global_position)
 
 
 func _bot_icon() -> Texture2D:
-	if _entity_atlas == null:
+	if _worker_atlas == null:
 		return null
 	var icon := AtlasTexture.new()
-	icon.atlas = _entity_atlas
-	icon.region = BOT_REGION
+	icon.atlas = _worker_atlas
+	icon.region = Rect2(Vector2.ZERO, WORKER_REGION_SIZE)
 	return icon
 
 

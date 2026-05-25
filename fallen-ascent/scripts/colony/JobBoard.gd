@@ -156,6 +156,8 @@ func claim_next_for(worker: Node, worker_grid: Vector2i) -> Job:
 	for job in pending:
 		if job.claimed_by != null:
 			continue
+		if job is MineJob and (job as MineJob).blocked_until_msec > now_msec:
+			continue
 		if job is BuildJob and (job as BuildJob).blocked_until_msec > now_msec:
 			continue
 		var t: Vector2i = _target_grid_of(job)

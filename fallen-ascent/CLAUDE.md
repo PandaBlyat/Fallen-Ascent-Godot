@@ -24,15 +24,24 @@ mind. When in doubt, prefer the cheaper approach now and measure before
 
 **Placeholder atlas rule.** Whenever a new item, resource, static object, or
 tile is added, also add a flat-color placeholder entry for it:
-- Single-tile terrain goes in `resources/tiles/placeholder_atlas.png`.
-- Multi-tile structures or object references go in
-  `resources/tiles/placeholder_atlas_multi_tile.png`.
-- Static world props that are not terrain, items, UI icons, or entities go in
-  `resources/objects/placeholder_static_objects_atlas.png`.
+- Connected floor-family terrain goes in `resources/tiles/floor_base_atlas.png`
+  using the 4-bit `N/E/S/W = 1/2/4/8` mask layout documented beside the PNG.
+- Connected water goes in `resources/tiles/water_atlas.png` using the same
+  4-bit mask layout.
+- Connected wall-family terrain goes in one wall atlas per wall type, e.g.
+  `wall_basic_atlas.png`, `wall_rich_atlas.png`, or
+  `wall_service_core_atlas.png`.
+- Rust visuals go in `resources/tiles/rust_overlay_atlas.png`; rust draws over
+  floor, not as a standalone base tile.
+- Structures go in `resources/objects/structures_atlas.png`.
+- Static world props that are not terrain, structures, items, UI icons, or
+  entities go in `resources/objects/placeholder_static_objects_atlas.png`.
 - Loose items and materials go in `resources/items/placeholder_items_atlas.png`.
+- Workers go in `resources/entities/worker_atlas.png`; neutral/hostile bots go
+  in `resources/entities/bots_atlas.png`.
 - UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
 - If terrain atlas cells change, update `resources/tiles/placeholder_tiles.tres`
-  so the new tile id has a TileSet atlas entry. Keep cells 16x16 aligned.
+  so the new tile id has a TileSet atlas entry. Keep cells 32x32 aligned.
 - Treat placeholder atlases as append-only. Add new cells by expanding the
   canvas or filling unused aligned cells; do not reshuffle or repaint existing
   cells unless every coordinate reference is updated in the same change.
@@ -72,7 +81,7 @@ fallen-ascent/
 │       └── SiteTooltip.gd       # hover info on world map
 └── resources/
     └── tiles/
-        └── placeholder_tiles.tres   # TileSet of flat-color 16×16 cells
+        └── placeholder_tiles.tres   # TileSet of flat-color 32×32 cells
 ```
 
 Naming convention for script roles:

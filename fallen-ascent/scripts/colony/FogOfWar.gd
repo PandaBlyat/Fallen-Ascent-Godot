@@ -7,8 +7,11 @@ extends Node2D
 
 const WORKER_SIGHT_RADIUS: int = 7
 const REFRESH_SECONDS: float = 0.18
-const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 0.994)
-const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.55)
+const FOG_Z_INDEX: int = 900
+const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 0.998)
+const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.76)
+const LIT_MEMORY_MIN_ALPHA: float = 0.22
+const VISIBLE_EDGE_ALPHA: float = 0.10
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
 @export var camera_path: NodePath
@@ -21,13 +24,19 @@ var _chunk_manager: ChunkManager
 var _workers_root: Node2D
 var _structure_manager: StructureManager
 var _explored: Dictionary = {}                   ## Vector2i -> true
-var _visible: Dictionary = {}                    ## Vector2i -> true
+var _visible: Dictionary = {}                    ## Vector2i -> sight strength 0..1
+var _lit_memory: Dictionary = {}                 ## Vector2i -> light strength 0..1
 var _accum: float = 0.0
 var _visibility_dirty: bool = true
 var _last_source_signature: PackedInt32Array = PackedInt32Array()
+var _visibility_mask_texture: ImageTexture = null
+var _light_mask_texture: ImageTexture = null
+var _mask_origin: Vector2i = Vector2i.ZERO
+var _mask_size: Vector2i = Vector2i.ONE
 
 
 func _ready() -> void:
+	z_index = FOG_Z_INDEX
 	_camera = get_node(camera_path) as Camera2D
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_workers_root = get_node(workers_root_path) as Node2D
@@ -55,6 +64,22 @@ func is_explored(grid: Vector2i) -> bool:
 
 func is_cell_visible(grid: Vector2i) -> bool:
 	return _visible.has(grid)
+
+
+func visibility_mask_texture() -> Texture2D:
+	return _visibility_mask_texture
+
+
+func light_mask_texture() -> Texture2D:
+	return _light_mask_texture
+
+
+func visibility_mask_origin() -> Vector2i:
+	return _mask_origin
+
+
+func visibility_mask_size() -> Vector2i:
+	return _mask_size
 
 
 func explored_cells() -> Array[Vector2i]:
@@ -102,7 +127,8 @@ func _refresh_visibility(signature: PackedInt32Array = PackedInt32Array()) -> vo
 		_explored[key] = true
 	_last_source_signature = signature
 	_visibility_dirty = false
-	if changed_bounds.size != Vector2i.ZERO:
+	_rebuild_mask_textures()
+	if changed_bounds.size != Vector2i.ZERO or not signature.is_empty():
 		EventBus.visibility_changed.emit(changed_bounds)
 		queue_redraw()
 
@@ -179,11 +205,89 @@ func _reveal_into(target: Dictionary, center: Vector2i, radius: int) -> void:
 			if not _chunk_manager.is_grid_in_map(g):
 				continue
 			var d := g - center
-			if d.x * d.x + d.y * d.y > r2:
+			var dist2: int = d.x * d.x + d.y * d.y
+			if dist2 > r2:
 				continue
 			if not LineOfSight.has_los(_chunk_manager, center, g):
 				continue
-			target[g] = true
+			var dist: float = sqrt(float(dist2))
+			var strength: float = clampf(1.0 - pow(dist / float(radius), 1.85), 0.08, 1.0)
+			target[g] = maxf(float(target.get(g, 0.0)), strength)
+
+
+func _rebuild_mask_textures() -> void:
+	if _chunk_manager == null:
+		return
+	var bounds: Rect2i = _chunk_manager.map_grid_bounds()
+	_mask_origin = bounds.position
+	_mask_size = Vector2i(maxi(1, bounds.size.x), maxi(1, bounds.size.y))
+	var visibility_image := Image.create(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8)
+	var light_image := Image.create(_mask_size.x, _mask_size.y, false, Image.FORMAT_RGBA8)
+	visibility_image.fill(Color(0.0, 0.0, 0.0, 1.0))
+	light_image.fill(Color(0.0, 0.0, 0.0, 0.0))
+	for key in _explored.keys():
+		var cell: Vector2i = key as Vector2i
+		if not bounds.has_point(cell):
+			continue
+		var local: Vector2i = cell - _mask_origin
+		visibility_image.set_pixel(local.x, local.y, Color(1.0, 0.0, 0.0, 1.0))
+	for key in _visible.keys():
+		var cell: Vector2i = key as Vector2i
+		if not bounds.has_point(cell):
+			continue
+		var local: Vector2i = cell - _mask_origin
+		var strength: float = clampf(float(_visible.get(cell, 1.0)), 0.0, 1.0)
+		visibility_image.set_pixel(local.x, local.y, Color(1.0, strength, strength, 1.0))
+	_rebuild_light_image(light_image, bounds)
+	if _visibility_mask_texture == null or _visibility_mask_texture.get_width() != _mask_size.x \
+			or _visibility_mask_texture.get_height() != _mask_size.y:
+		_visibility_mask_texture = ImageTexture.create_from_image(visibility_image)
+	else:
+		_visibility_mask_texture.update(visibility_image)
+	if _light_mask_texture == null or _light_mask_texture.get_width() != _mask_size.x \
+			or _light_mask_texture.get_height() != _mask_size.y:
+		_light_mask_texture = ImageTexture.create_from_image(light_image)
+	else:
+		_light_mask_texture.update(light_image)
+
+
+func _rebuild_light_image(light_image: Image, bounds: Rect2i) -> void:
+	_lit_memory.clear()
+	if _structure_manager == null or not _structure_manager.has_method("visual_light_sources"):
+		return
+	var sources: Array = _structure_manager.call("visual_light_sources") as Array
+	for raw_source in sources:
+		var source := raw_source as Dictionary
+		var center: Vector2i = source.get("grid", Vector2i.ZERO) as Vector2i
+		var radius: int = int(source.get("radius", 0))
+		if radius <= 0:
+			continue
+		var color: Color = source.get("color", Color(1.0, 0.88, 0.45, 1.0)) as Color
+		var intensity: float = clampf(float(source.get("intensity", 1.0)), 0.0, 2.0)
+		var r2: int = radius * radius
+		for y in range(center.y - radius, center.y + radius + 1):
+			for x in range(center.x - radius, center.x + radius + 1):
+				var g := Vector2i(x, y)
+				if not bounds.has_point(g) or not _explored.has(g):
+					continue
+				var d := g - center
+				var dist2: int = d.x * d.x + d.y * d.y
+				if dist2 > r2:
+					continue
+				if not LineOfSight.has_los(_chunk_manager, center, g):
+					continue
+				var dist: float = sqrt(float(dist2))
+				var falloff: float = pow(maxf(0.0, 1.0 - dist / float(radius)), 1.65) * intensity
+				_lit_memory[g] = maxf(float(_lit_memory.get(g, 0.0)), falloff)
+				var local: Vector2i = g - _mask_origin
+				var previous: Color = light_image.get_pixel(local.x, local.y)
+				var next := Color(
+					minf(1.0, previous.r + color.r * falloff),
+					minf(1.0, previous.g + color.g * falloff),
+					minf(1.0, previous.b + color.b * falloff),
+					minf(1.0, previous.a + falloff),
+				)
+				light_image.set_pixel(local.x, local.y, next)
 
 
 func _draw() -> void:
@@ -206,11 +310,19 @@ func _draw() -> void:
 		for x in range(lo.x, hi.x):
 			var g := Vector2i(x, y)
 			if _visible.has(g):
+				var sight_strength: float = clampf(float(_visible.get(g, 1.0)), 0.0, 1.0)
+				if sight_strength < 0.92:
+					var edge_alpha: float = (1.0 - sight_strength) * VISIBLE_EDGE_ALPHA
+					_draw_fog_run(x, x + 1, y, Color(0.0, 0.0, 0.0, edge_alpha))
 				if run_active:
 					_draw_fog_run(run_start, x, y, run_color)
 					run_active = false
 				continue
-			var color: Color = MEMORY_COLOR if _explored.has(g) else UNEXPLORED_COLOR
+			var color: Color = UNEXPLORED_COLOR
+			if _explored.has(g):
+				var lit: float = clampf(float(_lit_memory.get(g, 0.0)), 0.0, 1.0)
+				var alpha: float = lerpf(MEMORY_COLOR.a, LIT_MEMORY_MIN_ALPHA, smoothstep(0.05, 0.95, lit))
+				color = Color(MEMORY_COLOR.r, MEMORY_COLOR.g, MEMORY_COLOR.b, alpha)
 			if run_active and color == run_color:
 				continue
 			if run_active:

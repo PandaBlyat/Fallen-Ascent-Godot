@@ -218,7 +218,6 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 		_outlets[grid] = true
 	elif t == TerrainGenerator.TILE_RUST:
 		_rust_cells[grid] = true
-		_maybe_add_scrape_job(grid)
 	elif t == TerrainGenerator.TILE_TELEPORTER:
 		_add_teleporter(grid)
 	_record_diff(ccoord, local, t)
@@ -319,6 +318,28 @@ func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar
 		if pathfinder != null and not pathfinder.has_path(from, outlet):
 			continue
 		best = outlet
+		best_d = d
+	return best
+
+
+func random_nearby_rust(from: Vector2i, radius: int, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
+	if _rust_cells.is_empty():
+		return Pathfinder.UNREACHABLE
+	var keys: Array = _rust_cells.keys()
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for _attempt in range(mini(48, keys.size())):
+		var candidate: Vector2i = keys[randi() % keys.size()] as Vector2i
+		var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
+		if d > radius or d >= best_d:
+			continue
+		if fog != null and not fog.is_explored(candidate):
+			continue
+		if get_tile_at(candidate) != TerrainGenerator.TILE_RUST:
+			continue
+		if pathfinder != null and not pathfinder.has_path(from, candidate):
+			continue
+		best = candidate
 		best_d = d
 	return best
 
@@ -428,18 +449,8 @@ func _maybe_add_scrape_job(grid: Vector2i) -> void:
 
 
 func _on_visibility_changed(bounds: Rect2i) -> void:
-	if _job_board == null or _fog == null:
-		return
-	var lo: Vector2i = bounds.position
-	var hi: Vector2i = bounds.position + bounds.size
-	for y in range(lo.y, hi.y):
-		for x in range(lo.x, hi.x):
-			if _job_board.scrape_rust_count() >= max_scrape_jobs:
-				return
-			var grid := Vector2i(x, y)
-			if not _rust_cells.has(grid):
-				continue
-			_maybe_add_scrape_job(grid)
+	# Rust cleanup is intentional idle behavior now, not automatic colony work.
+	pass
 
 
 func _add_teleporter(grid: Vector2i) -> void:

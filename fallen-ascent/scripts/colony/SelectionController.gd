@@ -12,6 +12,7 @@ extends Node2D
 @export var pathfinder_path: NodePath
 @export var designator_path: NodePath
 @export var job_board_path: NodePath
+@export var stockpile_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var structure_manager_path: NodePath
 @export var neutrals_root_path: NodePath
@@ -39,6 +40,7 @@ var _chunk_manager: ChunkManager
 var _pathfinder: Pathfinder
 var _designator: Designator
 var _job_board: JobBoard
+var _stockpile_manager: StockpileManager
 var _fog: FogOfWar
 var _structure_manager: StructureManager
 var _neutrals_root: Node2D
@@ -64,6 +66,7 @@ func _ready() -> void:
 	_pathfinder = get_node(pathfinder_path) as Pathfinder
 	_designator = get_node(designator_path) as Designator
 	_job_board = get_node_or_null(job_board_path) as JobBoard
+	_stockpile_manager = get_node_or_null(stockpile_manager_path) as StockpileManager
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
 	_neutrals_root = get_node_or_null(neutrals_root_path) as Node2D
@@ -157,12 +160,14 @@ func _finish_drag(screen_pos: Vector2) -> void:
 		_select_many(_workers_in_rect(_drag_start_world, _drag_end_world))
 		EventBus.bot_inspected.emit(null, 0)
 		EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+		EventBus.stockpile_selected.emit(null)
 		EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 	else:
 		var workers: Array[Worker] = _worker_under(_drag_end_world)
 		if not workers.is_empty():
 			_select_many(workers)
 			EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+			EventBus.stockpile_selected.emit(null)
 			EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 			EventBus.bot_inspected.emit(null, 0)
 		else:
@@ -170,20 +175,29 @@ func _finish_drag(screen_pos: Vector2) -> void:
 			if npc != null:
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.stockpile_selected.emit(null)
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				var faction_id: int = int(npc.call("faction")) if npc.has_method("faction") else 0
 				EventBus.bot_inspected.emit(npc, faction_id)
 			elif _try_select_build_job(_drag_end_world):
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.stockpile_selected.emit(null)
+				EventBus.bot_inspected.emit(null, 0)
+			elif _try_select_stockpile(_drag_end_world):
+				_select_many([])
+				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 			elif _try_select_structure(_drag_end_world):
 				_select_many([])
+				EventBus.stockpile_selected.emit(null)
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 			else:
 				_select_many([])
 				EventBus.structure_selected.emit(-1, Vector2i.ZERO)
+				EventBus.stockpile_selected.emit(null)
 				EventBus.build_job_selected.emit(Pathfinder.UNREACHABLE)
 				EventBus.bot_inspected.emit(null, 0)
 	queue_redraw()
@@ -194,7 +208,7 @@ func _handle_right_click(shift_held: bool) -> void:
 	# Attack any hostile/neutral under cursor (multi-bot via stand spreading).
 	var attack_target: Node2D = _attackable_under(world_pos)
 	if attack_target != null:
-		_command_group_attack(attack_target)
+		_command_group_attack(attack_target, shift_held)
 		_show_entity_order_highlight(attack_target)
 		return
 	var grid: Vector2i = Vector2i(
@@ -207,7 +221,7 @@ func _handle_right_click(shift_held: bool) -> void:
 	var build: BuildJob = _job_board.build_job_at(grid) if _job_board != null else null
 	if build != null:
 		var worker: Worker = selected_worker()
-		if worker != null and is_instance_valid(worker) and worker.command_take_build_job(build):
+		if worker != null and is_instance_valid(worker) and _take_or_queue_build_job(worker, build, shift_held):
 			_show_order_highlight(build.anchor)
 		elif worker != null and is_instance_valid(worker):
 			_show_order_failed(grid, "No path", worker)
@@ -218,28 +232,28 @@ func _handle_right_click(shift_held: bool) -> void:
 			or tile == TerrainGenerator.TILE_RICH_WALL:
 		var miner: Worker = selected_worker()
 		if miner != null and is_instance_valid(miner):
-			miner.command_mine(grid)
+			if shift_held:
+				miner.queue_command_mine(grid)
+			else:
+				miner.command_mine(grid)
 			_show_order_highlight(grid)
 		return
 	if tile == TerrainGenerator.TILE_RUST:
 		var scraper: Worker = selected_worker()
 		if scraper != null and is_instance_valid(scraper):
-			scraper.command_scrape_rust(grid)
-			_show_order_highlight(grid)
-		return
-	if shift_held and _is_walkable_order_tile(tile):
-		var builder: Worker = selected_worker()
-		if builder != null and is_instance_valid(builder):
-			builder.command_build(grid)
+			if shift_held:
+				scraper.queue_command_scrape_rust(grid)
+			else:
+				scraper.command_scrape_rust(grid)
 			_show_order_highlight(grid)
 		return
 	if tile == TerrainGenerator.TILE_OUTLET:
-		if _command_one_worker_to_charge(grid):
+		if _command_one_worker_to_charge(grid, shift_held):
 			_show_order_highlight(grid)
 		else:
 			_show_order_failed(grid, "Outlet unavailable")
 	elif _is_walkable_order_tile(tile):
-		if _command_group_move(grid):
+		if _command_group_move(grid, shift_held):
 			_show_order_highlight(grid)
 		else:
 			_show_order_failed(grid, "No path")
@@ -247,21 +261,29 @@ func _handle_right_click(shift_held: bool) -> void:
 		_show_order_failed(grid, "Blocked tile")
 
 
-func _command_one_worker_to_charge(grid: Vector2i) -> bool:
+func _take_or_queue_build_job(worker: Worker, build: BuildJob, append: bool) -> bool:
+	if append:
+		return worker.queue_command_take_build_job(build)
+	return worker.command_take_build_job(build)
+
+
+func _command_one_worker_to_charge(grid: Vector2i, append: bool = false) -> bool:
 	for worker in _selected_by_distance(grid):
-		if worker.command_charge(grid):
+		var accepted: bool = worker.queue_command_charge(grid) if append else worker.command_charge(grid)
+		if accepted:
 			return true
 	return false
 
 
-func _command_group_move(grid: Vector2i) -> bool:
+func _command_group_move(grid: Vector2i, append: bool = false) -> bool:
 	var workers: Array[Worker] = _selected_by_distance(grid)
 	var assigned: Dictionary = {}
 	for worker in workers:
 		var target: Vector2i = _best_group_target_for(worker, grid, assigned)
 		if target == Pathfinder.UNREACHABLE:
 			continue
-		if worker.command_move(target):
+		var accepted: bool = worker.queue_command_move(target) if append else worker.command_move(target)
+		if accepted:
 			assigned[target] = true
 	return not assigned.is_empty()
 
@@ -426,7 +448,7 @@ func _attackable_under(world_pos: Vector2) -> Node2D:
 	return best
 
 
-func _command_group_attack(target: Node2D) -> void:
+func _command_group_attack(target: Node2D, append: bool = false) -> void:
 	if target == null or not is_instance_valid(target):
 		return
 	var target_grid: Vector2i = target.call("current_grid") as Vector2i
@@ -438,7 +460,10 @@ func _command_group_attack(target: Node2D) -> void:
 		if not worker.has_method("command_attack"):
 			continue
 		var stand: Vector2i = _best_attack_stand(worker, target_grid, assigned_stand)
-		worker.call("command_attack", target, stand)
+		if append:
+			worker.queue_command_attack(target, stand)
+		else:
+			worker.call("command_attack", target, stand)
 		if stand != Pathfinder.UNREACHABLE:
 			assigned_stand[stand] = true
 
@@ -523,6 +548,22 @@ func _try_select_structure(world_pos: Vector2) -> bool:
 	if structure.is_empty():
 		return false
 	EventBus.structure_selected.emit(int(structure["id"]), structure["anchor"] as Vector2i)
+	return true
+
+
+func _try_select_stockpile(world_pos: Vector2) -> bool:
+	if _stockpile_manager == null:
+		return false
+	var grid := Vector2i(
+		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
+		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
+	)
+	if _fog != null and not _fog.is_explored(grid):
+		return false
+	var zone: StockpileZone = _stockpile_manager.zone_at(grid)
+	if zone == null:
+		return false
+	EventBus.stockpile_selected.emit(zone)
 	return true
 
 

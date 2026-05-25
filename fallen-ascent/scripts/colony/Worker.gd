@@ -47,7 +47,7 @@ const FACTION_COLONY: int = 0
 const MOVE_SPEED_PX_PER_SEC: float = 48.0
 const ARRIVE_EPSILON_PX: float = 1.0
 const IDLE_RETRY_SECONDS: float = 0.5
-const BODY_RADIUS: float = 5.0
+const BODY_RADIUS: float = 12.0
 const BODY_COLOR := Color(0.85, 0.85, 0.95)
 const SELECTION_COLOR := Color(1.0, 0.95, 0.4, 0.55)
 const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
@@ -63,8 +63,16 @@ const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
-const ENTITY_ATLAS_PATH := "res://resources/entities/placeholder_entities_atlas.png"
-const BOT_REGION := Rect2(Vector2.ZERO, Vector2(16, 16))
+const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
+const ENTITY_REGION_SIZE := Vector2(32, 32)
+const FACING_SOUTH: int = 0
+const FACING_SOUTH_EAST: int = 1
+const FACING_EAST: int = 2
+const FACING_NORTH_EAST: int = 3
+const FACING_NORTH: int = 4
+const FACING_NORTH_WEST: int = 5
+const FACING_WEST: int = 6
+const FACING_SOUTH_WEST: int = 7
 const CONDITION_MAX: float = 100.0
 const MENTAL_TIRED_MAX: float = 100.0
 const CONDITION_MOVE_DECAY_PER_SEC: float = 0.035
@@ -88,12 +96,24 @@ const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
 const TELEPORT_COOLDOWN_SECONDS: float = 1.0
 const SCRAPE_RUST_DURATION: float = 1.4
 const IDLE_SAMPLE_LIMIT: int = 48
+const IDLE_SCRAPE_RUST_RADIUS: int = 14
 const ACTION_HISTORY_LIMIT: int = 96
-const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -24.0)
+const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -34.0)
 const BLOCKED_ACTION_SECONDS: float = 2.0
+const CROWD_FRAME_META: StringName = &"fa_crowd_frame"
+const CROWD_CELLS_META: StringName = &"fa_crowd_cells"
 const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
 const WISDOM_PER_SEC: float = 0.6
 const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
+const ASSIGNED_DOCK_REST_MULTIPLIER: float = 1.6
+const ASSIGNED_DOCK_MOOD_PER_SEC: float = 0.35
+const ORDER_MOVE := &"move"
+const ORDER_MINE := &"mine"
+const ORDER_SCRAPE_RUST := &"scrape_rust"
+const ORDER_BUILD := &"build"
+const ORDER_TAKE_BUILD_JOB := &"take_build_job"
+const ORDER_CHARGE := &"charge"
+const ORDER_ATTACK := &"attack"
 
 var _state: int = State.IDLE
 var _job: Job = null
@@ -118,6 +138,7 @@ var _activity_timer: float = 0.0
 var _activity_target: Vector2i = Vector2i.ZERO
 var _activity_partner: Worker = null
 var _entity_atlas: Texture2D
+var _facing: int = FACING_SOUTH
 var _action_history: Array[String] = []
 var _wisdom_carry: float = 0.0
 var _history_index: int = 0
@@ -139,6 +160,7 @@ var _stun_remaining: float = 0.0
 var _dead: bool = false
 var _crowd_slow_remaining: float = 0.0
 var _crowd_contacts: Dictionary = {}
+var _direct_order_queue: Array[Dictionary] = []
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -187,7 +209,6 @@ func _ready() -> void:
 	stats.stun_on_hit_seconds = 0.15
 	stats.dodge_chance = 0.12
 	if _job_board != null:
-		_job_board.job_added.connect(_on_job_added)
 		_job_board.job_cancelled.connect(_on_job_cancelled)
 	EventBus.tile_changed.connect(_on_tile_changed)
 	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
@@ -233,11 +254,17 @@ func apply_knockback(vec: Vector2, stun_seconds: float) -> void:
 	_stun_remaining = maxf(_stun_remaining, stun_seconds)
 
 
-func command_attack(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNREACHABLE) -> bool:
+func command_attack(
+	target: Node2D,
+	preferred_stand: Vector2i = Pathfinder.UNREACHABLE,
+	clear_queue: bool = true
+) -> bool:
 	if _dead or target == null or not is_instance_valid(target):
 		return false
 	if target.has_method("is_alive") and not bool(target.call("is_alive")):
 		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	_enter_fighting(target, preferred_stand)
 	_remember("ordered to attack %s" % _target_label(target))
@@ -490,6 +517,58 @@ func state_label() -> String:
 			return "unknown"
 
 
+func activity_fx() -> Dictionary:
+	match _state:
+		State.WORKING:
+			if _job is MineJob:
+				var mine := _job as MineJob
+				return {
+					"grid": mine.target,
+					"kind": 1,
+					"progress": clampf(mine.progress / MineJob.DURATION, 0.0, 1.0),
+					"intensity": 0.9,
+				}
+			if _is_scrape_job(_job):
+				var target: Vector2i = _job.get("target") as Vector2i
+				return {
+					"grid": target,
+					"kind": 1,
+					"progress": clampf(float(_job.get("progress")) / SCRAPE_RUST_DURATION, 0.0, 1.0),
+					"intensity": 0.55,
+				}
+		State.BUILDING:
+			var build := _job as BuildJob
+			if build != null:
+				return {
+					"grid": build.anchor,
+					"kind": 2,
+					"progress": clampf(build.progress / build.build_duration(), 0.0, 1.0),
+					"intensity": 0.85,
+				}
+		State.CHARGING:
+			return {
+				"grid": _charge_target if _charge_target != Vector2i.ZERO else current_grid(),
+				"kind": 3,
+				"progress": clampf(_energy / ENERGY_MAX, 0.0, 1.0),
+				"intensity": 0.75,
+			}
+		State.REPAIRING:
+			return {
+				"grid": current_grid(),
+				"kind": 4,
+				"progress": clampf(_condition / CONDITION_MAX, 0.0, 1.0),
+				"intensity": 0.55,
+			}
+		State.MEDITATING:
+			return {
+				"grid": _activity_target if _activity_target != Vector2i.ZERO else current_grid(),
+				"kind": 5,
+				"progress": 1.0,
+				"intensity": 0.65,
+			}
+	return {}
+
+
 func _on_job_added(_added_job: Job) -> void:
 	if _state == State.IDLE:
 		_idle_cooldown = 0.0
@@ -540,6 +619,8 @@ func _process(delta: float) -> void:
 		return
 	match _state:
 		State.IDLE:
+			if _try_start_next_direct_order():
+				return
 			_idle_cooldown -= delta
 			if _idle_cooldown <= 0.0:
 				_idle_cooldown = IDLE_RETRY_SECONDS
@@ -549,13 +630,14 @@ func _process(delta: float) -> void:
 			if _advance_path(delta):
 				_state = State.WORKING
 		State.WORKING:
+			var work_delta: float = delta * _light_speed_multiplier()
 			if _job is MineJob:
 				var mine := _job as MineJob
-				mine.progress += delta
+				mine.progress += work_delta
 				if mine.progress >= MineJob.DURATION:
 					_complete_mine(mine)
 			elif _is_scrape_job(_job):
-				var scrape_progress: float = float(_job.get("progress")) + delta
+				var scrape_progress: float = float(_job.get("progress")) + work_delta
 				_job.set("progress", scrape_progress)
 				if scrape_progress >= SCRAPE_RUST_DURATION:
 					_complete_scrape_rust(_job)
@@ -576,7 +658,7 @@ func _process(delta: float) -> void:
 			if build == null:
 				_abandon_job()
 				return
-			build.progress += delta
+			build.progress += delta * _light_speed_multiplier()
 			if build.progress >= build.build_duration():
 				_complete_build(build)
 		State.MOVING_FREEFORM:
@@ -604,7 +686,11 @@ func _process(delta: float) -> void:
 				_activity_timer = randf_range(3.0, 6.0)
 		State.RESTING:
 			_activity_timer -= delta
-			_mental_tiredness = maxf(0.0, _mental_tiredness - REST_RECOVERY_PER_SEC * delta)
+			var rest_rate: float = REST_RECOVERY_PER_SEC
+			if _resting_in_assigned_dock_room():
+				rest_rate *= ASSIGNED_DOCK_REST_MULTIPLIER
+				_mood = clampf(_mood + ASSIGNED_DOCK_MOOD_PER_SEC * delta, 0.0, MOOD_MAX)
+			_mental_tiredness = maxf(0.0, _mental_tiredness - rest_rate * delta)
 			if _activity_timer <= 0.0 or _mental_tiredness <= 1.0:
 				_state = State.IDLE
 				_idle_cooldown = randf_range(0.5, 1.5)
@@ -720,6 +806,49 @@ func _try_claim_job() -> bool:
 	return true
 
 
+func _try_start_next_direct_order() -> bool:
+	while not _direct_order_queue.is_empty():
+		var order: Dictionary = _direct_order_queue.pop_front()
+		if _start_direct_order(order):
+			return true
+	return false
+
+
+func _start_direct_order(order: Dictionary) -> bool:
+	var kind: StringName = order.get("kind", &"") as StringName
+	match kind:
+		ORDER_MOVE:
+			return command_move(order.get("target", current_grid()) as Vector2i, false)
+		ORDER_MINE:
+			return command_mine(order.get("target", current_grid()) as Vector2i, false)
+		ORDER_SCRAPE_RUST:
+			return command_scrape_rust(order.get("target", current_grid()) as Vector2i, false)
+		ORDER_BUILD:
+			return command_build(
+				order.get("target", current_grid()) as Vector2i,
+				int(order.get("blueprint_id", BuildBlueprint.Id.WALL)),
+				false
+			)
+		ORDER_TAKE_BUILD_JOB:
+			var anchor: Vector2i = order.get("anchor", Pathfinder.UNREACHABLE) as Vector2i
+			var build: BuildJob = _job_board.build_job_at(anchor) if _job_board != null else null
+			return command_take_build_job(build, false)
+		ORDER_CHARGE:
+			return command_charge(order.get("target", current_grid()) as Vector2i, false)
+		ORDER_ATTACK:
+			var target := order.get("target") as Node2D
+			var stand: Vector2i = order.get("stand", Pathfinder.UNREACHABLE) as Vector2i
+			return command_attack(target, stand, false)
+	return false
+
+
+func _enqueue_direct_order(order: Dictionary, label: String) -> bool:
+	_direct_order_queue.append(order)
+	_idle_cooldown = 0.0
+	_remember("queued " + label)
+	return true
+
+
 func add_social(amount: float) -> void:
 	_social = clampf(_social + amount, 0.0, SOCIAL_MAX)
 
@@ -745,35 +874,57 @@ func _choose_idle_behavior() -> void:
 			[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
 			State.MOVING_TO_REPAIR):
 		return
-	if _mental_tiredness >= 55.0 and _begin_structure_activity([BuildBlueprint.Id.DOCK], State.MOVING_TO_REST):
+	if _mental_tiredness >= 55.0 and _begin_assigned_dock_rest():
 		return
 	var roll: float = randf()
-	if roll < 0.12:
+	if roll < 0.06:
+		if not _begin_idle_scrape_rust():
+			_idle_cooldown = randf_range(1.0, 2.5)
+	elif roll < 0.18:
 		# Meditation: low-priority wisdom generator. Skipped silently if no pad exists.
 		if not _begin_structure_activity([BuildBlueprint.Id.MEDITATION_PAD], State.MOVING_TO_MEDITATE):
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.26:
+	elif roll < 0.30:
 		_idle_cooldown = randf_range(1.2, 4.0)
-	elif roll < 0.42:
+	elif roll < 0.46:
 		if not _begin_roam(false):
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.56:
+	elif roll < 0.60:
 		if not _begin_roam(true):
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.68:
+	elif roll < 0.72:
 		var outlet: Vector2i = _chunk_manager.nearest_outlet(current_grid(), _pathfinder, _fog, self)
 		if outlet != Pathfinder.UNREACHABLE and _energy < ENERGY_MAX:
 			_begin_charge(outlet)
 		else:
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.82:
+	elif roll < 0.86:
 		if not _begin_socialize():
 			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.94:
-		if not _begin_structure_activity([BuildBlueprint.Id.DOCK], State.MOVING_TO_REST):
+	elif roll < 0.96:
+		if not _begin_assigned_dock_rest() and not _begin_structure_activity([BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK], State.MOVING_TO_REST):
 			_idle_cooldown = randf_range(1.0, 2.5)
 	else:
 		_idle_cooldown = randf_range(3.0, 7.0)
+
+
+func _begin_idle_scrape_rust() -> bool:
+	if _chunk_manager == null or _job_board == null or _pathfinder == null:
+		return false
+	var target: Vector2i = _chunk_manager.random_nearby_rust(
+		current_grid(),
+		IDLE_SCRAPE_RUST_RADIUS,
+		_pathfinder,
+		_fog,
+	)
+	if target == Pathfinder.UNREACHABLE or _job_board.has_scrape_rust_at(target):
+		return false
+	var job: Job = _job_board.add_scrape_rust_job(target)
+	job.claimed_by = self
+	_job = job
+	_begin_scrape_rust(job)
+	_remember("idle scrape rust %d,%d" % [target.x, target.y])
+	return true
 
 
 func _begin_roam(frontier: bool) -> bool:
@@ -834,6 +985,31 @@ func _begin_structure_activity(ids: Array, next_state: int) -> bool:
 	_activity_target = anchor
 	_state = next_state
 	return true
+
+
+func _begin_assigned_dock_rest() -> bool:
+	if _room_manager == null or not _room_manager.has_method("dock_anchor_for"):
+		return _begin_structure_activity([BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK], State.MOVING_TO_REST)
+	var anchor: Vector2i = _room_manager.call("dock_anchor_for", self) as Vector2i
+	if anchor == Pathfinder.UNREACHABLE or _structure_manager == null:
+		return _begin_structure_activity([BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK], State.MOVING_TO_REST)
+	var target: Vector2i = _structure_manager.interaction_cell_for(anchor)
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_path = path
+	_path_index = 0
+	_activity_target = anchor
+	_state = State.MOVING_TO_REST
+	return true
+
+
+func _resting_in_assigned_dock_room() -> bool:
+	if _room_manager == null or not _room_manager.has_method("dock_anchor_for"):
+		return false
+	return (_room_manager.call("dock_anchor_for", self) as Vector2i) == _activity_target
 
 
 func _begin_socialize() -> bool:
@@ -1022,9 +1198,14 @@ func _begin_mine(job: MineJob) -> void:
 		return
 	var stand: Vector2i = _reachable_neighbor_of(job.target)
 	if stand == Pathfinder.UNREACHABLE:
-		_cancel_mine_job(job)
+		job.block_briefly()
+		_release_and_idle()
 		return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		job.block_briefly()
+		_release_and_idle()
+		return
 	_path = path
 	_path_index = 0
 	_state = State.MOVING_TO_WORK
@@ -1573,7 +1754,74 @@ func _reachable_neighbor_of(grid: Vector2i) -> Vector2i:
 
 # ----- Direct orders from the player ---------------------------------------
 
-func command_move(target: Vector2i) -> bool:
+func queue_command_move(target: Vector2i) -> bool:
+	if not _chunk_manager.is_walkable(target):
+		show_order_failed("Blocked tile")
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_MOVE,
+		"target": target,
+	}, "move to %d,%d" % [target.x, target.y])
+
+
+func queue_command_mine(target: Vector2i) -> bool:
+	var tile: int = _chunk_manager.get_tile_at(target)
+	if tile != TerrainGenerator.TILE_WALL \
+			and tile != TerrainGenerator.TILE_SERVICE_CORE \
+			and tile != TerrainGenerator.TILE_RICH_WALL:
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_MINE,
+		"target": target,
+	}, "mine %d,%d" % [target.x, target.y])
+
+
+func queue_command_scrape_rust(target: Vector2i) -> bool:
+	if _chunk_manager.get_tile_at(target) != TerrainGenerator.TILE_RUST:
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_SCRAPE_RUST,
+		"target": target,
+	}, "scrape rust %d,%d" % [target.x, target.y])
+
+
+func queue_command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> bool:
+	return _enqueue_direct_order({
+		"kind": ORDER_BUILD,
+		"target": target,
+		"blueprint_id": blueprint_id,
+	}, "build %s at %d,%d" % [BuildBlueprint.display_name(blueprint_id), target.x, target.y])
+
+
+func queue_command_take_build_job(job: BuildJob) -> bool:
+	if job == null:
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_TAKE_BUILD_JOB,
+		"anchor": job.anchor,
+	}, "build %s at %d,%d" % [BuildBlueprint.display_name(job.blueprint_id), job.anchor.x, job.anchor.y])
+
+
+func queue_command_charge(target: Vector2i) -> bool:
+	if not _chunk_manager.is_outlet(target):
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_CHARGE,
+		"target": target,
+	}, "charge at %d,%d" % [target.x, target.y])
+
+
+func queue_command_attack(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNREACHABLE) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_ATTACK,
+		"target": target,
+		"stand": preferred_stand,
+	}, "attack %s" % _target_label(target))
+
+
+func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 	if not _chunk_manager.is_walkable(target):
 		show_order_failed("Blocked tile")
 		return false
@@ -1582,6 +1830,8 @@ func command_move(target: Vector2i) -> bool:
 		show_order_failed("No path")
 		return false
 	# Abort whatever we were doing only after destination is valid.
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	_path = path
 	_path_index = 0
@@ -1590,7 +1840,7 @@ func command_move(target: Vector2i) -> bool:
 	return true
 
 
-func command_mine(target: Vector2i) -> void:
+func command_mine(target: Vector2i, clear_queue: bool = true) -> bool:
 	# Add a mine designation (if needed) and immediately take it for ourselves.
 	# If something else already had this job claimed, cancelling drops their
 	# claim cleanly via the job_cancelled signal.
@@ -1598,7 +1848,9 @@ func command_mine(target: Vector2i) -> void:
 	if tile != TerrainGenerator.TILE_WALL \
 			and tile != TerrainGenerator.TILE_SERVICE_CORE \
 			and tile != TerrainGenerator.TILE_RICH_WALL:
-		return
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	if _job_board.has_mine_at(target):
 		_job_board.cancel_mine_at(target)
@@ -1607,11 +1859,14 @@ func command_mine(target: Vector2i) -> void:
 	_job = job
 	_remember("ordered to mine %d,%d" % [target.x, target.y])
 	_begin_mine(job)
+	return true
 
 
-func command_scrape_rust(target: Vector2i) -> void:
+func command_scrape_rust(target: Vector2i, clear_queue: bool = true) -> bool:
 	if _chunk_manager.get_tile_at(target) != TerrainGenerator.TILE_RUST:
-		return
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	if _job_board.has_scrape_rust_at(target):
 		_job_board.cancel_scrape_rust_at(target)
@@ -1620,14 +1875,21 @@ func command_scrape_rust(target: Vector2i) -> void:
 	_job = job
 	_remember("ordered to scrape rust %d,%d" % [target.x, target.y])
 	_begin_scrape_rust(job)
+	return true
 
 
-func command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL) -> void:
+func command_build(
+	target: Vector2i,
+	blueprint_id: int = BuildBlueprint.Id.WALL,
+	clear_queue: bool = true
+) -> bool:
 	if _colony_site != null and _colony_site.has_method("can_place_blueprint"):
 		if not (_colony_site.call("can_place_blueprint", blueprint_id, target) as bool):
-			return
+			return false
 	elif not _chunk_manager.is_walkable(target):
-		return
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	if _job_board.has_build_at(target):
 		_job_board.cancel_build_at(target)
@@ -1640,11 +1902,14 @@ func command_build(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL)
 		target.y,
 	])
 	_begin_build(job)
+	return true
 
 
-func command_take_build_job(job: BuildJob) -> bool:
+func command_take_build_job(job: BuildJob, clear_queue: bool = true) -> bool:
 	if job == null or _job_board == null or not _job_board.is_active(job):
 		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	if not _job_board.force_claim(job, self):
 		return false
@@ -1658,11 +1923,13 @@ func command_take_build_job(job: BuildJob) -> bool:
 	return true
 
 
-func command_charge(target: Vector2i) -> bool:
+func command_charge(target: Vector2i, clear_queue: bool = true) -> bool:
 	if not _chunk_manager.is_outlet(target):
 		return false
 	if _fog != null and not _fog.is_explored(target):
 		return false
+	if clear_queue:
+		_direct_order_queue.clear()
 	_abandon_job()
 	_manual_charging = true
 	_remember("ordered to charge at %d,%d" % [target.x, target.y])
@@ -1675,11 +1942,14 @@ func _advance_path(delta: float) -> bool:
 	if _path_index >= _path.size():
 		return true
 	var speed_mult: float = CROWD_SLOW_MULTIPLIER if _crowd_slow_remaining > 0.0 else 1.0
+	speed_mult *= _light_speed_multiplier()
 	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
 		var to_target: Vector2 = target - position
 		var dist: float = to_target.length()
+		if dist > ARRIVE_EPSILON_PX:
+			_set_facing_from_vector(to_target)
 		if dist <= step + ARRIVE_EPSILON_PX:
 			position = target
 			step -= dist
@@ -1689,6 +1959,26 @@ func _advance_path(delta: float) -> bool:
 			step = 0.0
 	_update_crowding_contacts()
 	return _path_index >= _path.size()
+
+
+func _light_speed_multiplier() -> float:
+	if _structure_manager == null or not _structure_manager.has_method("light_speed_multiplier_at"):
+		return 1.0
+	return clampf(float(_structure_manager.call("light_speed_multiplier_at", current_grid())), 1.0, 1.5)
+
+
+func _set_facing_from_vector(delta_pos: Vector2) -> void:
+	var ax: float = absf(delta_pos.x)
+	var ay: float = absf(delta_pos.y)
+	if ax > ay * 2.0:
+		_facing = FACING_EAST if delta_pos.x > 0.0 else FACING_WEST
+	elif ay > ax * 2.0:
+		_facing = FACING_SOUTH if delta_pos.y > 0.0 else FACING_NORTH
+	elif delta_pos.x > 0.0:
+		_facing = FACING_SOUTH_EAST if delta_pos.y > 0.0 else FACING_NORTH_EAST
+	else:
+		_facing = FACING_SOUTH_WEST if delta_pos.y > 0.0 else FACING_NORTH_WEST
+	queue_redraw()
 
 
 func apply_crowding_slow() -> void:
@@ -1701,11 +1991,11 @@ func _update_crowding_contacts() -> void:
 		return
 	var here: Vector2i = current_grid()
 	var seen: Dictionary = {}
-	for sibling in parent_node.get_children():
-		var other := sibling as Worker
+	var cells: Dictionary = _crowd_cells_for(parent_node)
+	var occupants: Array = cells.get(here, []) as Array
+	for occupant in occupants:
+		var other := occupant as Worker
 		if other == null or other == self or not is_instance_valid(other):
-			continue
-		if other.current_grid() != here:
 			continue
 		seen[other] = true
 		if _crowd_contacts.has(other):
@@ -1716,6 +2006,24 @@ func _update_crowding_contacts() -> void:
 	for other in _crowd_contacts.keys():
 		if not seen.has(other):
 			_crowd_contacts.erase(other)
+
+
+func _crowd_cells_for(parent_node: Node) -> Dictionary:
+	var frame: int = Engine.get_process_frames()
+	if int(parent_node.get_meta(CROWD_FRAME_META, -1)) == frame:
+		return parent_node.get_meta(CROWD_CELLS_META, {}) as Dictionary
+	var cells: Dictionary = {}
+	for child in parent_node.get_children():
+		var worker := child as Worker
+		if worker == null or not is_instance_valid(worker):
+			continue
+		var grid: Vector2i = worker.current_grid()
+		var bucket: Array = cells.get(grid, []) as Array
+		bucket.append(worker)
+		cells[grid] = bucket
+	parent_node.set_meta(CROWD_FRAME_META, frame)
+	parent_node.set_meta(CROWD_CELLS_META, cells)
+	return cells
 
 
 func _update_energy(delta: float) -> void:
@@ -1804,6 +2112,13 @@ func _damage_limb(amount: float) -> void:
 func _repair_limbs(amount: float) -> void:
 	for limb_name in LIMB_NAMES:
 		_limbs[limb_name] = minf(CONDITION_MAX, float(_limbs.get(limb_name, CONDITION_MAX)) + amount)
+
+
+func repair_limbs_external(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	_repair_limbs(amount)
+	_condition = minf(CONDITION_MAX, _condition + amount * 0.35)
 
 
 func _check_teleporter() -> void:
@@ -1960,7 +2275,12 @@ func _draw() -> void:
 		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.0)
 	if _entity_atlas != null:
-		draw_texture_rect_region(_entity_atlas, Rect2(Vector2(-8, -8), Vector2(16, 16)), BOT_REGION)
+		var atlas_cell: Vector2i = _facing_atlas_cell()
+		var source := Rect2(
+			Vector2(atlas_cell.x * int(ENTITY_REGION_SIZE.x), atlas_cell.y * int(ENTITY_REGION_SIZE.y)),
+			ENTITY_REGION_SIZE,
+		)
+		draw_texture_rect_region(_entity_atlas, Rect2(-ENTITY_REGION_SIZE * 0.5, ENTITY_REGION_SIZE), source)
 	else:
 		draw_circle(Vector2.ZERO, BODY_RADIUS, BODY_COLOR)
 	if _carried != null:
@@ -1996,3 +2316,23 @@ func _draw_action_bubble() -> void:
 	draw_string(font, origin + Vector2(pad.x, text_size.y + pad.y - 1.0),
 		_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE, Color.WHITE)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _facing_atlas_cell() -> Vector2i:
+	match _facing:
+		FACING_SOUTH_EAST:
+			return Vector2i(1, 0)
+		FACING_EAST:
+			return Vector2i(2, 0)
+		FACING_NORTH_EAST:
+			return Vector2i(0, 1)
+		FACING_NORTH:
+			return Vector2i(1, 1)
+		FACING_NORTH_WEST:
+			return Vector2i(2, 1)
+		FACING_WEST:
+			return Vector2i(0, 2)
+		FACING_SOUTH_WEST:
+			return Vector2i(1, 2)
+		_:
+			return Vector2i(0, 0)

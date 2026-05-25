@@ -21,6 +21,8 @@ extends Node
 ##                                      player changes worker selection.
 ##   structure_selected(id, anchor)   - emitted by SelectionController when a
 ##                                      built structure is selected. id -1 clears.
+##   stockpile_selected(zone)         - emitted by SelectionController when a
+##                                      stockpile zone is selected. null clears.
 ##   build_job_selected(anchor)       - emitted by SelectionController when a
 ##                                      queued construction job is selected.
 ##                                      UNREACHABLE clears.
@@ -66,6 +68,7 @@ signal tile_changed(grid: Vector2i, new_tile: int)
 signal worker_selected(worker: Node)
 signal workers_selected(workers: Array)
 signal structure_selected(id: int, anchor: Vector2i)
+signal stockpile_selected(zone: Node)
 signal build_job_selected(anchor: Vector2i)
 signal structure_built(manager: Node)
 signal visibility_changed(bounds: Rect2i)

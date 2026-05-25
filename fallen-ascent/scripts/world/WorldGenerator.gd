@@ -17,7 +17,7 @@ extends RefCounted
 ## Bump WORLDGEN_VERSION whenever the generation output changes meaning, so
 ## saves from old versions are detectable.
 
-const WORLDGEN_VERSION: int = 4
+const WORLDGEN_VERSION: int = 5
 
 const _MIN_DISTRICT_SIZE: int = 3
 const _SPLIT_RATIO_MIN: float = 0.35

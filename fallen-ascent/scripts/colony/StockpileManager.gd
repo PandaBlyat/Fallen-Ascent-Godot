@@ -25,6 +25,12 @@ var _items_root: Node2D
 var zones: Array[StockpileZone] = []
 var _rematch_queued: bool = false
 var _pending_haul_jobs: int = 0
+## Chunk-coord -> Array[Item]. Indexes loose items so _match_loose_items
+## doesn't have to walk the full _items_root every cycle.
+var _items_by_chunk: Dictionary = {}
+## Item -> Vector2i bucket. Lets unregister find the right bucket without
+## scanning.
+var _item_to_bucket: Dictionary = {}
 
 
 func _ready() -> void:
@@ -32,6 +38,8 @@ func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_items_root = get_node(items_root_path) as Node2D
 	EventBus.tile_changed.connect(_on_tile_changed)
+	if _items_root != null:
+		_items_root.child_exiting_tree.connect(_on_item_exiting_root)
 	if _job_board != null:
 		_job_board.job_completed.connect(_on_job_changed)
 		_job_board.job_cancelled.connect(_on_job_changed)
@@ -81,6 +89,7 @@ func remove_zone(zone: StockpileZone) -> void:
 			_items_root.add_child(item)
 			item.set_grid(cell)
 			item.reserved_by = null
+			_register_loose_item(item)
 	zones.erase(zone)
 	zone_removed.emit(zone)
 	zone.queue_free()
@@ -100,17 +109,56 @@ func _match_loose_items() -> void:
 	_rematch_queued = false
 	if _items_root == null:
 		return
-	for child in _items_root.get_children():
-		if _pending_haul_count() >= max_pending_haul_jobs:
-			return
-		var item := child as Item
-		if item == null or item.reserved_by != null:
-			continue
-		_try_post_haul_for(item)
+	# Iterate from the index keys; copy so the inner loop can mutate the index
+	# (a successful match calls _try_post_haul_for → reserve(), which doesn't
+	# touch _items_by_chunk, but worker pickup later will).
+	for chunk in _items_by_chunk.keys():
+		var bucket: Array = _items_by_chunk[chunk] as Array
+		for item in bucket.duplicate():
+			if _pending_haul_count() >= max_pending_haul_jobs:
+				return
+			if item == null or not is_instance_valid(item) or item.reserved_by != null:
+				continue
+			_try_post_haul_for(item)
 
 
 func on_item_spawned(item: Item) -> void:
+	_register_loose_item(item)
 	_try_post_haul_for(item)
+
+
+## Index `item` under its current grid bucket. Idempotent; if the item is
+## already registered its bucket gets refreshed.
+func _register_loose_item(item: Item) -> void:
+	if item == null or not is_instance_valid(item):
+		return
+	if _item_to_bucket.has(item):
+		_unregister_loose_item(item)
+	var bucket: Vector2i = Chunk.grid_to_chunk(item.get_grid())
+	if not _items_by_chunk.has(bucket):
+		_items_by_chunk[bucket] = []
+	(_items_by_chunk[bucket] as Array).append(item)
+	_item_to_bucket[item] = bucket
+
+
+func _unregister_loose_item(item: Item) -> void:
+	if not _item_to_bucket.has(item):
+		return
+	var bucket: Vector2i = _item_to_bucket[item] as Vector2i
+	_item_to_bucket.erase(item)
+	if not _items_by_chunk.has(bucket):
+		return
+	var arr: Array = _items_by_chunk[bucket] as Array
+	arr.erase(item)
+	if arr.is_empty():
+		_items_by_chunk.erase(bucket)
+
+
+## child_exiting_tree fires when an item is reparented (worker pickup) or
+## freed. Either way we want it out of the loose-item index.
+func _on_item_exiting_root(node: Node) -> void:
+	if node is Item:
+		_unregister_loose_item(node as Item)
 
 
 func _try_post_haul_for(item: Item) -> void:
@@ -189,6 +237,7 @@ func consume_one(kind: int) -> bool:
 				item.queue_free()
 			else:
 				item.queue_redraw()
+				zone._refresh_cell_state(cell)
 			stockpile_changed.emit()
 			return true
 	return false
@@ -221,6 +270,7 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 			_items_root.add_child(item)
 			item.set_grid(grid)
 			item.reserved_by = null
+			_register_loose_item(item)
 		if zone.cells.is_empty():
 			zones.erase(zone)
 			zone_removed.emit(zone)

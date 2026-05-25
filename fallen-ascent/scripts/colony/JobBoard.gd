@@ -15,8 +15,14 @@ var pending: Array[Job] = []
 var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
 var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
 var _scrape_targets: Dictionary = {} ## Vector2i -> Job
+## Chunk-coord -> Array[Job]. Lets claim_next_for scan only nearby
+## chunks first instead of the full pending list each poll.
+var _pending_by_chunk: Dictionary = {}
 
 const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
+## Chunk-radius scanned by claim_next_for before it falls back to the
+## global pending list. 1 means worker chunk + 8 neighbors (3x3).
+const NEAR_CHUNK_RADIUS: int = 1
 
 
 func add_mine_job(target: Vector2i) -> MineJob:
@@ -25,6 +31,7 @@ func add_mine_job(target: Vector2i) -> MineJob:
 	var job := MineJob.new(target)
 	pending.append(job)
 	_mine_targets[target] = job
+	_index_job(job)
 	job_added.emit(job)
 	return job
 
@@ -35,6 +42,7 @@ func cancel_mine_at(target: Vector2i) -> void:
 	var job: MineJob = _mine_targets[target]
 	_mine_targets.erase(target)
 	pending.erase(job)
+	_unindex_job(job)
 	# If a worker has it claimed, let them notice and bail on next tick.
 	job_cancelled.emit(job)
 
@@ -49,6 +57,7 @@ func add_scrape_rust_job(target: Vector2i) -> Job:
 	var job: Job = SCRAPE_RUST_JOB_SCRIPT.new(target) as Job
 	pending.append(job)
 	_scrape_targets[target] = job
+	_index_job(job)
 	job_added.emit(job)
 	return job
 
@@ -59,6 +68,7 @@ func cancel_scrape_rust_at(target: Vector2i) -> void:
 	var job: Job = _scrape_targets[target] as Job
 	_scrape_targets.erase(target)
 	pending.erase(job)
+	_unindex_job(job)
 	job_cancelled.emit(job)
 
 
@@ -73,6 +83,7 @@ func scrape_rust_count() -> int:
 func add_haul_job(item: Node, zone: Node, cell: Vector2i) -> HaulJob:
 	var job := HaulJob.new(item, zone, cell)
 	pending.append(job)
+	_index_job(job)
 	job_added.emit(job)
 	return job
 
@@ -87,6 +98,7 @@ func cancel_hauls_to_zone(zone: Node) -> Array[Vector2i]:
 		if j is HaulJob and (j as HaulJob).dropoff_zone == zone:
 			cancelled.append((j as HaulJob).dropoff)
 			pending.remove_at(i)
+			_unindex_job(j)
 			job_cancelled.emit(j)
 		i -= 1
 	return cancelled
@@ -100,6 +112,7 @@ func cancel_haul_to(zone: Node, cell: Vector2i) -> bool:
 		if j is HaulJob and (j as HaulJob).dropoff_zone == zone \
 				and (j as HaulJob).dropoff == cell:
 			pending.remove_at(i)
+			_unindex_job(j)
 			job_cancelled.emit(j)
 			return true
 	return false
@@ -113,6 +126,7 @@ func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL,
 	pending.append(job)
 	for cell in job.footprint:
 		_build_targets[cell] = job
+	_index_job(job)
 	job_added.emit(job)
 	return job
 
@@ -124,6 +138,7 @@ func cancel_build_at(target: Vector2i) -> BuildJob:
 	for cell in job.footprint:
 		_build_targets.erase(cell)
 	pending.erase(job)
+	_unindex_job(job)
 	job_cancelled.emit(job)
 	return job
 
@@ -147,18 +162,48 @@ func force_claim(job: Job, worker: Node) -> bool:
 
 
 ## Returns the closest unclaimed job from `worker_grid` (Chebyshev), or null.
-## Marks the returned job as claimed by `worker`.
+## Marks the returned job as claimed by `worker`. Scans the 3x3 chunk
+## neighborhood first; falls back to the global pending list only if the
+## neighborhood is empty.
 func claim_next_for(worker: Node, worker_grid: Vector2i) -> Job:
+	var now_msec: int = Time.get_ticks_msec()
+	var best: Job = _best_job_in_neighborhood(worker_grid, now_msec)
+	if best == null:
+		best = _best_job_global(worker_grid, now_msec)
+	if best != null:
+		best.claimed_by = worker
+	return best
+
+
+func _best_job_in_neighborhood(worker_grid: Vector2i, now_msec: int) -> Job:
+	var worker_chunk: Vector2i = Chunk.grid_to_chunk(worker_grid)
 	var best: Job = null
 	var best_dist: int = 0x7fffffff
 	var best_priority: int = 0x7fffffff
-	var now_msec: int = Time.get_ticks_msec()
+	for cy in range(worker_chunk.y - NEAR_CHUNK_RADIUS, worker_chunk.y + NEAR_CHUNK_RADIUS + 1):
+		for cx in range(worker_chunk.x - NEAR_CHUNK_RADIUS, worker_chunk.x + NEAR_CHUNK_RADIUS + 1):
+			var key := Vector2i(cx, cy)
+			if not _pending_by_chunk.has(key):
+				continue
+			for job in _pending_by_chunk[key] as Array:
+				if not _job_is_claimable(job, now_msec):
+					continue
+				var t: Vector2i = _target_grid_of(job)
+				var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))
+				var priority: int = _priority_of(job)
+				if priority < best_priority or (priority == best_priority and d < best_dist):
+					best = job
+					best_dist = d
+					best_priority = priority
+	return best
+
+
+func _best_job_global(worker_grid: Vector2i, now_msec: int) -> Job:
+	var best: Job = null
+	var best_dist: int = 0x7fffffff
+	var best_priority: int = 0x7fffffff
 	for job in pending:
-		if job.claimed_by != null:
-			continue
-		if job is MineJob and (job as MineJob).blocked_until_msec > now_msec:
-			continue
-		if job is BuildJob and (job as BuildJob).blocked_until_msec > now_msec:
+		if not _job_is_claimable(job, now_msec):
 			continue
 		var t: Vector2i = _target_grid_of(job)
 		var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))
@@ -167,9 +212,15 @@ func claim_next_for(worker: Node, worker_grid: Vector2i) -> Job:
 			best = job
 			best_dist = d
 			best_priority = priority
-	if best != null:
-		best.claimed_by = worker
 	return best
+
+
+static func _job_is_claimable(job: Job, now_msec: int) -> bool:
+	if job.claimed_by != null:
+		return false
+	if job.blocked_until_msec > now_msec:
+		return false
+	return true
 
 
 ## Release a claimed job back to the pool (worker couldn't path, etc.).
@@ -184,6 +235,7 @@ func is_active(job: Job) -> bool:
 ## Mark a job done and remove it. Also clears any per-target index.
 func complete(job: Job) -> void:
 	pending.erase(job)
+	_unindex_job(job)
 	if job is MineJob:
 		_mine_targets.erase((job as MineJob).target)
 	elif job is BuildJob:
@@ -196,6 +248,23 @@ func complete(job: Job) -> void:
 
 func pending_count() -> int:
 	return pending.size()
+
+
+func _index_job(job: Job) -> void:
+	var chunk: Vector2i = Chunk.grid_to_chunk(_target_grid_of(job))
+	if not _pending_by_chunk.has(chunk):
+		_pending_by_chunk[chunk] = []
+	(_pending_by_chunk[chunk] as Array).append(job)
+
+
+func _unindex_job(job: Job) -> void:
+	var chunk: Vector2i = Chunk.grid_to_chunk(_target_grid_of(job))
+	if not _pending_by_chunk.has(chunk):
+		return
+	var arr: Array = _pending_by_chunk[chunk] as Array
+	arr.erase(job)
+	if arr.is_empty():
+		_pending_by_chunk.erase(chunk)
 
 
 static func _target_grid_of(job: Job) -> Vector2i:

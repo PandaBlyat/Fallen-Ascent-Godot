@@ -1585,7 +1585,7 @@ func _release_and_idle() -> void:
 
 
 func _note_missing_build_material(job: BuildJob) -> void:
-	job.block_briefly()
+	job.block_briefly(2.0)
 	var item_name: String = Item.kind_name(job.material_kind)
 	_show_blocked_action("Lacks " + item_name)
 	_remember("lacks %s for %s" % [item_name, BuildBlueprint.display_name(job.blueprint_id)])

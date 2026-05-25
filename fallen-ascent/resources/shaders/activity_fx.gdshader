@@ -52,6 +52,16 @@ void fragment() {
 		float lattice = smoothstep(0.04, 0.0, abs(fract((p.x - p.y) * 3.5 + seed) - 0.5));
 		alpha = (smoothstep(0.8, 1.0, shimmer) * 0.28 + lattice * 0.18) * smoothstep(1.0, 0.2, d);
 		color = mix(vec3(0.58, 0.52, 1.0), vec3(0.92, 0.82, 1.0), pulse);
+	} else if (kind < 7.5) {
+		// Build dust — small soft puffs scattered between worker and build site.
+		vec2 q = UV * 2.0 - vec2(1.0);
+		float puff = smoothstep(0.55, 0.0, length(q));
+		float grain = fract(sin(dot(floor(UV * 6.0 + seed), vec2(12.9898, 78.233))) * 43758.5453);
+		float drift_t = time_seconds * 0.6 + seed * 6.28;
+		float bob = 0.7 + 0.3 * sin(drift_t);
+		float dust = puff * (0.55 + grain * 0.35) * bob;
+		alpha = dust * intensity * fx_color.a;
+		color = fx_color.rgb;
 	} else if (kind > 8.5) {
 		vec2 drift = vec2(sin(time_seconds * 0.17 + seed), cos(time_seconds * 0.13 + seed * 1.7)) * 0.18;
 		vec2 q = fract(UV * vec2(3.0, 2.0) + drift + seed) - vec2(0.5);

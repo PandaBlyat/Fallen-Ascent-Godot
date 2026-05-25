@@ -12,24 +12,25 @@ extends RefCounted
 enum Id {
 	WALL,
 	DOOR,
-	LIGHT,
+	LIGHT,                  ## deprecated — lights come from the device objects now.
 	EXTRACTOR,
 	SENSOR,
 	CHARGE_PAD,
-	FABRICATOR,
-	DOCK,
+	FABRICATOR,             ## displayed as "crafting bench" — no longer auto-produces.
+	DOCK,                   ## displayed as "dock bed".
 	REPAIR_BENCH,
-	PARTS_LOOM,
+	PARTS_LOOM,             ## displayed as "assembler press".
 	MAINTENANCE_DOCK,
-	CALIBRATION_SHRINE,
-	MEDITATION_PAD,
+	CALIBRATION_SHRINE,     ## deprecated — slot reserved, no UI exposure.
+	MEDITATION_PAD,         ## displayed as "research bench".
 	SENTIENCE_CRADLE,
-	FABRICATION_SPOT,
+	FABRICATION_SPOT,       ## displayed as "crafting spot".
 	STORAGE_BIN,
 	OUTLET_EXTENSION,
 	RUDIMENTARY_SENSOR,
 	SMALL_LIGHT_DEVICE,
 	LARGE_LIGHT_DEVICE,
+	FABRICATOR_ADVANCED,    ## new — displayed as "fabricator"; outputs advanced parts.
 }
 
 const WALL_COLOR := Color(0.55, 0.55, 0.58, 0.55)
@@ -60,32 +61,28 @@ static func display_name(id: int) -> String:
 			return "wall"
 		Id.DOOR:
 			return "door"
-		Id.LIGHT:
-			return "light"
 		Id.EXTRACTOR:
 			return "extractor"
 		Id.SENSOR:
 			return "sensor"
 		Id.CHARGE_PAD:
-			return "charge pad"
+			return "charge"
 		Id.FABRICATOR:
-			return "fabricator"
+			return "crafting bench"
 		Id.DOCK:
-			return "dock"
+			return "dock bed"
 		Id.REPAIR_BENCH:
 			return "repair bench"
 		Id.PARTS_LOOM:
-			return "assembly press"
+			return "assembler press"
 		Id.MAINTENANCE_DOCK:
 			return "mechanic dock"
-		Id.CALIBRATION_SHRINE:
-			return "calibration shrine"
 		Id.MEDITATION_PAD:
-			return "meditation pad"
+			return "research bench"
 		Id.SENTIENCE_CRADLE:
 			return "replication cradle"
 		Id.FABRICATION_SPOT:
-			return "fabrication spot"
+			return "crafting spot"
 		Id.STORAGE_BIN:
 			return "storage bin"
 		Id.OUTLET_EXTENSION:
@@ -96,6 +93,8 @@ static func display_name(id: int) -> String:
 			return "small light device"
 		Id.LARGE_LIGHT_DEVICE:
 			return "large light device"
+		Id.FABRICATOR_ADVANCED:
+			return "fabricator"
 		_:
 			return "unknown"
 
@@ -106,8 +105,6 @@ static func description(id: int) -> String:
 			return "Blocks movement and shapes rooms."
 		Id.DOOR:
 			return "Passable controlled barrier for future room logic."
-		Id.LIGHT:
-			return "Reveals nearby explored machinery."
 		Id.EXTRACTOR:
 			return "Worker-operated machine that pulls plating and mechanism scrap from exposed systems."
 		Id.SENSOR:
@@ -115,19 +112,17 @@ static func description(id: int) -> String:
 		Id.CHARGE_PAD:
 			return "Turns floor into recharge outlet."
 		Id.FABRICATOR:
-			return "Worker-operated machine that assembles datacores and charge cells."
+			return "Faster crafting bench: workers craft placeable objects here from stored parts."
 		Id.DOCK:
-			return "Rest cradle for reducing mental exhaustion."
+			return "Rest bed for reducing mental exhaustion."
 		Id.REPAIR_BENCH:
 			return "Service station where bots restore condition. Uses scrap first, then mechanisms for advanced repairs."
 		Id.PARTS_LOOM:
-			return "Worker-operated machine that consumes plating and datacores to make advanced parts."
+			return "Worker-operated press that consumes raw scrap to make platings and mechanisms."
 		Id.MAINTENANCE_DOCK:
-			return "Required structure inside a Mechanic Room. Gates limb-heal services for room occupants."
-		Id.CALIBRATION_SHRINE:
-			return "Quiet calibration point for future mental and social recovery."
+			return "Heals limb damage when worker docks. Mechanic Room boosts efficiency."
 		Id.MEDITATION_PAD:
-			return "A still spot where bots gather wisdom over time. Place inside a Meditation Chamber for the room bonus."
+			return "Research bench: bots gather wisdom while seated. Place inside a Research Room for the bonus."
 		Id.SENTIENCE_CRADLE:
 			return "Worker-operated machine that replicates a new worker over a long cycle. Hungry for refined parts."
 		Id.FABRICATION_SPOT:
@@ -142,6 +137,8 @@ static func description(id: int) -> String:
 			return "Small crafted work light."
 		Id.LARGE_LIGHT_DEVICE:
 			return "Large crafted work light with wider coverage."
+		Id.FABRICATOR_ADVANCED:
+			return "Worker-operated fabricator that assembles datacores, charge cells, and rudimentary sensors."
 		_:
 			return ""
 
@@ -154,10 +151,10 @@ static func footprint(id: int, anchor: Vector2i, rotation: int = 0) -> Array[Vec
 			offsets.append(Vector2i(1, 0))
 			offsets.append(Vector2i(0, 1))
 			offsets.append(Vector2i(1, 1))
-		Id.FABRICATOR, Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.CALIBRATION_SHRINE, Id.MEDITATION_PAD:
+		Id.FABRICATOR, Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.MEDITATION_PAD:
 			offsets.append(Vector2i.ZERO)
 			offsets.append(Vector2i(1, 0))
-		Id.MAINTENANCE_DOCK, Id.SENTIENCE_CRADLE:
+		Id.MAINTENANCE_DOCK, Id.SENTIENCE_CRADLE, Id.FABRICATOR_ADVANCED:
 			offsets.append(Vector2i.ZERO)
 			offsets.append(Vector2i(1, 0))
 			offsets.append(Vector2i(0, 1))
@@ -188,8 +185,6 @@ static func ingredients(id: int) -> Dictionary:
 			return {Item.Kind.SCRAP: 1}
 		Id.DOOR:
 			return {Item.Kind.SCRAP: 1, Item.Kind.MECHANISM: 1}
-		Id.LIGHT:
-			return {Item.Kind.MECHANISM: 1}
 		Id.EXTRACTOR:
 			return {Item.Kind.SCRAP: 2, Item.Kind.PLATING: 2, Item.Kind.MECHANISM: 1}
 		Id.SENSOR:
@@ -197,17 +192,17 @@ static func ingredients(id: int) -> Dictionary:
 		Id.CHARGE_PAD:
 			return {Item.Kind.SCRAP: 1, Item.Kind.MECHANISM: 1, Item.Kind.CHARGE_CELL: 1}
 		Id.FABRICATOR:
-			return {Item.Kind.SCRAP: 2, Item.Kind.PLATING: 1, Item.Kind.DATACORE: 1}
+			return {Item.Kind.SCRAP: 2, Item.Kind.PLATING: 1, Item.Kind.MECHANISM: 1}
 		Id.DOCK:
 			return {Item.Kind.SCRAP: 1, Item.Kind.PLATING: 1}
 		Id.REPAIR_BENCH:
 			return {Item.Kind.SCRAP: 2, Item.Kind.MECHANISM: 1}
 		Id.PARTS_LOOM:
-			return {Item.Kind.PLATING: 2, Item.Kind.DATACORE: 1}
+			return {Item.Kind.SCRAP: 3, Item.Kind.PLATING: 1}
 		Id.MAINTENANCE_DOCK:
 			return {Item.Kind.SCRAP: 3, Item.Kind.MECHANISM: 2, Item.Kind.CHARGE_CELL: 1}
-		Id.CALIBRATION_SHRINE:
-			return {Item.Kind.DATACORE: 1, Item.Kind.CHARGE_CELL: 1}
+		Id.FABRICATOR_ADVANCED:
+			return {Item.Kind.SCRAP: 3, Item.Kind.PLATING: 2, Item.Kind.DATACORE: 1}
 		Id.MEDITATION_PAD:
 			return {Item.Kind.SCRAP: 2, Item.Kind.PLATING: 1}
 		Id.SENTIENCE_CRADLE:
@@ -231,31 +226,31 @@ static func ingredients(id: int) -> Dictionary:
 static func build_duration(id: int) -> float:
 	match id:
 		Id.EXTRACTOR:
-			return 4.0
+			return 12.0
 		Id.MAINTENANCE_DOCK:
-			return 4.5
+			return 13.5
 		Id.FABRICATOR:
-			return 3.5
-		Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.CALIBRATION_SHRINE, Id.MEDITATION_PAD:
-			return 3.0
+			return 10.5
+		Id.FABRICATOR_ADVANCED:
+			return 13.5
+		Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.MEDITATION_PAD:
+			return 9.0
 		Id.SENTIENCE_CRADLE:
-			return 8.0
+			return 24.0
 		Id.FABRICATION_SPOT:
-			return 1.5
+			return 4.5
 		Id.STORAGE_BIN, Id.OUTLET_EXTENSION, Id.RUDIMENTARY_SENSOR, Id.SMALL_LIGHT_DEVICE, Id.LARGE_LIGHT_DEVICE:
-			return 0.8
-		Id.DOOR, Id.LIGHT:
-			return 2.5
+			return 2.4
+		Id.DOOR:
+			return 7.5
 		_:
-			return 2.0
+			return 6.0
 
 
 static func ghost_color(id: int) -> Color:
 	match id:
 		Id.DOOR:
 			return DOOR_COLOR
-		Id.LIGHT:
-			return LIGHT_COLOR
 		Id.EXTRACTOR:
 			return EXTRACTOR_COLOR
 		Id.SENSOR:
@@ -272,7 +267,7 @@ static func ghost_color(id: int) -> Color:
 			return PARTS_LOOM_COLOR
 		Id.MAINTENANCE_DOCK:
 			return MAINTENANCE_DOCK_COLOR
-		Id.CALIBRATION_SHRINE:
+		Id.FABRICATOR_ADVANCED:
 			return CALIBRATION_SHRINE_COLOR
 		Id.MEDITATION_PAD:
 			return MEDITATION_PAD_COLOR
@@ -302,10 +297,10 @@ static func production_interval(id: int) -> float:
 	match id:
 		Id.EXTRACTOR:
 			return 7.0
-		Id.FABRICATOR:
-			return 9.0
 		Id.PARTS_LOOM:
-			return 10.0
+			return 9.0
+		Id.FABRICATOR_ADVANCED:
+			return 11.0
 		Id.SENTIENCE_CRADLE:
 			return 120.0
 		_:
@@ -315,7 +310,9 @@ static func production_interval(id: int) -> float:
 static func production_inputs(id: int) -> Dictionary:
 	match id:
 		Id.PARTS_LOOM:
-			return {Item.Kind.PLATING: 1, Item.Kind.DATACORE: 1}
+			return {Item.Kind.SCRAP: 2}
+		Id.FABRICATOR_ADVANCED:
+			return {Item.Kind.PLATING: 1, Item.Kind.MECHANISM: 1}
 		Id.SENTIENCE_CRADLE:
 			return {
 				Item.Kind.SCRAP: 20,
@@ -332,10 +329,10 @@ static func possible_outputs(id: int) -> Array[int]:
 	match id:
 		Id.EXTRACTOR:
 			return [Item.Kind.MECHANISM, Item.Kind.PLATING]
-		Id.FABRICATOR:
-			return [Item.Kind.DATACORE, Item.Kind.CHARGE_CELL]
 		Id.PARTS_LOOM:
-			return [Item.Kind.MECHANISM, Item.Kind.CHARGE_CELL]
+			return [Item.Kind.PLATING, Item.Kind.MECHANISM]
+		Id.FABRICATOR_ADVANCED:
+			return [Item.Kind.DATACORE, Item.Kind.CHARGE_CELL, Item.Kind.RUDIMENTARY_SENSOR]
 		_:
 			return []
 
@@ -368,23 +365,38 @@ static func requirements(id: int) -> String:
 static func requires_outlet(id: int) -> bool:
 	return id == Id.EXTRACTOR \
 		or id == Id.SENSOR \
-		or id == Id.FABRICATOR \
 		or id == Id.PARTS_LOOM \
 		or id == Id.MAINTENANCE_DOCK \
-		or id == Id.CALIBRATION_SHRINE \
+		or id == Id.FABRICATOR_ADVANCED \
 		or id == Id.SENTIENCE_CRADLE
 
 
 static func is_worker_operated(id: int) -> bool:
 	return id == Id.EXTRACTOR \
-		or id == Id.FABRICATOR \
 		or id == Id.PARTS_LOOM \
+		or id == Id.FABRICATOR_ADVANCED \
 		or id == Id.SENTIENCE_CRADLE
 
 
-static func outlet_range(id: int) -> int:
-	if id == Id.LIGHT:
-		return 15
+## True for any structure that's part of the Workshops palette tab. Used by
+## RoomManager to validate Workshop Rooms (require at least one workshop) and
+## by the buff system to know which structures get the in-room speed-up.
+static func is_workshop(id: int) -> bool:
+	return id == Id.DOCK \
+		or id == Id.REPAIR_BENCH \
+		or id == Id.MEDITATION_PAD \
+		or id == Id.FABRICATION_SPOT \
+		or id == Id.SENSOR \
+		or id == Id.EXTRACTOR \
+		or id == Id.CHARGE_PAD \
+		or id == Id.FABRICATOR \
+		or id == Id.PARTS_LOOM \
+		or id == Id.MAINTENANCE_DOCK \
+		or id == Id.FABRICATOR_ADVANCED \
+		or id == Id.SENTIENCE_CRADLE
+
+
+static func outlet_range(_id: int) -> int:
 	return -1
 
 
@@ -456,10 +468,8 @@ static func production_text(id: int) -> String:
 				return "rest: lowers mental exhaustion"
 			Id.REPAIR_BENCH:
 				return "service: repairs bot condition"
-			Id.CALIBRATION_SHRINE:
-				return "calibration: future mental/social recovery"
 			Id.MEDITATION_PAD:
-				return "meditation: bots earn wisdom while sitting"
+				return "research: bots earn wisdom while sitting"
 			_:
 				return "none"
 	if id == Id.SENTIENCE_CRADLE:

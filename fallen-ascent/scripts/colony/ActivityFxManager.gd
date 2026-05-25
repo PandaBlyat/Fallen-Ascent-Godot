@@ -8,6 +8,8 @@ const FX_SHADER: Shader = preload("res://resources/shaders/activity_fx.gdshader"
 const MAX_INSTANCES: int = 320
 const FX_Z_INDEX: int = 120
 const DUST_INSTANCE_COUNT: int = 36
+const BUILD_DUST_SAMPLES: int = 6
+const KIND_BUILD_DUST: int = 7
 ## The shader animates via time_seconds, so the instance buffer can be
 ## rebuilt at a fraction of the frame rate without visible artifacts.
 const REBUILD_INTERVAL_SECONDS: float = 0.1
@@ -80,10 +82,17 @@ func _add_worker_sources(index: int) -> int:
 			return index
 		if not child.has_method("activity_fx"):
 			continue
-		var source: Dictionary = child.call("activity_fx") as Dictionary
-		if source.is_empty():
-			continue
-		index = _add_source(index, source)
+		var raw: Variant = child.call("activity_fx")
+		if raw is Array:
+			for entry in raw:
+				if index >= MAX_INSTANCES:
+					return index
+				if entry is Dictionary and not (entry as Dictionary).is_empty():
+					index = _add_source(index, entry as Dictionary)
+		elif raw is Dictionary:
+			var dict: Dictionary = raw as Dictionary
+			if not dict.is_empty():
+				index = _add_source(index, dict)
 	return index
 
 
@@ -139,9 +148,13 @@ func _add_source(index: int, source: Dictionary) -> int:
 	var grid: Vector2i = source.get("grid", Pathfinder.UNREACHABLE) as Vector2i
 	if grid == Pathfinder.UNREACHABLE:
 		return index
+	var kind: int = int(source.get("kind", 0))
+	# Build-dust streams a few small puffs between worker and build target so
+	# the build reads as actual labor instead of a silent pulse on the anchor.
+	if kind == KIND_BUILD_DUST and source.has("to_grid"):
+		return _add_build_dust(index, source, grid)
 	if _fog != null and not _fog.is_cell_visible(grid):
 		return index
-	var kind: int = int(source.get("kind", 0))
 	var progress: float = clampf(float(source.get("progress", 0.0)), 0.0, 1.0)
 	var intensity: float = clampf(float(source.get("intensity", 1.0)), 0.0, 1.0)
 	var seed: float = float(absi(hash([grid.x, grid.y, kind]))) / 2147483647.0
@@ -150,6 +163,31 @@ func _add_source(index: int, source: Dictionary) -> int:
 	multimesh.set_instance_color(index, _color_for(kind))
 	multimesh.set_instance_custom_data(index, Color(float(kind) / 10.0, progress, intensity, seed))
 	return index + 1
+
+
+func _add_build_dust(index: int, source: Dictionary, from_grid: Vector2i) -> int:
+	var to_grid: Vector2i = source.get("to_grid", from_grid) as Vector2i
+	if _fog != null and not _fog.is_cell_visible(to_grid) and not _fog.is_cell_visible(from_grid):
+		return index
+	var progress: float = clampf(float(source.get("progress", 0.0)), 0.0, 1.0)
+	var intensity: float = clampf(float(source.get("intensity", 1.0)), 0.0, 1.0)
+	var from_px: Vector2 = Chunk.grid_to_pixel_center(from_grid)
+	var to_px: Vector2 = Chunk.grid_to_pixel_center(to_grid)
+	var bucket: int = int(floor(_shader_time * 6.0))
+	for i in BUILD_DUST_SAMPLES:
+		if index >= MAX_INSTANCES:
+			return index
+		var t: float = (float(i) + 0.5) / float(BUILD_DUST_SAMPLES)
+		var jitter_seed: int = absi(hash([from_grid.x, from_grid.y, to_grid.x, to_grid.y, i, bucket]))
+		var jx: float = (float(jitter_seed % 1000) / 1000.0 - 0.5) * 10.0
+		var jy: float = (float((jitter_seed / 1000) % 1000) / 1000.0 - 0.5) * 10.0
+		var pos: Vector2 = from_px.lerp(to_px, t) + Vector2(jx, jy)
+		var seed_norm: float = float(jitter_seed) / 2147483647.0
+		multimesh.set_instance_transform_2d(index, Transform2D(0.0, pos))
+		multimesh.set_instance_color(index, _color_for(KIND_BUILD_DUST))
+		multimesh.set_instance_custom_data(index, Color(float(KIND_BUILD_DUST) / 10.0, progress, intensity * 0.7, seed_norm))
+		index += 1
+	return index
 
 
 static func _color_for(kind: int) -> Color:
@@ -164,5 +202,7 @@ static func _color_for(kind: int) -> Color:
 			return Color(0.48, 1.0, 0.68, 0.85)
 		5:
 			return Color(0.70, 0.62, 1.0, 0.78)
+		KIND_BUILD_DUST:
+			return Color(0.78, 0.72, 0.58, 0.55)
 		_:
 			return Color(0.85, 0.92, 1.0, 0.65)

@@ -305,7 +305,9 @@ func is_walkable(grid: Vector2i) -> bool:
 		or t == TerrainGenerator.TILE_RUST \
 		or t == TerrainGenerator.TILE_TELEPORTER \
 		or t == TerrainGenerator.TILE_WATER_SHALLOW \
-		or t == TerrainGenerator.TILE_WATER_PUDDLE
+		or t == TerrainGenerator.TILE_WATER_PUDDLE \
+		or t == TerrainGenerator.TILE_ACID_SHALLOW \
+		or t == TerrainGenerator.TILE_ACID_PUDDLE
 	if not terrain_walkable:
 		return false
 	if _structure_manager != null and _structure_manager.has_method("blocks_cell"):

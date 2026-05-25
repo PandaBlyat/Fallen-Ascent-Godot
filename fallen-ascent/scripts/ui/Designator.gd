@@ -17,7 +17,6 @@ enum Mode {
 	REMOVE_STOCKPILE,
 	BUILD_WALL,
 	BUILD_DOOR,
-	BUILD_LIGHT,
 	BUILD_EXTRACTOR,
 	BUILD_SENSOR,
 	BUILD_CHARGE_PAD,
@@ -26,19 +25,19 @@ enum Mode {
 	BUILD_REPAIR_BENCH,
 	BUILD_PARTS_LOOM,
 	BUILD_MAINTENANCE_DOCK,
-	BUILD_CALIBRATION_SHRINE,
 	BUILD_MEDITATION_PAD,
 	BUILD_SENTIENCE_CRADLE,
 	BUILD_FABRICATION_SPOT,
+	BUILD_FABRICATOR_ADVANCED,
 	PLACE_STORAGE_BIN,
 	PLACE_OUTLET_EXTENSION,
 	PLACE_RUDIMENTARY_SENSOR,
 	PLACE_SMALL_LIGHT_DEVICE,
 	PLACE_LARGE_LIGHT_DEVICE,
 	DESIGNATE_DOCK_ROOM,
-	DESIGNATE_MEDITATION_CHAMBER,
+	DESIGNATE_RESEARCH_ROOM,
 	DESIGNATE_MECHANIC_ROOM,
-	DESIGNATE_MACHINE_ROOM,
+	DESIGNATE_WORKSHOP_ROOM,
 	REMOVE_ROOM,
 }
 
@@ -106,28 +105,27 @@ func mode_label() -> String:
 		Mode.REMOVE_STOCKPILE: return "REMOVE_STOCKPILE"
 		Mode.BUILD_WALL: return "BUILD WALL"
 		Mode.BUILD_DOOR: return "BUILD DOOR"
-		Mode.BUILD_LIGHT: return "BUILD LIGHT"
 		Mode.BUILD_EXTRACTOR: return "BUILD EXTRACTOR"
 		Mode.BUILD_SENSOR: return "BUILD SENSOR"
-		Mode.BUILD_CHARGE_PAD: return "BUILD CHARGE PAD"
-		Mode.BUILD_FABRICATOR: return "BUILD FABRICATOR"
-		Mode.BUILD_DOCK: return "BUILD DOCK"
+		Mode.BUILD_CHARGE_PAD: return "BUILD CHARGE"
+		Mode.BUILD_FABRICATOR: return "BUILD CRAFTING BENCH"
+		Mode.BUILD_DOCK: return "BUILD DOCK BED"
 		Mode.BUILD_REPAIR_BENCH: return "BUILD REPAIR BENCH"
-		Mode.BUILD_PARTS_LOOM: return "BUILD PARTS LOOM"
+		Mode.BUILD_PARTS_LOOM: return "BUILD ASSEMBLER PRESS"
 		Mode.BUILD_MAINTENANCE_DOCK: return "BUILD MECHANIC DOCK"
-		Mode.BUILD_CALIBRATION_SHRINE: return "BUILD CALIBRATION SHRINE"
-		Mode.BUILD_MEDITATION_PAD: return "BUILD MEDITATION PAD"
-		Mode.BUILD_SENTIENCE_CRADLE: return "BUILD SENTIENCE CRADLE"
-		Mode.BUILD_FABRICATION_SPOT: return "BUILD FABRICATION SPOT"
+		Mode.BUILD_MEDITATION_PAD: return "BUILD RESEARCH BENCH"
+		Mode.BUILD_SENTIENCE_CRADLE: return "BUILD REPLICATION CRADLE"
+		Mode.BUILD_FABRICATION_SPOT: return "BUILD CRAFTING SPOT"
+		Mode.BUILD_FABRICATOR_ADVANCED: return "BUILD FABRICATOR"
 		Mode.PLACE_STORAGE_BIN: return "PLACE STORAGE BIN"
 		Mode.PLACE_OUTLET_EXTENSION: return "PLACE OUTLET EXTENSION"
 		Mode.PLACE_RUDIMENTARY_SENSOR: return "PLACE RUDIMENTARY SENSOR"
 		Mode.PLACE_SMALL_LIGHT_DEVICE: return "PLACE SMALL LIGHT"
 		Mode.PLACE_LARGE_LIGHT_DEVICE: return "PLACE LARGE LIGHT"
 		Mode.DESIGNATE_DOCK_ROOM: return "DOCK ROOM"
-		Mode.DESIGNATE_MEDITATION_CHAMBER: return "MEDITATION CHAMBER"
+		Mode.DESIGNATE_RESEARCH_ROOM: return "RESEARCH ROOM"
 		Mode.DESIGNATE_MECHANIC_ROOM: return "MECHANIC ROOM"
-		Mode.DESIGNATE_MACHINE_ROOM: return "MACHINE ROOM"
+		Mode.DESIGNATE_WORKSHOP_ROOM: return "WORKSHOP ROOM"
 		Mode.REMOVE_ROOM: return "REMOVE ROOM"
 		_: return "-"
 
@@ -169,9 +167,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("designate_build_door"):
 		_set_mode(Mode.BUILD_DOOR if _mode != Mode.BUILD_DOOR else Mode.NONE)
 		return
-	if event.is_action_pressed("designate_build_light"):
-		_set_mode(Mode.BUILD_LIGHT if _mode != Mode.BUILD_LIGHT else Mode.NONE)
-		return
 	if event.is_action_pressed("designate_build_extractor"):
 		_set_mode(Mode.BUILD_EXTRACTOR if _mode != Mode.BUILD_EXTRACTOR else Mode.NONE)
 		return
@@ -211,15 +206,16 @@ func _on_right_press() -> void:
 	var grid := _world_to_grid(_camera.get_global_mouse_position())
 	match _mode:
 		Mode.MINE, Mode.STOCKPILE, Mode.REMOVE_STOCKPILE, \
-		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_LIGHT, Mode.BUILD_EXTRACTOR, \
+		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_EXTRACTOR, \
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
-		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE, \
+		Mode.BUILD_MAINTENANCE_DOCK, \
 		Mode.BUILD_MEDITATION_PAD, Mode.BUILD_SENTIENCE_CRADLE, Mode.BUILD_FABRICATION_SPOT, \
+		Mode.BUILD_FABRICATOR_ADVANCED, \
 		Mode.PLACE_STORAGE_BIN, Mode.PLACE_OUTLET_EXTENSION, Mode.PLACE_RUDIMENTARY_SENSOR, \
 		Mode.PLACE_SMALL_LIGHT_DEVICE, Mode.PLACE_LARGE_LIGHT_DEVICE, \
-		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_MEDITATION_CHAMBER, \
-		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_MACHINE_ROOM, Mode.REMOVE_ROOM:
+		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_RESEARCH_ROOM, \
+		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_WORKSHOP_ROOM, Mode.REMOVE_ROOM:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -250,12 +246,12 @@ func _on_right_release() -> void:
 					_apply_remove_stockpile_click(cell)
 			Mode.DESIGNATE_DOCK_ROOM:
 				_apply_dock_room(cells)
-			Mode.DESIGNATE_MEDITATION_CHAMBER:
-				_apply_meditation_chamber(cells)
+			Mode.DESIGNATE_RESEARCH_ROOM:
+				_apply_research_room(cells)
 			Mode.DESIGNATE_MECHANIC_ROOM:
 				_apply_mechanic_room(cells)
-			Mode.DESIGNATE_MACHINE_ROOM:
-				_apply_machine_room(cells)
+			Mode.DESIGNATE_WORKSHOP_ROOM:
+				_apply_workshop_room(cells)
 			Mode.REMOVE_ROOM:
 				for cell in cells:
 					_apply_remove_room(cell)
@@ -317,10 +313,10 @@ func _apply_dock_room(cells: Array[Vector2i]) -> void:
 	_room_manager.call("create_dock_room", cells)
 
 
-func _apply_meditation_chamber(cells: Array[Vector2i]) -> void:
-	if _room_manager == null or not _room_manager.has_method("create_meditation_chamber"):
+func _apply_research_room(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_research_room"):
 		return
-	_room_manager.call("create_meditation_chamber", cells)
+	_room_manager.call("create_research_room", cells)
 
 
 func _apply_mechanic_room(cells: Array[Vector2i]) -> void:
@@ -329,10 +325,10 @@ func _apply_mechanic_room(cells: Array[Vector2i]) -> void:
 	_room_manager.call("create_mechanic_room", cells)
 
 
-func _apply_machine_room(cells: Array[Vector2i]) -> void:
-	if _room_manager == null or not _room_manager.has_method("create_machine_room"):
+func _apply_workshop_room(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_workshop_room"):
 		return
-	_room_manager.call("create_machine_room", cells)
+	_room_manager.call("create_workshop_room", cells)
 
 
 func _apply_remove_room(grid: Vector2i) -> void:
@@ -345,8 +341,6 @@ func _blueprint_for_mode() -> int:
 	match _mode:
 		Mode.BUILD_DOOR:
 			return BuildBlueprint.Id.DOOR
-		Mode.BUILD_LIGHT:
-			return BuildBlueprint.Id.LIGHT
 		Mode.BUILD_EXTRACTOR:
 			return BuildBlueprint.Id.EXTRACTOR
 		Mode.BUILD_SENSOR:
@@ -363,14 +357,14 @@ func _blueprint_for_mode() -> int:
 			return BuildBlueprint.Id.PARTS_LOOM
 		Mode.BUILD_MAINTENANCE_DOCK:
 			return BuildBlueprint.Id.MAINTENANCE_DOCK
-		Mode.BUILD_CALIBRATION_SHRINE:
-			return BuildBlueprint.Id.CALIBRATION_SHRINE
 		Mode.BUILD_MEDITATION_PAD:
 			return BuildBlueprint.Id.MEDITATION_PAD
 		Mode.BUILD_SENTIENCE_CRADLE:
 			return BuildBlueprint.Id.SENTIENCE_CRADLE
 		Mode.BUILD_FABRICATION_SPOT:
 			return BuildBlueprint.Id.FABRICATION_SPOT
+		Mode.BUILD_FABRICATOR_ADVANCED:
+			return BuildBlueprint.Id.FABRICATOR_ADVANCED
 		Mode.PLACE_STORAGE_BIN:
 			return BuildBlueprint.Id.STORAGE_BIN
 		Mode.PLACE_OUTLET_EXTENSION:
@@ -388,7 +382,6 @@ func _blueprint_for_mode() -> int:
 func _is_build_mode() -> bool:
 	return _mode == Mode.BUILD_WALL \
 		or _mode == Mode.BUILD_DOOR \
-		or _mode == Mode.BUILD_LIGHT \
 		or _mode == Mode.BUILD_EXTRACTOR \
 		or _mode == Mode.BUILD_SENSOR \
 		or _mode == Mode.BUILD_CHARGE_PAD \
@@ -397,10 +390,10 @@ func _is_build_mode() -> bool:
 		or _mode == Mode.BUILD_REPAIR_BENCH \
 		or _mode == Mode.BUILD_PARTS_LOOM \
 		or _mode == Mode.BUILD_MAINTENANCE_DOCK \
-		or _mode == Mode.BUILD_CALIBRATION_SHRINE \
 		or _mode == Mode.BUILD_MEDITATION_PAD \
 		or _mode == Mode.BUILD_SENTIENCE_CRADLE \
 		or _mode == Mode.BUILD_FABRICATION_SPOT \
+		or _mode == Mode.BUILD_FABRICATOR_ADVANCED \
 		or _mode == Mode.PLACE_STORAGE_BIN \
 		or _mode == Mode.PLACE_OUTLET_EXTENSION \
 		or _mode == Mode.PLACE_RUDIMENTARY_SENSOR \
@@ -441,9 +434,9 @@ func _draw() -> void:
 			fill = ZONE_PREVIEW_FILL
 			border = ZONE_PREVIEW_BORDER
 		elif _mode == Mode.DESIGNATE_DOCK_ROOM \
-				or _mode == Mode.DESIGNATE_MEDITATION_CHAMBER \
+				or _mode == Mode.DESIGNATE_RESEARCH_ROOM \
 				or _mode == Mode.DESIGNATE_MECHANIC_ROOM \
-				or _mode == Mode.DESIGNATE_MACHINE_ROOM:
+				or _mode == Mode.DESIGNATE_WORKSHOP_ROOM:
 			fill = ROOM_PREVIEW_FILL
 			border = ROOM_PREVIEW_BORDER
 		draw_rect(r, fill)

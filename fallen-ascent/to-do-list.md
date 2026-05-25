@@ -103,12 +103,16 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       cursor off the panel. Next pass: keep the buttons alive between
       ticks and update label / meter values in place instead of nuking and
       re-creating the whole card.
-- [ ] **Re-purpose the Machine Room designation.** Worker-operated
-      structures no longer require a Machine Room to function (Extractor,
-      Fabricator, Assembly Press, Replication Cradle work anywhere). The
-      designation still exists in the Rooms tab for organisation but is
-      currently a no-op gameplay-wise. Either give it a real bonus
-      (production speed, maintenance, hazard suppression) or remove it.
+- [x] **Re-purpose the Machine Room designation.** Replaced by Workshop Room
+      (enclosed + door + light + workshop → speed buff; outside any room →
+      debuff). Old Machine Room and Meditation Chamber kinds were renamed
+      (Research Room) or removed (Machine Room → Workshop Room).
+- [ ] **Crafting Bench UI parity.** Old `Id.FABRICATOR` (Crafting Bench) was
+      stripped of its DATACORE/CHARGE_CELL production; the new
+      `Id.FABRICATOR_ADVANCED` (Fabricator) covers that role. The Crafting
+      Bench currently has no production wired up — the intent is "same UI as
+      Crafting Spot but faster", which needs the craft-job dispatcher to
+      treat both as crafted-object stations.
 
 ## World gen follow-ups
 
@@ -117,6 +121,10 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       lakes can't intrude into chambers. Once it's gameplay-relevant,
       either let the water field overwrite walls (with intentional shore
       cleanup) or carve rivers into the chunk before rooms are placed.
+- [ ] **Author real acid atlas art.** Rows 3-5 of `water_atlas.png` are flat
+      green placeholders sized to the existing 16-mask layout; the shared
+      `water_tile.gdshader` already handles palette/ripple per band. Replace
+      with proper pixel art when the visual identity lands.
 
 ## Tech tree & economy follow-ups
 

@@ -37,7 +37,6 @@ const REBINDABLE_ACTIONS: Array[StringName] = [
 	&"designate_remove_stockpile",
 	&"designate_build",
 	&"designate_build_door",
-	&"designate_build_light",
 	&"designate_build_extractor",
 	&"cancel_mode",
 ]

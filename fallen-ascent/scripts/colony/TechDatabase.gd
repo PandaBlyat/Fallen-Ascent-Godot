@@ -38,13 +38,12 @@ static func all() -> Array[TechData]:
 	out.append(TechData.new(
 		AWAKENING,
 		"Awakening",
-		"You came online. Basic walls, doors, lights, docks, repair benches, stockpiles, and a meditation pad are available from the start.",
+		"You came online. Basic walls, doors, dock beds, repair benches, stockpiles, research benches, and crafted lights are available from the start.",
 		0,
 		[],
 		[
 			BuildBlueprint.Id.WALL,
 			BuildBlueprint.Id.DOOR,
-			BuildBlueprint.Id.LIGHT,
 			BuildBlueprint.Id.DOCK,
 			BuildBlueprint.Id.REPAIR_BENCH,
 			BuildBlueprint.Id.MEDITATION_PAD,
@@ -73,10 +72,10 @@ static func all() -> Array[TechData]:
 	out.append(TechData.new(
 		POWER_II,
 		"Power Grid II",
-		"Build a Fabricator to turn refined parts into datacores and charge cells.",
+		"Build a Fabricator to turn refined parts into datacores, charge cells, and rudimentary sensors. Pair with a Crafting Bench for fast object crafting.",
 		90,
 		[POWER_I],
-		[BuildBlueprint.Id.FABRICATOR],
+		[BuildBlueprint.Id.FABRICATOR, BuildBlueprint.Id.FABRICATOR_ADVANCED],
 		Vector2i(2, 0),
 		"Power",
 	))
@@ -149,10 +148,10 @@ static func all() -> Array[TechData]:
 	out.append(TechData.new(
 		CALIBRATION,
 		"Calibration",
-		"Unlocks the Calibration Shrine for future mental and social recovery.",
+		"Reserved — calibration mechanics are deferred to a later pass.",
 		160,
 		[FOCUSED_MIND],
-		[BuildBlueprint.Id.CALIBRATION_SHRINE],
+		[],
 		Vector2i(2, 3),
 		"Mind",
 	))

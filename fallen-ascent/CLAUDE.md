@@ -26,9 +26,13 @@ mind. When in doubt, prefer the cheaper approach now and measure before
 tile is added, also add a flat-color placeholder entry for it:
 - Connected floor-family terrain goes in `resources/tiles/floor_base_atlas.png`
   using the 4-bit `N/E/S/W = 1/2/4/8` mask layout documented beside the PNG.
-- Connected water goes in `resources/tiles/water_atlas.png` using the same
-  4-bit mask layout, with one atlas row per depth band (`y=0` deep
-  impassable, `y=1` shallow walkable-but-slow, `y=2` puddle walkable).
+- Connected water and acid both live in `resources/tiles/water_atlas.png` using
+  the same 4-bit mask layout, with one atlas row per depth band:
+  `y=0` deep water (impassable), `y=1` shallow water (walkable-but-slow),
+  `y=2` water puddle (walkable), `y=3` deep acid (impassable, caustic),
+  `y=4` shallow acid (walkable-but-slow + damage),
+  `y=5` acid puddle (walkable + slight damage). The `water_tile.gdshader`
+  routes palette + ripple style off the row.
 - Connected wall-family terrain goes in one wall atlas per wall type, e.g.
   `wall_basic_atlas.png`, `wall_rich_atlas.png`, or
   `wall_service_core_atlas.png`.
@@ -98,13 +102,18 @@ Naming convention for script roles:
 
 ## Designation tabs
 
-The colony palette is grouped into five tabs (`ColonyHud._set_tab`):
+The colony palette is grouped into eight tabs (`ColonyHud._set_tab`):
 
 - **Orders** — task overlays (mine).
 - **Zones** — stockpile paint/remove.
-- **Rooms** — Rimworld-style room designations (currently Dock Room).
-- **Structures** — buildables.
-- **Objects** — crafted-object placement.
+- **Rooms** — Rimworld-style room designations: Dock, Research, Mechanic, Workshop.
+- **Workshops** — worker-operated structures (dock bed, repair bench, research bench,
+  crafting spot/bench, sensor, extractor, charge, assembler press, mechanic dock,
+  fabricator, replication cradle).
+- **Building** — wall, door, outlet extension.
+- **Storage** — storage bin.
+- **Visibility** — small/large light devices, rudimentary sensor.
+- **Objects** — placeholder for future crafted-object placements.
 
 There is no per-tab Cancel button: a left-click on any world tile while a
 designation mode is active cancels it (see `SelectionController._unhandled_input`),
@@ -118,11 +127,16 @@ is recomputed every frame from `RoomManager`. Each unmet need drains mood at
 `MOOD_RECOVERY_PER_SEC`. Add new needs by appending to `_unsatisfied_needs`
 in `Worker._update_mood` — the HUD will render them automatically.
 
-`RoomManager` owns the list of player-designated rooms. v1 has one kind,
-`DOCK_ROOM`: a 1×2+ painted area containing at least one Dock (or
-Maintenance Dock) structure. Rooms can be assigned to a single worker via
-`ensure_dock_room_for`; once assigned, the worker's "Needs dock room" need
-is satisfied.
+`RoomManager` owns the list of player-designated rooms. Kinds:
+- `DOCK_ROOM` — 1×2+ area containing at least one Dock Bed (or Mechanic Dock).
+  Assigned to a single worker via `ensure_dock_room_for`.
+- `RESEARCH_ROOM` — must contain a Research Bench (formerly Meditation Pad).
+- `MECHANIC_ROOM` — must contain a Mechanic Dock; heals limbs of occupants.
+- `WORKSHOP_ROOM` — must be enclosed by walls (or natural wall tiles) + at
+  least one door on the perimeter, contain a placed light source object, and
+  contain a workshop structure. Workshops inside a valid Workshop Room get a
+  small speed buff; workshops outside any room suffer a small debuff
+  (`workshop_speed_multiplier_at`).
 
 ---
 

@@ -10,7 +10,7 @@ extends RefCounted
 ##
 ## Tile ids: 0=floor, 1=wall, 2=debris, 3=void, 4=outlet, 5=service core,
 ## 6=conduit floor, 7=rust sludge, 8=rich wall, 9=teleporter, 10=deep water,
-## 11=shallow water, 12=puddle.
+## 11=shallow water, 12=puddle, 13=deep acid, 14=shallow acid, 15=acid puddle.
 
 const TILE_FLOOR: int = 0
 const TILE_WALL: int = 1
@@ -25,6 +25,9 @@ const TILE_TELEPORTER: int = 9
 const TILE_WATER: int = 10
 const TILE_WATER_SHALLOW: int = 11
 const TILE_WATER_PUDDLE: int = 12
+const TILE_ACID: int = 13
+const TILE_ACID_SHALLOW: int = 14
+const TILE_ACID_PUDDLE: int = 15
 
 # Global fallbacks & boundary-critical constants
 const _DOOR_PROBABILITY: float = 0.74
@@ -260,6 +263,20 @@ static func populate(
 			if water_kind >= 0:
 				out[idx] = water_kind
 				continue
+			# Acid is much rarer and only fires on otherwise dry cells, so
+			# water bodies stay coherent while acid takes the leftover.
+			var acid_kind: int = _acid_kind_at(
+				noise,
+				base_x + lx,
+				base_y + ly,
+				zone,
+				lx,
+				ly,
+				chunk_size,
+			)
+			if acid_kind >= 0:
+				out[idx] = acid_kind
+				continue
 			if detail_noise > conduit_threshold:
 				out[idx] = TILE_CONDUIT
 			elif floor_noise < rust_threshold:
@@ -293,6 +310,9 @@ static func tile_color(t: int) -> Color:
 		TILE_WATER: return Color(0.05, 0.28, 0.55)
 		TILE_WATER_SHALLOW: return Color(0.18, 0.55, 0.62)
 		TILE_WATER_PUDDLE: return Color(0.38, 0.42, 0.38)
+		TILE_ACID: return Color(0.12, 0.38, 0.10)
+		TILE_ACID_SHALLOW: return Color(0.30, 0.62, 0.18)
+		TILE_ACID_PUDDLE: return Color(0.46, 0.66, 0.22)
 	return Color.MAGENTA
 
 
@@ -311,6 +331,9 @@ static func tile_name(t: int) -> String:
 		TILE_WATER: return "deep water"
 		TILE_WATER_SHALLOW: return "shallow water"
 		TILE_WATER_PUDDLE: return "puddle"
+		TILE_ACID: return "deep acid"
+		TILE_ACID_SHALLOW: return "shallow acid"
+		TILE_ACID_PUDDLE: return "acid puddle"
 		_: return "unknown"
 
 
@@ -1210,3 +1233,90 @@ static func _water_kind_at(
 		2: return TILE_WATER
 		1: return TILE_WATER_SHALLOW
 		_: return TILE_WATER_PUDDLE
+
+
+## Returns one of TILE_ACID / TILE_ACID_SHALLOW / TILE_ACID_PUDDLE, or -1 when
+## the cell is dry. Mirrors _water_kind_at() but uses rarer thresholds and
+## zone-specific bias so acid is genuinely hazardous and uncommon. Decorrelated
+## noise offsets keep acid from coinciding with water.
+static func _acid_kind_at(
+	noise: FastNoiseLite,
+	wx: int,
+	wy: int,
+	zone: int,
+	lx: int,
+	ly: int,
+	chunk_size: int,
+) -> int:
+	var pool_enabled: bool = true
+	var seep_enabled: bool = true
+	var splash_enabled: bool = true
+	var pool_bias: float = 0.0
+	var seep_bias: float = 0.0
+	var splash_bias: float = 0.0
+	match zone:
+		0:  # The Abyss — corrosive seep from above
+			pool_bias = 0.02
+			seep_bias = 0.04
+			splash_bias = 0.04
+		1:  # The Industrial Core — coolant breaches, leaking reactors
+			pool_bias = 0.08
+			seep_bias = 0.02
+			splash_bias = 0.06
+		2:  # Habitation Blocks — rare, mostly leaky pipes
+			pool_enabled = false
+			seep_bias = -0.04
+			splash_bias = -0.02
+		3:  # Lithic Vault — natural acid aquifers
+			pool_bias = 0.04
+			seep_bias = 0.02
+			splash_bias = 0.0
+		4:  # Structural Grid — sparse industrial residue
+			pool_enabled = false
+			seep_enabled = false
+			splash_bias = -0.02
+
+	var depth: int = -1  # -1 dry, 0 puddle, 1 shallow, 2 deep
+
+	if pool_enabled:
+		var pool_n: float = noise.get_noise_2d(float(wx) * 0.21 + 5021.0, float(wy) * 0.21 - 1873.0)
+		var pool_score: float = -pool_n + pool_bias
+		# Rarer than water lakes: tighter thresholds.
+		if pool_score > 0.58:
+			depth = maxi(depth, 2)
+		elif pool_score > 0.46:
+			depth = maxi(depth, 1)
+		elif pool_score > 0.34:
+			depth = maxi(depth, 0)
+
+	if seep_enabled:
+		var seep_n: float = noise.get_noise_2d(float(wx) * 0.14 - 2273.0, float(wy) * 0.14 + 1607.0)
+		var seep_raw: float = absf(seep_n) - seep_bias
+		# Acid runs follow ridged noise like rivers, but much thinner.
+		if seep_raw < 0.012:
+			depth = maxi(depth, 2)
+			# Trim to shallow if it might dilute too quickly; we want hazard not pools.
+		elif seep_raw < 0.035:
+			depth = maxi(depth, 1)
+		elif seep_raw < 0.07:
+			depth = maxi(depth, 0)
+
+	if splash_enabled:
+		var splash_n: float = noise.get_noise_2d(float(wx) * 0.62 - 4093.0, float(wy) * 0.62 + 6173.0)
+		if splash_n + splash_bias > 0.78:
+			depth = maxi(depth, 0)
+
+	if depth < 0:
+		return -1
+
+	# Keep deep acid away from chunk seams.
+	var edge_margin: int = 2
+	if depth == 2 and (
+			lx < edge_margin or lx >= chunk_size - edge_margin
+			or ly < edge_margin or ly >= chunk_size - edge_margin):
+		depth = 1
+
+	match depth:
+		2: return TILE_ACID
+		1: return TILE_ACID_SHALLOW
+		_: return TILE_ACID_PUDDLE

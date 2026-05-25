@@ -116,7 +116,7 @@ func _repaint_cell(local: Vector2i) -> void:
 	var tile: int = get_tile(local)
 	var mask: int = _connection_mask(local, tile)
 	var base_source: int = TileVisuals.base_source(tile)
-	if TileVisuals.is_water_family(tile):
+	if TileVisuals.is_water_or_acid_family(tile):
 		_base_layer.erase_cell(local)
 		_water_layer.set_cell(local, TileVisuals.SOURCE_WATER, TileVisuals.base_atlas_coords(tile, mask))
 	elif base_source == TileVisuals.NO_SOURCE:

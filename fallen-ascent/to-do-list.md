@@ -14,6 +14,18 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 
 ## Rendering & assets
 
+- [ ] **Replace placeholder UI panel PNGs with real art.** Per-panel
+      placeholder textures + descriptions live in `resources/ui/panels/`.
+      ColonyHud / TechTreePanel load them through `_panel_textured_style`,
+      so the moment a PNG is replaced with proper 48x48 9-slice art the
+      panel re-skins. SettingsMenu and PauseOverlay still need wiring
+      from their `.tscn` to the matching PNGs (`settings_menu.png`,
+      `pause_overlay.png`).
+- [ ] **Authoring water atlas art.** `water_atlas.png` now has 3 rows
+      (deep/shallow/puddle) used by `TILE_WATER`, `TILE_WATER_SHALLOW`,
+      `TILE_WATER_PUDDLE`. Placeholder cells are flat-tinted; the shader
+      at `resources/shaders/water_tile.gdshader` keys ripple intensity
+      off the atlas row. Tune palettes/animations once real art lands.
 - [ ] **Move fog/lighting overlay data to a dirty-tile GPU mask pipeline.**
       `FogOfWar` still rebuilds CPU `Image` masks with per-pixel `set_pixel`
       and LOS loops. Next step: keep dirty rects, update only changed mask

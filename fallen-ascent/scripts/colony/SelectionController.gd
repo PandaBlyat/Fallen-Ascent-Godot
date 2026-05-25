@@ -21,8 +21,9 @@ extends Node2D
 
 const SELECT_RADIUS_PX: float = 10.0
 const DRAG_THRESHOLD_PX: float = 6.0
-const DRAG_FILL := Color(0.35, 0.65, 1.0, 0.06)
-const DRAG_BORDER := Color(0.55, 0.78, 1.0, 0.45)
+const DRAG_FILL := Color(0.40, 0.78, 1.0, 0.22)
+const DRAG_BORDER := Color(0.75, 0.92, 1.0, 0.95)
+const DRAG_BORDER_PX: float = 2.0
 const ORDER_HIGHLIGHT_SECONDS: float = 1.2
 const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.10)
 const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.55)
@@ -392,7 +393,9 @@ static func _is_walkable_order_tile(tile: int) -> bool:
 		or tile == TerrainGenerator.TILE_DEBRIS \
 		or tile == TerrainGenerator.TILE_CONDUIT \
 		or tile == TerrainGenerator.TILE_RUST \
-		or tile == TerrainGenerator.TILE_TELEPORTER
+		or tile == TerrainGenerator.TILE_TELEPORTER \
+		or tile == TerrainGenerator.TILE_WATER_SHALLOW \
+		or tile == TerrainGenerator.TILE_WATER_PUDDLE
 
 
 func _npc_under(world_pos: Vector2) -> Node2D:
@@ -649,7 +652,7 @@ func _draw() -> void:
 		var size := Vector2(absf(_drag_start_world.x - _drag_end_world.x), absf(_drag_start_world.y - _drag_end_world.y))
 		var drag_rect := Rect2(drag_origin, size)
 		draw_rect(drag_rect, DRAG_FILL)
-		draw_rect(drag_rect, DRAG_BORDER, false, HIGHLIGHT_BORDER_PX)
+		draw_rect(drag_rect, DRAG_BORDER, false, DRAG_BORDER_PX)
 
 
 func _draw_selected_paths() -> void:

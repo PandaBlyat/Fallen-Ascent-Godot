@@ -48,7 +48,7 @@ func _ready() -> void:
 	panel.offset_bottom = 300.0
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_PANEL))
+	panel.add_theme_stylebox_override("panel", _textured_panel_style("tech_tree", COLOR_BG_PANEL))
 	add_child(panel)
 
 	var margin := MarginContainer.new()
@@ -273,6 +273,25 @@ func _panel_style(bg: Color) -> StyleBoxFlat:
 	style.corner_radius_top_right = 8
 	style.corner_radius_bottom_left = 8
 	style.corner_radius_bottom_right = 8
+	return style
+
+
+## See `resources/ui/panels/README.md`. Tech-tree-specific panels read
+## their backgrounds from the shared placeholder PNG library so swapping
+## in real art is just a file replacement.
+func _textured_panel_style(panel_name: String, fallback_bg: Color) -> StyleBox:
+	var path: String = "res://resources/ui/panels/%s.png" % panel_name
+	if not ResourceLoader.exists(path):
+		return _panel_style(fallback_bg)
+	var tex: Texture2D = load(path) as Texture2D
+	if tex == null:
+		return _panel_style(fallback_bg)
+	var style := StyleBoxTexture.new()
+	style.texture = tex
+	style.texture_margin_left = 16.0
+	style.texture_margin_top = 16.0
+	style.texture_margin_right = 16.0
+	style.texture_margin_bottom = 16.0
 	return style
 
 

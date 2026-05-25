@@ -9,7 +9,8 @@ extends RefCounted
 ## load-bearing pillars, and heavy industrial machinery cores.
 ##
 ## Tile ids: 0=floor, 1=wall, 2=debris, 3=void, 4=outlet, 5=service core,
-## 6=conduit floor, 7=rust sludge, 8=rich wall, 9=teleporter, 10=water.
+## 6=conduit floor, 7=rust sludge, 8=rich wall, 9=teleporter, 10=deep water,
+## 11=shallow water, 12=puddle.
 
 const TILE_FLOOR: int = 0
 const TILE_WALL: int = 1
@@ -22,6 +23,8 @@ const TILE_RUST: int = 7
 const TILE_RICH_WALL: int = 8
 const TILE_TELEPORTER: int = 9
 const TILE_WATER: int = 10
+const TILE_WATER_SHALLOW: int = 11
+const TILE_WATER_PUDDLE: int = 12
 
 # Global fallbacks & boundary-critical constants
 const _DOOR_PROBABILITY: float = 0.74
@@ -241,7 +244,17 @@ static func populate(
 			var floor_noise: float = noise.get_noise_2d(base_x + lx, base_y + ly)
 			var detail_noise: float = noise.get_noise_2d((base_x + lx) * 2.1, (base_y + ly) * 2.1)
 			if floor_noise < water_threshold:
-				out[idx] = TILE_WATER
+				# Three-band water depth: the deeper the noise dips below the
+				# water_threshold, the deeper the cell. Outer rim of any
+				# water blob becomes puddle, the middle band is shallow, and
+				# only the inner cores are impassable deep water.
+				var depth: float = water_threshold - floor_noise
+				if depth > 0.10:
+					out[idx] = TILE_WATER
+				elif depth > 0.04:
+					out[idx] = TILE_WATER_SHALLOW
+				else:
+					out[idx] = TILE_WATER_PUDDLE
 			elif detail_noise > conduit_threshold:
 				out[idx] = TILE_CONDUIT
 			elif floor_noise < rust_threshold:
@@ -273,6 +286,8 @@ static func tile_color(t: int) -> Color:
 		TILE_RICH_WALL: return Color(0.46, 0.42, 0.62)
 		TILE_TELEPORTER: return Color(0.15, 0.92, 1.0)
 		TILE_WATER: return Color(0.05, 0.28, 0.55)
+		TILE_WATER_SHALLOW: return Color(0.18, 0.55, 0.62)
+		TILE_WATER_PUDDLE: return Color(0.38, 0.42, 0.38)
 	return Color.MAGENTA
 
 
@@ -288,7 +303,9 @@ static func tile_name(t: int) -> String:
 		TILE_RUST: return "rust sludge"
 		TILE_RICH_WALL: return "plated wall"
 		TILE_TELEPORTER: return "teleporter"
-		TILE_WATER: return "water"
+		TILE_WATER: return "deep water"
+		TILE_WATER_SHALLOW: return "shallow water"
+		TILE_WATER_PUDDLE: return "puddle"
 		_: return "unknown"
 
 

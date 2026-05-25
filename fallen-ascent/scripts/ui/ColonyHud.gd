@@ -180,7 +180,7 @@ func _build_layout() -> void:
 	var top_strip := PanelContainer.new()
 	top_strip.name = "TopStrip"
 	top_strip.mouse_filter = Control.MOUSE_FILTER_STOP
-	top_strip.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	top_strip.add_theme_stylebox_override("panel", _panel_textured_style("top_strip", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	top_strip.anchor_left = 0.5
 	top_strip.anchor_right = 0.5
 	top_strip.anchor_top = 0.0
@@ -255,7 +255,7 @@ func _build_layout() -> void:
 	npc_panel.offset_top = 62.0
 	npc_panel.offset_right = WORKER_LIST_WIDTH * 0.5
 	npc_panel.offset_bottom = 62.0 + WORKER_LIST_HEIGHT
-	npc_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	npc_panel.add_theme_stylebox_override("panel", _panel_textured_style("npc_strip", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	_npc_panel = npc_panel
 	add_child(npc_panel)
 
@@ -290,7 +290,7 @@ func _build_layout() -> void:
 	palette.offset_top = -PALETTE_HEIGHT - 16.0
 	palette.offset_right = PALETTE_WIDTH * 0.5
 	palette.offset_bottom = -16.0
-	palette.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	palette.add_theme_stylebox_override("panel", _panel_textured_style("command_palette", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	add_child(palette)
 
 	var palette_margin := MarginContainer.new()
@@ -328,7 +328,7 @@ func _build_layout() -> void:
 	_selection_panel.anchor_top = 0.0
 	_selection_panel.anchor_right = 0.0
 	_selection_panel.anchor_bottom = 0.0
-	_selection_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
+	_selection_panel.add_theme_stylebox_override("panel", _panel_textured_style("selection_panel", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 5.0, true))
 	add_child(_selection_panel)
 
 	var selection_margin := MarginContainer.new()
@@ -363,7 +363,7 @@ func _build_layout() -> void:
 	_inspect_panel.offset_top = -PALETTE_HEIGHT - 16.0 - INSPECT_CARD_HEIGHT - 10.0
 	_inspect_panel.offset_right = INSPECT_CARD_WIDTH * 0.5
 	_inspect_panel.offset_bottom = -PALETTE_HEIGHT - 16.0 - 10.0
-	_inspect_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
+	_inspect_panel.add_theme_stylebox_override("panel", _panel_textured_style("inspect_card", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 6.0, true))
 	add_child(_inspect_panel)
 
 	var inspect_margin := MarginContainer.new()
@@ -827,7 +827,7 @@ func _build_resource_popup(category: int) -> void:
 	popup.visible = false
 	popup.z_index = 150
 	popup.custom_minimum_size = Vector2(220, 0)
-	popup.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	popup.add_theme_stylebox_override("panel", _panel_textured_style("resource_popup", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
 	add_child(popup)
 	_resource_popups[category] = popup
 
@@ -978,7 +978,7 @@ func _build_worker_cards() -> void:
 func _add_worker_roster(workers: Array[Worker]) -> void:
 	var roster_panel := PanelContainer.new()
 	roster_panel.custom_minimum_size = Vector2(170, 0)
-	roster_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
+	roster_panel.add_theme_stylebox_override("panel", _panel_textured_style("roster_panel", COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
 	_selection_box.add_child(roster_panel)
 
 	var margin := MarginContainer.new()
@@ -1011,7 +1011,7 @@ func _build_worker_detail_card(worker: Worker, selected_count: int) -> void:
 	var card_panel := PanelContainer.new()
 	card_panel.custom_minimum_size = Vector2(WORKER_CARD_WIDTH, 0)
 	card_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	card_panel.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
+	card_panel.add_theme_stylebox_override("panel", _panel_textured_style("worker_card", COLOR_BG_RAISED, Color(0.30, 0.42, 0.46, 0.65), 5.0, false))
 	_selection_box.add_child(card_panel)
 
 	var margin := MarginContainer.new()
@@ -1106,7 +1106,7 @@ func _add_metric_chip(parent: Control, key: String, value: String, color: Color)
 	var chip := PanelContainer.new()
 	chip.custom_minimum_size = Vector2(96, 38)
 	chip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	chip.add_theme_stylebox_override("panel", _panel_style(Color(0.06, 0.075, 0.085, 0.88), Color(0.24, 0.30, 0.33, 0.62), 4.0, false))
+	chip.add_theme_stylebox_override("panel", _panel_textured_style("resource_chip", Color(0.06, 0.075, 0.085, 0.88), Color(0.24, 0.30, 0.33, 0.62), 4.0, false))
 	parent.add_child(chip)
 
 	var box := VBoxContainer.new()
@@ -1499,15 +1499,13 @@ func _status_label(label_text: String) -> Label:
 # Wraps a label in a neat panel "badge" for consistent visual separation
 func _badge_container(content_label: Label) -> PanelContainer:
 	var badge := PanelContainer.new()
-	var badge_style := StyleBoxFlat.new()
-	badge_style.bg_color = COLOR_BG_RAISED
-	badge_style.set_border_width_all(1)
-	badge_style.border_color = Color(0.29, 0.32, 0.35, 0.46)
-	badge_style.corner_radius_top_left = 3
-	badge_style.corner_radius_top_right = 3
-	badge_style.corner_radius_bottom_left = 3
-	badge_style.corner_radius_bottom_right = 3
-	badge.add_theme_stylebox_override("panel", badge_style)
+	badge.add_theme_stylebox_override("panel", _panel_textured_style(
+		"wisdom_badge",
+		COLOR_BG_RAISED,
+		Color(0.29, 0.32, 0.35, 0.46),
+		3.0,
+		false,
+	))
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 7)
@@ -1547,6 +1545,33 @@ func _panel_style(fill: Color, border: Color, radius: float, with_shadow: bool =
 		style.shadow_size = 8
 		style.shadow_offset = Vector2(0, 4)
 	return style
+
+
+## Returns a `StyleBoxTexture` backed by the placeholder PNG at
+## `resources/ui/panels/<panel_name>.png` so dropping in real art there
+## immediately retextures the panel. Falls back to the legacy
+## `_panel_style` flat fill if the texture is missing on disk.
+##
+## See `resources/ui/panels/README.md` for the 9-slice contract (48x48
+## tile, 16 px corners).
+func _panel_textured_style(panel_name: String, fallback_fill: Color, fallback_border: Color, radius: float, with_shadow: bool = false) -> StyleBox:
+	var texture: Texture2D = _panel_texture(panel_name)
+	if texture == null:
+		return _panel_style(fallback_fill, fallback_border, radius, with_shadow)
+	var style := StyleBoxTexture.new()
+	style.texture = texture
+	style.texture_margin_left = 16.0
+	style.texture_margin_top = 16.0
+	style.texture_margin_right = 16.0
+	style.texture_margin_bottom = 16.0
+	return style
+
+
+static func _panel_texture(panel_name: String) -> Texture2D:
+	var path: String = "res://resources/ui/panels/%s.png" % panel_name
+	if not ResourceLoader.exists(path):
+		return null
+	return load(path) as Texture2D
 
 
 func _button_style(fill: Color, border: Color) -> StyleBoxFlat:

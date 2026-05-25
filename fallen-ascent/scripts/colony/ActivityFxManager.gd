@@ -26,6 +26,7 @@ var _fog: FogOfWar
 var _material: ShaderMaterial
 var _shader_time: float = 0.0
 var _rebuild_accum: float = 0.0
+var _last_rebuild_ms: int = 0
 
 
 func _ready() -> void:
@@ -42,10 +43,15 @@ func _process(delta: float) -> void:
 	_shader_time += delta
 	if _material != null:
 		_material.set_shader_parameter("time_seconds", _shader_time)
-	_rebuild_accum += delta
-	if _rebuild_accum >= REBUILD_INTERVAL_SECONDS:
-		_rebuild_accum = 0.0
-		_rebuild_instances()
+	# Wall-clock gate: at high `Engine.time_scale`, delta is scaled up which
+	# would otherwise rebuild the MultiMesh instance buffer dozens of times
+	# per real second. The shader animates from `time_seconds` so the buffer
+	# can lag a few frames without visible stutter.
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms - _last_rebuild_ms < int(REBUILD_INTERVAL_SECONDS * 1000.0):
+		return
+	_last_rebuild_ms = now_ms
+	_rebuild_instances()
 
 
 func _setup_multimesh() -> void:

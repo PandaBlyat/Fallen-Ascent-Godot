@@ -67,22 +67,23 @@ const BOT_REGION_SIZE := Vector2(32, 32)
 const FACING_SOUTH: int = 0
 const NEUTRAL_ROW: int = 0
 const HOSTILE_ROW: int = 1
-const PALETTE_WIDTH: float = 580.0
+const PALETTE_WIDTH: float = 820.0
 const PALETTE_HEIGHT: float = 200.0
 const PALETTE_COLLAPSED_WIDTH: float = 132.0
 const PALETTE_COLLAPSED_HEIGHT: float = 44.0
 const TOP_STRIP_HEIGHT: float = 44.0
-const WORKER_LIST_WIDTH: float = 300.0
+const WORKER_LIST_WIDTH: float = 220.0
 const WORKER_LIST_MARGIN: float = 16.0
-const WORKER_LIST_ROW_HEIGHT: float = 32.0
-const WORKER_LIST_ROW_SEP: float = 6.0
-const WORKER_LIST_INNER_PAD: float = 7.0
+const WORKER_LIST_ROW_HEIGHT: float = 28.0
+const WORKER_LIST_ROW_SEP: float = 4.0
+const WORKER_LIST_INNER_PAD: float = 5.0
 const WORKER_LIST_HEADER_HEIGHT: float = 18.0
-const SELECTION_PANEL_WIDTH: float = 640.0
+const SELECTION_PANEL_WIDTH: float = 560.0
 const SELECTION_PANEL_HEIGHT: float = 650.0
-const WORKER_CARD_WIDTH: float = 460.0
+const WORKER_CARD_WIDTH: float = 440.0
 const INSPECT_CARD_WIDTH: float = 300.0
 const INSPECT_CARD_HEIGHT: float = 150.0
+const PANEL_DRAG_BORDER_PX: float = 8.0
 
 @export var designator_path: NodePath
 @export var job_board_path: NodePath
@@ -143,6 +144,11 @@ var _status_refresh_queued: bool = false
 var _last_npc_strip_count: int = -1
 var _npc_buttons_by_worker: Dictionary = {}       ## Worker -> Button
 var _combat_tweens_by_worker: Dictionary = {}     ## Worker -> Tween
+var _drag_offsets: Dictionary = {}                ## Control -> Vector2 user-positioned offset (top-left in viewport coords; Vector2.INF if untouched)
+var _dragging_panel: Control = null
+var _drag_grab_offset: Vector2 = Vector2.ZERO
+var _last_dynamic_refresh_ms: int = 0
+const DYNAMIC_REFRESH_INTERVAL_MS: int = 500
 
 
 func _ready() -> void:
@@ -167,11 +173,11 @@ func _ready() -> void:
 	_set_tab(TAB_ORDERS)
 	_refresh_all()
 
-	var refresh_timer := Timer.new()
-	refresh_timer.wait_time = 0.5
-	refresh_timer.timeout.connect(_refresh_dynamic_status)
-	add_child(refresh_timer)
-	refresh_timer.start()
+	# Dynamic HUD refresh is wall-clock based via `_process` so it doesn't
+	# tick 3-4x faster on high game speed (a Timer node scales with
+	# Engine.time_scale and would rebuild cards/labels well over twice a
+	# second when the player fast-forwards).
+	set_process(true)
 
 
 func _connect_signals() -> void:
@@ -363,14 +369,14 @@ func _build_layout() -> void:
 	add_child(_selection_panel)
 
 	var selection_margin := MarginContainer.new()
-	selection_margin.add_theme_constant_override("margin_left", 12)
-	selection_margin.add_theme_constant_override("margin_top", 12)
-	selection_margin.add_theme_constant_override("margin_right", 12)
-	selection_margin.add_theme_constant_override("margin_bottom", 12)
+	selection_margin.add_theme_constant_override("margin_left", 8)
+	selection_margin.add_theme_constant_override("margin_top", 8)
+	selection_margin.add_theme_constant_override("margin_right", 4)
+	selection_margin.add_theme_constant_override("margin_bottom", 8)
 	_selection_panel.add_child(selection_margin)
 
 	var selection_scroll := ScrollContainer.new()
-	selection_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	selection_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	selection_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	selection_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	selection_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -412,11 +418,24 @@ func _build_layout() -> void:
 
 	_recenter_top_strip()
 	_position_selection_panel()
+	_position_palette_panel()
 	resized.connect(_position_selection_panel)
+	resized.connect(_position_palette_panel)
+	_palette_panel.resized.connect(_position_palette_panel)
+
+	# Allow click-drag near panel edges to relocate the HUD panels around the
+	# screen. gui_input fires before the panel's children consume the event,
+	# so we only grab when the cursor sits in the outer border zone — clicks
+	# on buttons inside still work normally.
+	_palette_panel.gui_input.connect(_on_drag_panel_input.bind(_palette_panel))
+	_npc_panel.gui_input.connect(_on_drag_panel_input.bind(_npc_panel))
+	_top_strip.gui_input.connect(_on_drag_panel_input.bind(_top_strip))
 
 
 func _recenter_top_strip() -> void:
 	if _top_strip == null:
+		return
+	if _has_user_drag_offset(_top_strip):
 		return
 	var w: float = _top_strip.size.x
 	if w <= 0.0:
@@ -427,8 +446,74 @@ func _recenter_top_strip() -> void:
 	_top_strip.offset_right = w * 0.5
 
 
+func _has_user_drag_offset(panel: Control) -> bool:
+	if not _drag_offsets.has(panel):
+		return false
+	return (_drag_offsets[panel] as Vector2) != Vector2.INF
+
+
+func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
+	if panel == null:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index != MOUSE_BUTTON_LEFT:
+			return
+		if mb.pressed:
+			# Only grab the panel if the click is in the border zone — clicks
+			# in the interior fall through to the buttons/labels inside.
+			var local: Vector2 = mb.position
+			var rect := Rect2(Vector2.ZERO, panel.size)
+			if not _is_on_panel_drag_border(local, rect):
+				return
+			_dragging_panel = panel
+			_drag_grab_offset = panel.global_position - panel.get_global_mouse_position()
+			get_viewport().set_input_as_handled()
+		else:
+			if _dragging_panel == panel:
+				_dragging_panel = null
+				get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion and _dragging_panel == panel:
+		var target: Vector2 = panel.get_global_mouse_position() + _drag_grab_offset
+		var viewport_size: Vector2 = get_viewport_rect().size
+		target.x = clampf(target.x, 0.0, maxf(0.0, viewport_size.x - panel.size.x))
+		target.y = clampf(target.y, 0.0, maxf(0.0, viewport_size.y - panel.size.y))
+		_apply_panel_absolute_position(panel, target)
+		_drag_offsets[panel] = target
+		get_viewport().set_input_as_handled()
+
+
+func _is_on_panel_drag_border(local: Vector2, rect: Rect2) -> bool:
+	var b: float = PANEL_DRAG_BORDER_PX
+	if local.x < rect.position.x or local.y < rect.position.y \
+			or local.x > rect.position.x + rect.size.x \
+			or local.y > rect.position.y + rect.size.y:
+		return false
+	return local.x <= rect.position.x + b \
+		or local.y <= rect.position.y + b \
+		or local.x >= rect.position.x + rect.size.x - b \
+		or local.y >= rect.position.y + rect.size.y - b
+
+
+func _apply_panel_absolute_position(panel: Control, top_left: Vector2) -> void:
+	# Convert absolute top-left into anchor-relative offsets. We don't change
+	# anchors here — the existing anchor presets stay, we just rewrite offsets
+	# so the panel lands where the user dropped it.
+	panel.anchor_left = 0.0
+	panel.anchor_top = 0.0
+	panel.anchor_right = 0.0
+	panel.anchor_bottom = 0.0
+	var sz: Vector2 = panel.size
+	panel.offset_left = top_left.x
+	panel.offset_top = top_left.y
+	panel.offset_right = top_left.x + sz.x
+	panel.offset_bottom = top_left.y + sz.y
+
+
 func _position_selection_panel() -> void:
 	if _selection_panel == null:
+		return
+	if _has_user_drag_offset(_selection_panel):
 		return
 	var viewport_size: Vector2 = get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
@@ -448,16 +533,28 @@ func _position_selection_panel() -> void:
 func _position_palette_panel() -> void:
 	if _palette_panel == null:
 		return
+	if _has_user_drag_offset(_palette_panel):
+		return
+	# Anchor to bottom-center so width auto-sizes from content (tab row +
+	# command grid) and we manually recenter horizontally.
+	_palette_panel.anchor_left = 0.5
+	_palette_panel.anchor_top = 1.0
+	_palette_panel.anchor_right = 0.5
+	_palette_panel.anchor_bottom = 1.0
 	if _palette_collapsed:
 		_palette_panel.offset_left = -PALETTE_COLLAPSED_WIDTH * 0.5
 		_palette_panel.offset_top = -PALETTE_COLLAPSED_HEIGHT - 16.0
 		_palette_panel.offset_right = PALETTE_COLLAPSED_WIDTH * 0.5
 		_palette_panel.offset_bottom = -16.0
-	else:
-		_palette_panel.offset_left = -PALETTE_WIDTH * 0.5
-		_palette_panel.offset_top = -PALETTE_HEIGHT - 16.0
-		_palette_panel.offset_right = PALETTE_WIDTH * 0.5
-		_palette_panel.offset_bottom = -16.0
+		return
+	# Use the larger of the explicit min-width and the actual measured width
+	# so all designation tabs fit even when categories are added later.
+	var measured: float = _palette_panel.get_combined_minimum_size().x
+	var width: float = maxf(PALETTE_WIDTH, measured)
+	_palette_panel.offset_left = -width * 0.5
+	_palette_panel.offset_top = -PALETTE_HEIGHT - 16.0
+	_palette_panel.offset_right = width * 0.5
+	_palette_panel.offset_bottom = -16.0
 
 
 func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
@@ -653,6 +750,14 @@ func _schedule_status_refresh() -> void:
 		return
 	_status_refresh_queued = true
 	call_deferred("_refresh_status")
+
+
+func _process(_delta: float) -> void:
+	var now_ms: int = Time.get_ticks_msec()
+	if now_ms - _last_dynamic_refresh_ms < DYNAMIC_REFRESH_INTERVAL_MS:
+		return
+	_last_dynamic_refresh_ms = now_ms
+	_refresh_dynamic_status()
 
 
 func _refresh_dynamic_status() -> void:
@@ -1160,8 +1265,10 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 		_add_status_banner(right, "satisfied", COLOR_METER_GOOD)
 	else:
 		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
-	_add_limb_grid(right, worker)
 	_add_history_panel(right, worker)
+	# Limb condition lives below the two-column header so it's always visible
+	# without scrolling.
+	_add_limb_grid(card, worker)
 
 
 func _add_worker_header(parent: Control, worker: Worker) -> void:
@@ -1251,15 +1358,26 @@ func _add_status_banner(parent: Control, text_value: String, color: Color) -> vo
 func _add_limb_grid(parent: Control, worker: Worker) -> void:
 	_add_section_label(parent, "limbs")
 	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 6)
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 3)
 	parent.add_child(grid)
 	for limb_line in worker.limb_status_lines():
 		var label := Label.new()
 		label.text = limb_line
-		label.add_theme_font_size_override("font_size", 10)
-		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+		label.add_theme_font_size_override("font_size", 11)
+		# Tint the limb label red when condition drops; helps the player spot
+		# damaged parts at a glance instead of reading every percent.
+		var color: Color = COLOR_TEXT_LIGHT
+		var pct_start: int = limb_line.rfind(" ")
+		if pct_start >= 0:
+			var pct_str: String = limb_line.substr(pct_start + 1).rstrip("%")
+			var pct: int = pct_str.to_int()
+			if pct < 30:
+				color = Color(1.0, 0.42, 0.32)
+			elif pct < 70:
+				color = Color(0.98, 0.78, 0.32)
+		label.add_theme_color_override("font_color", color)
 		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		grid.add_child(label)
 
@@ -1740,6 +1858,10 @@ func _panel_style(fill: Color, border: Color, radius: float, with_shadow: bool =
 ## tile, 16 px corners).
 func _panel_textured_style(panel_name: String, fallback_fill: Color, fallback_border: Color, radius: float, with_shadow: bool = false) -> StyleBox:
 	var texture: Texture2D = _panel_texture(panel_name)
+	# If a panel doesn't have its own PNG yet, reuse selection_panel.png as a
+	# project-wide default so we stop drawing UI chrome from code.
+	if texture == null:
+		texture = _panel_texture("selection_panel")
 	if texture == null:
 		return _panel_style(fallback_fill, fallback_border, radius, with_shadow)
 	var style := StyleBoxTexture.new()

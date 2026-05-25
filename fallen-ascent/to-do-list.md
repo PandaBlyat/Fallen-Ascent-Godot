@@ -104,6 +104,19 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 
 ## UI follow-ups
 
+- [ ] **Persist user-dragged HUD panel positions.** ColonyHud now lets the
+      player click-drag the top strip, worker list, and designation palette
+      from their edges to relocate them. The chosen positions are only kept
+      for the session — save them with the rest of UI prefs once the save
+      system lands. See `_drag_offsets` in `scripts/ui/ColonyHud.gd`.
+- [ ] **Teleporter block visualization.** Player can now left-click a
+      teleporter tile (no entity under cursor) to block workers from
+      walking onto / teleporting through it. Block state lives in
+      `ChunkManager._blocked_teleporters` and renders as a red X in
+      `SelectionController._draw_blocked_teleporters`. Replace with proper
+      art once tile visuals firm up.
+
+
 - [ ] **In-place dynamic refresh for the selection panel.** `_refresh_dynamic_status`
       currently skips the selection-panel rebuild while the mouse is over it
       to keep fabrication-spot craft buttons clickable. Side effect:

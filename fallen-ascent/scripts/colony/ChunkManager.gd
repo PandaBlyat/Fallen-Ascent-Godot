@@ -48,6 +48,7 @@ var _rust_cells: Dictionary = {}                    ## Vector2i -> true
 var _grass_cells: Dictionary = {}                   ## Vector2i -> int border mask
 var _teleporters: Array[Vector2i] = []
 var _teleporter_lookup: Dictionary = {}             ## Vector2i -> true
+var _blocked_teleporters: Dictionary = {}           ## Vector2i -> true (player-disabled)
 var _rust_timer: float = 0.0
 var _grass_timer: float = 0.0
 var _structure_manager: Node = null
@@ -321,6 +322,8 @@ func is_walkable(grid: Vector2i) -> bool:
 		or t == TerrainGenerator.TILE_ACID_PUDDLE
 	if not terrain_walkable:
 		return false
+	if t == TerrainGenerator.TILE_TELEPORTER and _blocked_teleporters.has(grid):
+		return false
 	if _structure_manager != null and _structure_manager.has_method("blocks_cell"):
 		if bool(_structure_manager.call("blocks_cell", grid)):
 			return false
@@ -335,7 +338,30 @@ func is_outlet(grid: Vector2i) -> bool:
 
 
 func is_teleporter(grid: Vector2i) -> bool:
+	if _blocked_teleporters.has(grid):
+		return false
 	return get_tile_at(grid) == TerrainGenerator.TILE_TELEPORTER
+
+
+func is_any_teleporter(grid: Vector2i) -> bool:
+	return get_tile_at(grid) == TerrainGenerator.TILE_TELEPORTER
+
+
+func is_teleporter_blocked(grid: Vector2i) -> bool:
+	return _blocked_teleporters.has(grid)
+
+
+func toggle_teleporter_block(grid: Vector2i) -> bool:
+	if get_tile_at(grid) != TerrainGenerator.TILE_TELEPORTER:
+		return false
+	if _blocked_teleporters.has(grid):
+		_blocked_teleporters.erase(grid)
+	else:
+		_blocked_teleporters[grid] = true
+	# Re-emit so Pathfinder rebuilds the walkability cache for this cell and
+	# any worker pathing through it can replan.
+	EventBus.tile_changed.emit(grid, TerrainGenerator.TILE_TELEPORTER)
+	return true
 
 
 func has_grass(grid: Vector2i) -> bool:
@@ -369,15 +395,24 @@ func random_linked_teleporter(from: Vector2i) -> Vector2i:
 		return Pathfinder.UNREACHABLE
 	for _attempt in range(12):
 		var candidate: Vector2i = _teleporters[randi() % _teleporters.size()]
-		if candidate != from:
+		if candidate != from and not _blocked_teleporters.has(candidate):
 			return candidate
 	for candidate in _teleporters:
-		if candidate != from:
+		if candidate != from and not _blocked_teleporters.has(candidate):
 			return candidate
 	return Pathfinder.UNREACHABLE
 
 
 func teleporter_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for cell in _teleporters:
+		if _blocked_teleporters.has(cell):
+			continue
+		out.append(cell)
+	return out
+
+
+func teleporter_cells_all() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for cell in _teleporters:
 		out.append(cell)

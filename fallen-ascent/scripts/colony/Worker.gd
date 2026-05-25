@@ -61,7 +61,8 @@ const ACID_MOOD_SPIKE_PER_HP: float = 2.0
 ## Must match ActivityFxManager.KIND_BUILD_DUST.
 const BUILD_DUST_FX_KIND: int = 7
 const ARRIVE_EPSILON_PX: float = 1.0
-const IDLE_RETRY_SECONDS: float = 0.5
+const IDLE_RETRY_SECONDS: float = 0.25
+const IDLE_FALLBACK_RETRY_SECONDS: float = 0.6
 const BODY_RADIUS: float = 12.0
 const BODY_COLOR := Color(0.85, 0.85, 0.95)
 const SELECTION_COLOR := Color(1.0, 0.95, 0.4, 0.55)
@@ -191,6 +192,8 @@ var _direct_order_queue: Array[Dictionary] = []
 var _needs_refresh_timer: float = 0.0
 var _entity_grid_timer: float = 0.0
 var _acid_damage_accum: float = 0.0
+var _last_action_state: int = -1
+var _last_action_job: Job = null
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -839,7 +842,12 @@ func _process(delta: float) -> void:
 		State.FIGHTING:
 			_process_fighting(delta)
 	_check_teleporter()
-	_refresh_action_text()
+	# Action text only depends on state/job/blocked timer — skip the match
+	# statement allocation entirely when nothing relevant changed.
+	if _state != _last_action_state or _job != _last_action_job or _blocked_action_timer > 0.0:
+		_last_action_state = _state
+		_last_action_job = _job
+		_refresh_action_text()
 
 
 func _process_fighting(delta: float) -> void:
@@ -980,36 +988,96 @@ func _choose_idle_behavior() -> void:
 		return
 	if _mental_tiredness >= 55.0 and _begin_assigned_dock_rest():
 		return
-	var roll: float = randf()
-	if roll < 0.14:
-		if not _begin_idle_scrape_rust():
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.18:
-		# Meditation: low-priority wisdom generator. Skipped silently if no pad exists.
-		if not _begin_structure_activity([BuildBlueprint.Id.MEDITATION_PAD], State.MOVING_TO_MEDITATE):
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.30:
-		_idle_cooldown = randf_range(1.2, 4.0)
-	elif roll < 0.46:
-		if not _begin_roam(false):
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.60:
-		if not _begin_roam(true):
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.72:
-		var outlet: Vector2i = _nearest_outlet_via_explored()
-		if outlet != Pathfinder.UNREACHABLE and _energy < ENERGY_MAX:
-			_begin_charge(outlet)
-		else:
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.86:
-		if not _begin_socialize():
-			_idle_cooldown = randf_range(1.0, 2.5)
-	elif roll < 0.96:
-		if not _begin_assigned_dock_rest() and not _begin_structure_activity([BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK], State.MOVING_TO_REST):
-			_idle_cooldown = randf_range(1.0, 2.5)
-	else:
-		_idle_cooldown = randf_range(3.0, 7.0)
+	# Idle bots cycle through low-priority chores so they look alive even when
+	# the job board is empty. We try the rolled behavior, then fall through to
+	# alternative chores so a single failure (no rust nearby, no chat partner
+	# in range, etc.) doesn't freeze the bot for seconds.
+	var behaviors: Array[Callable] = _idle_behavior_order()
+	for behavior in behaviors:
+		if behavior.call() as bool:
+			return
+	_idle_cooldown = randf_range(0.4, IDLE_FALLBACK_RETRY_SECONDS)
+
+
+func _idle_behavior_order() -> Array[Callable]:
+	# Weighted shuffle: the bot rolls once for a primary chore, but we always
+	# walk every behavior eventually so one always succeeds.
+	var ordered: Array[Callable] = [
+		_idle_try_scrape_rust,
+		_idle_try_scrape_biomass,
+		_idle_try_roam_explored,
+		_idle_try_roam_frontier,
+		_idle_try_socialize,
+		_idle_try_meditate,
+		_idle_try_top_off_charge,
+		_idle_try_assigned_dock_rest,
+	]
+	var roll: int = randi() % ordered.size()
+	# Bring the rolled chore to the front so the bot tries it first.
+	if roll > 0:
+		var first: Callable = ordered[roll]
+		ordered.remove_at(roll)
+		ordered.insert(0, first)
+	return ordered
+
+
+func _idle_try_scrape_rust() -> bool:
+	return _begin_idle_scrape_rust()
+
+
+func _idle_try_scrape_biomass() -> bool:
+	return _begin_idle_scrape_biomass()
+
+
+func _idle_try_roam_explored() -> bool:
+	return _begin_roam(false)
+
+
+func _idle_try_roam_frontier() -> bool:
+	return _begin_roam(true)
+
+
+func _idle_try_socialize() -> bool:
+	return _begin_socialize()
+
+
+func _idle_try_meditate() -> bool:
+	return _begin_structure_activity([BuildBlueprint.Id.MEDITATION_PAD], State.MOVING_TO_MEDITATE)
+
+
+func _idle_try_top_off_charge() -> bool:
+	if _energy >= ENERGY_MAX - 1.0:
+		return false
+	var outlet: Vector2i = _nearest_outlet_via_explored()
+	if outlet == Pathfinder.UNREACHABLE:
+		return false
+	_begin_charge(outlet)
+	return true
+
+
+func _idle_try_assigned_dock_rest() -> bool:
+	if _begin_assigned_dock_rest():
+		return true
+	return _begin_structure_activity([BuildBlueprint.Id.DOCK, BuildBlueprint.Id.MAINTENANCE_DOCK], State.MOVING_TO_REST)
+
+
+func _begin_idle_scrape_biomass() -> bool:
+	if _chunk_manager == null or _job_board == null or _pathfinder == null:
+		return false
+	var target: Vector2i = _chunk_manager.random_nearby_grass(
+		current_grid(),
+		IDLE_SCRAPE_RUST_RADIUS,
+		_pathfinder,
+		_fog,
+	)
+	if target == Pathfinder.UNREACHABLE or _job_board.has_scrape_biomass_at(target):
+		return false
+	var job: Job = _job_board.add_scrape_biomass_job(target)
+	job.claimed_by = self
+	_job = job
+	_begin_scrape_biomass(job)
+	_remember("idle scrape biomass %d,%d" % [target.x, target.y])
+	return true
 
 
 func _begin_idle_scrape_rust() -> bool:

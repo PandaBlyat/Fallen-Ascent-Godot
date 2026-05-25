@@ -27,7 +27,8 @@ tile is added, also add a flat-color placeholder entry for it:
 - Connected floor-family terrain goes in `resources/tiles/floor_base_atlas.png`
   using the 4-bit `N/E/S/W = 1/2/4/8` mask layout documented beside the PNG.
 - Connected water goes in `resources/tiles/water_atlas.png` using the same
-  4-bit mask layout.
+  4-bit mask layout, with one atlas row per depth band (`y=0` deep
+  impassable, `y=1` shallow walkable-but-slow, `y=2` puddle walkable).
 - Connected wall-family terrain goes in one wall atlas per wall type, e.g.
   `wall_basic_atlas.png`, `wall_rich_atlas.png`, or
   `wall_service_core_atlas.png`.
@@ -41,6 +42,10 @@ tile is added, also add a flat-color placeholder entry for it:
 - Workers go in `resources/entities/worker_atlas.png`; neutral/hostile bots go
   in `resources/entities/bots_atlas.png`.
 - UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
+- UI panel backgrounds go in `resources/ui/panels/<panel_name>.png` (48x48
+  with 16 px corners for 9-slice). Each PNG has a sibling `.md`
+  describing what panel it skins. `ColonyHud._panel_textured_style` loads
+  them at runtime, with the legacy flat-color style as fallback.
 - If terrain atlas cells change, update `resources/tiles/placeholder_tiles.tres`
   so the new tile id has a TileSet atlas entry. Keep cells 32x32 aligned.
 - Treat placeholder atlases as append-only. Add new cells by expanding the

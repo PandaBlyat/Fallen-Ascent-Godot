@@ -47,6 +47,8 @@ const KNOCKBACK_DURATION: float = 0.12
 const FACTION_COLONY: int = 0
 
 const MOVE_SPEED_PX_PER_SEC: float = 48.0
+const WATER_SHALLOW_SPEED_MULT: float = 0.5
+const WATER_PUDDLE_SPEED_MULT: float = 0.85
 const ARRIVE_EPSILON_PX: float = 1.0
 const IDLE_RETRY_SECONDS: float = 0.5
 const BODY_RADIUS: float = 12.0
@@ -947,7 +949,7 @@ func _choose_idle_behavior() -> void:
 		if not _begin_roam(true):
 			_idle_cooldown = randf_range(1.0, 2.5)
 	elif roll < 0.72:
-		var outlet: Vector2i = _chunk_manager.nearest_outlet(current_grid(), _pathfinder, _fog, self)
+		var outlet: Vector2i = _nearest_outlet_via_explored()
 		if outlet != Pathfinder.UNREACHABLE and _energy < ENERGY_MAX:
 			_begin_charge(outlet)
 		else:
@@ -2348,6 +2350,7 @@ func _advance_path(delta: float) -> bool:
 	if _door_slow_remaining > 0.0:
 		speed_mult *= DOOR_SLOW_MULTIPLIER
 	speed_mult *= _light_speed_multiplier()
+	speed_mult *= _water_speed_multiplier()
 	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
@@ -2383,6 +2386,19 @@ func _light_speed_multiplier() -> float:
 	if _structure_manager == null or not _structure_manager.has_method("light_speed_multiplier_at"):
 		return 1.0
 	return clampf(float(_structure_manager.call("light_speed_multiplier_at", current_grid())), 1.0, 1.5)
+
+
+## Shallow water and puddles slow the worker; deep water is impassable so
+## the pathfinder never lands a worker on it.
+func _water_speed_multiplier() -> float:
+	if _chunk_manager == null:
+		return 1.0
+	var tile: int = _chunk_manager.get_tile_at(current_grid())
+	if tile == TerrainGenerator.TILE_WATER_SHALLOW:
+		return WATER_SHALLOW_SPEED_MULT
+	if tile == TerrainGenerator.TILE_WATER_PUDDLE:
+		return WATER_PUDDLE_SPEED_MULT
+	return 1.0
 
 
 func _set_facing_from_vector(delta_pos: Vector2) -> void:
@@ -2601,19 +2617,87 @@ func _should_seek_charge() -> bool:
 
 
 func _begin_auto_charge() -> void:
-	var outlet: Vector2i = _chunk_manager.nearest_outlet(current_grid(), _pathfinder, _fog, self)
+	var outlet: Vector2i = _nearest_outlet_via_explored()
 	if outlet == Pathfinder.UNREACHABLE:
+		# No known route to any outlet. Fall back to walking toward a known
+		# teleporter so the bot doesn't sit and die; the teleport scatter
+		# might land it next to a known outlet on the next idle tick.
+		if _begin_charge_via_teleporter():
+			return
 		return
 	_abandon_job()
 	_manual_charging = false
 	_begin_charge(outlet)
 
 
+## Picks the closest outlet reachable through fog-explored cells only. Bots
+## must not magically know the path through undiscovered areas — if the
+## only route to an outlet crosses fog, that outlet is hidden from auto and
+## manual recharge planning.
+func _nearest_outlet_via_explored() -> Vector2i:
+	if _chunk_manager == null:
+		return Pathfinder.UNREACHABLE
+	var here: Vector2i = current_grid()
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for outlet in _chunk_manager.outlet_cells():
+		if _fog != null and not _fog.is_explored(outlet):
+			continue
+		if _chunk_manager.is_outlet_reserved_by_other(outlet, self):
+			continue
+		var d_chebyshev: int = maxi(absi(outlet.x - here.x), absi(outlet.y - here.y))
+		if d_chebyshev >= best_d:
+			continue
+		var path: PackedVector2Array = _find_explored_path(here, outlet)
+		if path.is_empty() and here != outlet:
+			continue
+		best = outlet
+		best_d = d_chebyshev
+	return best
+
+
+## Routes the worker to the nearest known teleporter when no outlet is
+## reachable via known terrain. Once arrived, `_check_teleporter()` performs
+## the random hop; if it lands near a known outlet on a future idle tick,
+## the worker will auto-charge there.
+func _begin_charge_via_teleporter() -> bool:
+	if _chunk_manager == null or _pathfinder == null:
+		return false
+	if not _chunk_manager.has_method("teleporter_cells"):
+		return false
+	var here: Vector2i = current_grid()
+	var teleporters: Array[Vector2i] = _chunk_manager.call("teleporter_cells") as Array[Vector2i]
+	var best_path: PackedVector2Array = PackedVector2Array()
+	var best_d: int = 0x7fffffff
+	for teleporter in teleporters:
+		if _fog != null and not _fog.is_explored(teleporter):
+			continue
+		var path: PackedVector2Array = _find_explored_path(here, teleporter)
+		if path.is_empty() and here != teleporter:
+			continue
+		var d: int = maxi(absi(teleporter.x - here.x), absi(teleporter.y - here.y))
+		if d < best_d:
+			best_path = path
+			best_d = d
+	if best_path.is_empty():
+		return false
+	_abandon_job()
+	_manual_charging = false
+	_path = best_path
+	_path_index = 0
+	# Treat the walk-to-teleporter trip as a recharge attempt so the HUD
+	# shows the right action text and idle pacing kicks in after the hop.
+	_state = State.MOVING_TO_CHARGE
+	_charge_target = Vector2i.ZERO
+	_has_charge_reservation = false
+	return true
+
+
 func _begin_charge(outlet: Vector2i) -> bool:
 	if not _chunk_manager.reserve_outlet(outlet, self):
 		_manual_charging = false
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), outlet)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), outlet)
 	if path.is_empty() and current_grid() != outlet:
 		_chunk_manager.release_outlet(outlet, self)
 		_manual_charging = false

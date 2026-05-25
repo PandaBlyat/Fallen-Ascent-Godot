@@ -15,6 +15,10 @@ var _region: Rect2i = Rect2i()
 var _rebuild_pending: bool = false
 ## Coords (chunk-space) whose cells need solidness re-evaluated next rebuild.
 var _dirty_chunks: Dictionary = {}
+## Persistent solidness map. AStarGrid2D.update() wipes solidness whenever
+## the region changes; replaying from this dict keeps a one-chunk pan from
+## touching the full loaded region. Bounded by total cells ever loaded.
+var _solid_cache: Dictionary = {}
 
 
 func _ready() -> void:
@@ -32,8 +36,8 @@ func _on_chunk_loaded(coord: Vector2i) -> void:
 
 
 func _on_chunk_unloaded(coord: Vector2i) -> void:
-	# Mark the cells as solid below in _rebuild; if the region shrinks they
-	# fall out anyway. Either way, rebuild.
+	# Cells fall back to TILE_VOID once unloaded; rebuild will flag them
+	# solid in the cache and on the grid. The region itself doesn't shrink.
 	_dirty_chunks[coord] = true
 	_schedule_rebuild()
 
@@ -48,7 +52,9 @@ func _schedule_rebuild() -> void:
 func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 	if not _region.has_point(grid):
 		return
-	_astar.set_point_solid(grid, not _chunk_manager.is_walkable(grid))
+	var solid: bool = not _chunk_manager.is_walkable(grid)
+	_solid_cache[grid] = solid
+	_astar.set_point_solid(grid, solid)
 
 
 func _rebuild() -> void:
@@ -57,35 +63,42 @@ func _rebuild() -> void:
 	if bounds.size == Vector2i.ZERO:
 		_dirty_chunks.clear()
 		return
-	var new_region := Rect2i(
+	var loaded_region := Rect2i(
 		bounds.position * Chunk.SIZE,
 		bounds.size * Chunk.SIZE,
 	)
-	# If the region grew or shrank, we have to call astar.update() which
-	# clears all solidness — and then refill every cell. Otherwise we can
-	# just flip cells in newly-loaded chunks (the common case after the
-	# initial fill).
-	var region_changed: bool = new_region != _region
-	if region_changed:
-		_region = new_region
+	# Region grows monotonically — never shrinks during a session. Camera
+	# panning therefore only triggers astar.update() the first time it
+	# reaches new ground; thereafter it stays grew=false and we only refill
+	# newly-loaded chunks.
+	var grew: bool = false
+	if _region.size == Vector2i.ZERO:
+		_region = loaded_region
+		grew = true
+	elif not _region.encloses(loaded_region):
+		_region = _region.merge(loaded_region)
+		grew = true
+	if grew:
 		_astar.region = _region
 		_astar.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
 		_astar.update()
-		for gy in range(_region.position.y, _region.position.y + _region.size.y):
-			for gx in range(_region.position.x, _region.position.x + _region.size.x):
-				var g := Vector2i(gx, gy)
-				_astar.set_point_solid(g, not _chunk_manager.is_walkable(g))
-	else:
-		# Only newly-loaded chunks contributed new info; refresh those cells.
-		for coord in _dirty_chunks.keys():
-			var c: Vector2i = coord as Vector2i
-			var base := c * Chunk.SIZE
-			for ly in Chunk.SIZE:
-				for lx in Chunk.SIZE:
-					var g := base + Vector2i(lx, ly)
-					if not _region.has_point(g):
-						continue
-					_astar.set_point_solid(g, not _chunk_manager.is_walkable(g))
+		# update() wiped solidness — replay every cell we've ever computed.
+		# Bounded by total cells loaded over the session, not the region area.
+		for g in _solid_cache.keys():
+			_astar.set_point_solid(g, bool(_solid_cache[g]))
+	# Refill cells in newly-loaded or just-unloaded chunks. Whether or not
+	# the region grew, this also primes/refreshes the solid_cache.
+	for coord in _dirty_chunks.keys():
+		var c: Vector2i = coord as Vector2i
+		var base := c * Chunk.SIZE
+		for ly in Chunk.SIZE:
+			for lx in Chunk.SIZE:
+				var g := base + Vector2i(lx, ly)
+				if not _region.has_point(g):
+					continue
+				var solid: bool = not _chunk_manager.is_walkable(g)
+				_solid_cache[g] = solid
+				_astar.set_point_solid(g, solid)
 	_dirty_chunks.clear()
 
 

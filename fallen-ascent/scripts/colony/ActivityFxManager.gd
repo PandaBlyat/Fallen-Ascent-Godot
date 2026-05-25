@@ -8,6 +8,9 @@ const FX_SHADER: Shader = preload("res://resources/shaders/activity_fx.gdshader"
 const MAX_INSTANCES: int = 320
 const FX_Z_INDEX: int = 120
 const DUST_INSTANCE_COUNT: int = 36
+## The shader animates via time_seconds, so the instance buffer can be
+## rebuilt at a fraction of the frame rate without visible artifacts.
+const REBUILD_INTERVAL_SECONDS: float = 0.1
 
 @export var camera_path: NodePath
 @export var workers_root_path: NodePath
@@ -20,6 +23,7 @@ var _structure_manager: StructureManager
 var _fog: FogOfWar
 var _material: ShaderMaterial
 var _shader_time: float = 0.0
+var _rebuild_accum: float = 0.0
 
 
 func _ready() -> void:
@@ -36,7 +40,10 @@ func _process(delta: float) -> void:
 	_shader_time += delta
 	if _material != null:
 		_material.set_shader_parameter("time_seconds", _shader_time)
-	_rebuild_instances()
+	_rebuild_accum += delta
+	if _rebuild_accum >= REBUILD_INTERVAL_SECONDS:
+		_rebuild_accum = 0.0
+		_rebuild_instances()
 
 
 func _setup_multimesh() -> void:

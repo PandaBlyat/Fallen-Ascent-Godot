@@ -77,7 +77,7 @@ func _spawn_neutral_bots(count: int) -> void:
 			continue
 		var bot := NEUTRAL_BOT_SCRIPT.new() as NeutralBot
 		bot.name = "Neutral_%02d" % (spawned + 1)
-		bot.setup(chunk_manager, pathfinder, hostiles_root, fog_of_war)
+		bot.setup(chunk_manager, pathfinder, fog_of_war)
 		bot.position = Chunk.grid_to_pixel_center(cell)
 		neutrals_root.add_child(bot)
 		spawned += 1

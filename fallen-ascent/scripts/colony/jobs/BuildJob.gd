@@ -14,7 +14,6 @@ var delivered: Dictionary = {}
 var material_kind: int = Item.Kind.SCRAP
 var source_item: Node = null              ## Item being consumed; assigned at claim time
 var progress: float = 0.0
-var blocked_until_msec: int = 0
 
 
 func _init(t: Vector2i = Vector2i.ZERO, blueprint: int = BuildBlueprint.Id.WALL, rot: int = 0) -> void:
@@ -102,5 +101,3 @@ func refund_items_text() -> String:
 	return ", ".join(parts)
 
 
-func block_briefly(seconds: float = 2.0) -> void:
-	blocked_until_msec = Time.get_ticks_msec() + int(seconds * 1000.0)

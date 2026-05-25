@@ -10,13 +10,14 @@ const LIFETIME_SECONDS: float = 0.85
 const RISE_DISTANCE_PX: float = 14.0
 const HORIZONTAL_JITTER_PX: float = 4.0
 const FONT_SIZE: int = 11
+const FLOATING_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
 
 var _entries: Array[Dictionary] = []
 var _font: Font
 
 
 func _ready() -> void:
-	_font = ThemeDB.fallback_font
+	_font = FLOATING_FONT
 	EventBus.combat_hit.connect(_on_combat_hit)
 	EventBus.combat_dodged.connect(_on_combat_dodged)
 	z_index = 1000

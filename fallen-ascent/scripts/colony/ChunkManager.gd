@@ -18,7 +18,8 @@ extends Node2D
 @export var view_radius: int = 4                  ## chunks loaded around camera
 @export var unload_padding: int = 1               ## hysteresis, in chunks
 @export var max_loads_per_frame: int = 2          ## stagger spawns to smooth FPS
-@export var map_size_chunks: Vector2i = Vector2i(16, 16)
+@export var initial_max_loads_per_frame: int = 6
+@export var map_size_chunks: Vector2i = Vector2i(12, 12)
 @export var preload_entire_map: bool = true
 @export var job_board_path: NodePath
 @export var fog_of_war_path: NodePath
@@ -35,14 +36,17 @@ var _diffs: Dictionary = {}
 var _last_cam_chunk: Vector2i = Vector2i(0x7fffffff, 0x7fffffff)
 var _load_queue: Array[Vector2i] = []
 var _load_pending: Dictionary = {}                ## Vector2i -> true (in _load_queue)
-var _initial_loaded: bool = false                 ## first batch loads sync
+var _initial_loaded: bool = false
+var _initial_loading: bool = false
+var _initial_load_total: int = 0
 var _outlets: Dictionary = {}                      ## Vector2i -> true
-var _outlet_reservations: Dictionary = {}          ## Vector2i -> Worker
+var _outlet_reservations: Dictionary = {}          ## Vector2i -> Array[Worker]
 var _rust_cells: Dictionary = {}                    ## Vector2i -> true
 var _teleporters: Array[Vector2i] = []
 var _teleporter_lookup: Dictionary = {}             ## Vector2i -> true
 var _rust_timer: float = 0.0
 var _structure_manager: Node = null
+var _static_prop_manager: Node = null
 var _job_board: JobBoard = null
 var _fog: FogOfWar = null
 
@@ -63,8 +67,7 @@ func _on_camera_moved(world_pos: Vector2, _zoom: Vector2) -> void:
 	if preload_entire_map:
 		if not _initial_loaded:
 			_enqueue_entire_map()
-			_drain_queue(_load_queue.size())
-			_initial_loaded = true
+			_begin_initial_load()
 		return
 	# Camera_moved fires roughly every pixel of motion; chunk streaming only
 	# needs to react when the camera crosses a chunk boundary.
@@ -77,6 +80,7 @@ func _on_camera_moved(world_pos: Vector2, _zoom: Vector2) -> void:
 		# Drain synchronously so worker spawn / pathfinder have terrain.
 		_drain_queue(_load_queue.size())
 		_initial_loaded = true
+		EventBus.colony_load_progress.emit(_loaded.size(), _loaded.size())
 	_unload_outside(cam_chunk)
 
 
@@ -110,11 +114,13 @@ func _enqueue_entire_map() -> void:
 
 
 func _process(delta: float) -> void:
-	_drain_queue(max_loads_per_frame)
+	var budget: int = initial_max_loads_per_frame if _initial_loading else max_loads_per_frame
+	_drain_queue(budget)
 	_process_rust(delta)
 
 
 func _drain_queue(budget: int) -> void:
+	var loaded_this_call: bool = false
 	while budget > 0 and not _load_queue.is_empty():
 		var coord: Vector2i = _load_queue.pop_front()
 		_load_pending.erase(coord)
@@ -127,7 +133,37 @@ func _drain_queue(budget: int) -> void:
 		_loaded[coord] = chunk
 		_index_special_tiles(chunk, coord)
 		EventBus.chunk_loaded.emit(coord)
+		loaded_this_call = true
 		budget -= 1
+	if _initial_loading and loaded_this_call:
+		var loaded: int = _initial_load_total - _load_queue.size()
+		EventBus.colony_load_progress.emit(loaded, _initial_load_total)
+	if _initial_loading and _load_queue.is_empty():
+		_finish_initial_load()
+
+
+func _begin_initial_load() -> void:
+	_initial_loading = true
+	_initial_load_total = _load_queue.size()
+	_set_pathfinder_bulk_loading(true)
+	EventBus.colony_load_progress.emit(_initial_load_total - _load_queue.size(), _initial_load_total)
+
+
+func _finish_initial_load() -> void:
+	if not _initial_loading:
+		return
+	_initial_loading = false
+	_initial_loaded = true
+	_set_pathfinder_bulk_loading(false)
+	EventBus.colony_load_progress.emit(_initial_load_total, _initial_load_total)
+
+
+func _set_pathfinder_bulk_loading(active: bool) -> void:
+	var pathfinder: Node = get_node_or_null("../Pathfinder")
+	if pathfinder != null and pathfinder.has_method("set_bulk_loading"):
+		pathfinder.call("set_bulk_loading", active)
+	if not active and pathfinder != null and pathfinder.has_method("flush_rebuild"):
+		pathfinder.call("flush_rebuild")
 
 
 func _unload_outside(center: Vector2i) -> void:
@@ -149,12 +185,30 @@ func loaded_count() -> int:
 	return _loaded.size()
 
 
+func loaded_chunk_coords() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for coord in _loaded.keys():
+		out.append(coord as Vector2i)
+	return out
+
+
 func outlet_count() -> int:
 	return _outlets.size()
 
 
+func outlet_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for key in _outlets.keys():
+		out.append(key as Vector2i)
+	return out
+
+
 func set_structure_manager(manager: Node) -> void:
 	_structure_manager = manager
+
+
+func set_static_prop_manager(manager: Node) -> void:
+	_static_prop_manager = manager
 
 
 ## Returns the bounding rect of loaded chunks in chunk coords (inclusive lo,
@@ -253,7 +307,11 @@ func is_walkable(grid: Vector2i) -> bool:
 	if not terrain_walkable:
 		return false
 	if _structure_manager != null and _structure_manager.has_method("blocks_cell"):
-		return not (_structure_manager.call("blocks_cell", grid) as bool)
+		if bool(_structure_manager.call("blocks_cell", grid)):
+			return false
+	if _static_prop_manager != null and _static_prop_manager.has_method("blocks_cell"):
+		if bool(_static_prop_manager.call("blocks_cell", grid)):
+			return false
 	return true
 
 
@@ -288,19 +346,57 @@ func teleporter_cells() -> Array[Vector2i]:
 func reserve_outlet(grid: Vector2i, worker: Node) -> bool:
 	if not is_outlet(grid):
 		return false
-	if _outlet_reservations.has(grid) and _outlet_reservations[grid] != worker:
+	var reservations: Array = _outlet_reservations.get(grid, []) as Array
+	if reservations.has(worker):
+		return true
+	if reservations.size() >= outlet_capacity(grid):
 		return false
-	_outlet_reservations[grid] = worker
+	reservations.append(worker)
+	_outlet_reservations[grid] = reservations
 	return true
 
 
 func release_outlet(grid: Vector2i, worker: Node) -> void:
-	if _outlet_reservations.get(grid) == worker:
+	if not _outlet_reservations.has(grid):
+		return
+	var reservations: Array = _outlet_reservations[grid] as Array
+	reservations.erase(worker)
+	if reservations.is_empty():
 		_outlet_reservations.erase(grid)
+	else:
+		_outlet_reservations[grid] = reservations
 
 
 func is_outlet_reserved_by_other(grid: Vector2i, worker: Node) -> bool:
-	return _outlet_reservations.has(grid) and _outlet_reservations[grid] != worker
+	var reservations: Array = _outlet_reservations.get(grid, []) as Array
+	if reservations.has(worker):
+		return false
+	return reservations.size() >= outlet_capacity(grid)
+
+
+func outlet_capacity(grid: Vector2i) -> int:
+	if _structure_manager != null and _structure_manager.has_method("structure_at"):
+		var structure: Dictionary = _structure_manager.call("structure_at", grid) as Dictionary
+		if not structure.is_empty() and int(structure["id"]) == BuildBlueprint.Id.OUTLET_EXTENSION:
+			return 2
+	return 1
+
+
+func structure_at(grid: Vector2i) -> Dictionary:
+	if _structure_manager != null and _structure_manager.has_method("structure_at"):
+		return _structure_manager.call("structure_at", grid) as Dictionary
+	return {}
+
+
+func request_door_open(grid: Vector2i) -> void:
+	if _structure_manager != null and _structure_manager.has_method("request_door_open"):
+		_structure_manager.call("request_door_open", grid)
+
+
+func is_door_open(grid: Vector2i) -> bool:
+	if _structure_manager != null and _structure_manager.has_method("is_door_open"):
+		return bool(_structure_manager.call("is_door_open", grid))
+	return false
 
 
 func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar = null, worker: Node = null) -> Vector2i:
@@ -322,13 +418,71 @@ func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar
 	return best
 
 
+func ensure_outlet_near(origin: Vector2i) -> Vector2i:
+	var seed: Vector2i = _nearest_walkable_for_outlet(origin)
+	if seed == Pathfinder.UNREACHABLE:
+		return Pathfinder.UNREACHABLE
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var queue: Array[Vector2i] = [seed]
+	var seen: Dictionary = {seed: true}
+	var best_floor: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	var head: int = 0
+	while head < queue.size() and seen.size() <= 512:
+		var cell: Vector2i = queue[head]
+		head += 1
+		var tile: int = get_tile_at(cell)
+		if tile == TerrainGenerator.TILE_OUTLET:
+			return cell
+		if _can_force_outlet_on(tile):
+			var d: int = maxi(absi(cell.x - seed.x), absi(cell.y - seed.y))
+			if d < best_d:
+				best_floor = cell
+				best_d = d
+		for off in OFFSETS:
+			var next: Vector2i = cell + off
+			if seen.has(next) or not is_grid_in_map(next):
+				continue
+			var next_tile: int = get_tile_at(next)
+			if not _can_force_outlet_on(next_tile) and next_tile != TerrainGenerator.TILE_OUTLET:
+				continue
+			seen[next] = true
+			queue.append(next)
+	if best_floor != Pathfinder.UNREACHABLE:
+		set_tile_at(best_floor, TerrainGenerator.TILE_OUTLET)
+	return best_floor
+
+
+func _nearest_walkable_for_outlet(origin: Vector2i) -> Vector2i:
+	if is_walkable(origin):
+		return origin
+	for r in range(1, 32):
+		for dy in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if absi(dx) != r and absi(dy) != r:
+					continue
+				var cell := origin + Vector2i(dx, dy)
+				if is_walkable(cell):
+					return cell
+	return Pathfinder.UNREACHABLE
+
+
+static func _can_force_outlet_on(tile: int) -> bool:
+	return tile == TerrainGenerator.TILE_FLOOR \
+		or tile == TerrainGenerator.TILE_DEBRIS \
+		or tile == TerrainGenerator.TILE_CONDUIT \
+		or tile == TerrainGenerator.TILE_RUST
+
+
 func random_nearby_rust(from: Vector2i, radius: int, pathfinder: Pathfinder = null, fog: FogOfWar = null) -> Vector2i:
 	if _rust_cells.is_empty():
 		return Pathfinder.UNREACHABLE
 	var keys: Array = _rust_cells.keys()
 	var best: Vector2i = Pathfinder.UNREACHABLE
 	var best_d: int = 0x7fffffff
-	for _attempt in range(mini(48, keys.size())):
+	for _attempt in range(mini(128, keys.size())):
 		var candidate: Vector2i = keys[randi() % keys.size()] as Vector2i
 		var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
 		if d > radius or d >= best_d:

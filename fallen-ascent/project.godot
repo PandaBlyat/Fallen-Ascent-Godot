@@ -36,6 +36,10 @@ window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[gui]
+
+theme/custom="res://resources/ui/orbitron_theme.tres"
+
 [input]
 
 cam_up={

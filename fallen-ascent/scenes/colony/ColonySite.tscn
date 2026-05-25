@@ -1,4 +1,4 @@
-[gd_scene load_steps=23 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=24 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/ui/FloatingText.gd" id="18_floating"]
 [ext_resource type="Script" path="res://scripts/colony/LightingOverlay.gd" id="19_lighting"]
 [ext_resource type="Script" path="res://scripts/colony/ActivityFxManager.gd" id="20_activity_fx"]
+[ext_resource type="Script" path="res://scripts/colony/StaticPropManager.gd" id="21_static_props"]
 
 [node name="ColonySite" type="Node2D"]
 script = ExtResource("1_colony")
@@ -28,6 +29,10 @@ script = ExtResource("1_colony")
 script = ExtResource("2_chunks")
 job_board_path = NodePath("../JobBoard")
 fog_of_war_path = NodePath("../FogOfWar")
+
+[node name="StaticPropManager" type="Node2D" parent="."]
+script = ExtResource("21_static_props")
+chunk_manager_path = NodePath("../ChunkManager")
 
 [node name="Items" type="Node2D" parent="."]
 
@@ -104,6 +109,7 @@ chunk_manager_path = NodePath("../ChunkManager")
 job_board_path = NodePath("../JobBoard")
 stockpile_manager_path = NodePath("../StockpileManager")
 structure_manager_path = NodePath("../StructureManager")
+static_prop_manager_path = NodePath("../StaticPropManager")
 fog_of_war_path = NodePath("../FogOfWar")
 room_manager_path = NodePath("../RoomManager")
 
@@ -118,6 +124,7 @@ job_board_path = NodePath("../JobBoard")
 stockpile_manager_path = NodePath("../StockpileManager")
 fog_of_war_path = NodePath("../FogOfWar")
 structure_manager_path = NodePath("../StructureManager")
+static_prop_manager_path = NodePath("../StaticPropManager")
 neutrals_root_path = NodePath("../Neutrals")
 hostiles_root_path = NodePath("../Hostiles")
 
@@ -174,6 +181,7 @@ stockpile_manager_path = NodePath("../../StockpileManager")
 items_root_path = NodePath("../../Items")
 workers_root_path = NodePath("../../Workers")
 structure_manager_path = NodePath("../../StructureManager")
+static_prop_manager_path = NodePath("../../StaticPropManager")
 fog_of_war_path = NodePath("../../FogOfWar")
 room_manager_path = NodePath("../../RoomManager")
 

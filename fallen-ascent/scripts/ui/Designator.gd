@@ -29,9 +29,16 @@ enum Mode {
 	BUILD_CALIBRATION_SHRINE,
 	BUILD_MEDITATION_PAD,
 	BUILD_SENTIENCE_CRADLE,
+	BUILD_FABRICATION_SPOT,
+	PLACE_STORAGE_BIN,
+	PLACE_OUTLET_EXTENSION,
+	PLACE_RUDIMENTARY_SENSOR,
+	PLACE_SMALL_LIGHT_DEVICE,
+	PLACE_LARGE_LIGHT_DEVICE,
 	DESIGNATE_DOCK_ROOM,
 	DESIGNATE_MEDITATION_CHAMBER,
 	DESIGNATE_MECHANIC_ROOM,
+	DESIGNATE_MACHINE_ROOM,
 	REMOVE_ROOM,
 }
 
@@ -41,12 +48,14 @@ const ORDER_PREVIEW_FILL := Color(0.85, 0.72, 0.35, 0.08)
 const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.40)
 const ROOM_PREVIEW_FILL := Color(0.45, 0.62, 0.98, 0.09)
 const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.45)
+const OUTLET_RANGE_COLOR := Color(0.35, 0.78, 1.0, 0.20)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
 @export var job_board_path: NodePath
 @export var stockpile_manager_path: NodePath
 @export var structure_manager_path: NodePath
+@export var static_prop_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var room_manager_path: NodePath
 
@@ -55,6 +64,7 @@ var _chunk_manager: ChunkManager
 var _job_board: JobBoard
 var _stockpile_manager: StockpileManager
 var _structure_manager: StructureManager
+var _static_prop_manager: Node
 var _fog: FogOfWar
 var _room_manager: Node
 
@@ -72,6 +82,7 @@ func _ready() -> void:
 	_job_board = get_node(job_board_path) as JobBoard
 	_stockpile_manager = get_node(stockpile_manager_path) as StockpileManager
 	_structure_manager = get_node(structure_manager_path) as StructureManager
+	_static_prop_manager = get_node_or_null(static_prop_manager_path)
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_room_manager = get_node_or_null(room_manager_path)
 
@@ -107,9 +118,16 @@ func mode_label() -> String:
 		Mode.BUILD_CALIBRATION_SHRINE: return "BUILD CALIBRATION SHRINE"
 		Mode.BUILD_MEDITATION_PAD: return "BUILD MEDITATION PAD"
 		Mode.BUILD_SENTIENCE_CRADLE: return "BUILD SENTIENCE CRADLE"
+		Mode.BUILD_FABRICATION_SPOT: return "BUILD FABRICATION SPOT"
+		Mode.PLACE_STORAGE_BIN: return "PLACE STORAGE BIN"
+		Mode.PLACE_OUTLET_EXTENSION: return "PLACE OUTLET EXTENSION"
+		Mode.PLACE_RUDIMENTARY_SENSOR: return "PLACE RUDIMENTARY SENSOR"
+		Mode.PLACE_SMALL_LIGHT_DEVICE: return "PLACE SMALL LIGHT"
+		Mode.PLACE_LARGE_LIGHT_DEVICE: return "PLACE LARGE LIGHT"
 		Mode.DESIGNATE_DOCK_ROOM: return "DOCK ROOM"
 		Mode.DESIGNATE_MEDITATION_CHAMBER: return "MEDITATION CHAMBER"
 		Mode.DESIGNATE_MECHANIC_ROOM: return "MECHANIC ROOM"
+		Mode.DESIGNATE_MACHINE_ROOM: return "MACHINE ROOM"
 		Mode.REMOVE_ROOM: return "REMOVE ROOM"
 		_: return "-"
 
@@ -197,9 +215,11 @@ func _on_right_press() -> void:
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
 		Mode.BUILD_MAINTENANCE_DOCK, Mode.BUILD_CALIBRATION_SHRINE, \
-		Mode.BUILD_MEDITATION_PAD, Mode.BUILD_SENTIENCE_CRADLE, \
+		Mode.BUILD_MEDITATION_PAD, Mode.BUILD_SENTIENCE_CRADLE, Mode.BUILD_FABRICATION_SPOT, \
+		Mode.PLACE_STORAGE_BIN, Mode.PLACE_OUTLET_EXTENSION, Mode.PLACE_RUDIMENTARY_SENSOR, \
+		Mode.PLACE_SMALL_LIGHT_DEVICE, Mode.PLACE_LARGE_LIGHT_DEVICE, \
 		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_MEDITATION_CHAMBER, \
-		Mode.DESIGNATE_MECHANIC_ROOM, Mode.REMOVE_ROOM:
+		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_MACHINE_ROOM, Mode.REMOVE_ROOM:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -234,6 +254,8 @@ func _on_right_release() -> void:
 				_apply_meditation_chamber(cells)
 			Mode.DESIGNATE_MECHANIC_ROOM:
 				_apply_mechanic_room(cells)
+			Mode.DESIGNATE_MACHINE_ROOM:
+				_apply_machine_room(cells)
 			Mode.REMOVE_ROOM:
 				for cell in cells:
 					_apply_remove_room(cell)
@@ -254,6 +276,11 @@ func _apply_mine_click(grid: Vector2i) -> void:
 		return
 	if _job_board.has_mine_at(grid):
 		_job_board.cancel_mine_at(grid)
+		return
+	if _static_prop_manager != null \
+			and _static_prop_manager.has_method("has_mineable_prop") \
+			and bool(_static_prop_manager.call("has_mineable_prop", grid)):
+		_job_board.add_mine_job(grid)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
 	if tile == TerrainGenerator.TILE_WALL \
@@ -302,6 +329,12 @@ func _apply_mechanic_room(cells: Array[Vector2i]) -> void:
 	_room_manager.call("create_mechanic_room", cells)
 
 
+func _apply_machine_room(cells: Array[Vector2i]) -> void:
+	if _room_manager == null or not _room_manager.has_method("create_machine_room"):
+		return
+	_room_manager.call("create_machine_room", cells)
+
+
 func _apply_remove_room(grid: Vector2i) -> void:
 	if _room_manager == null or not _room_manager.has_method("remove_room_at"):
 		return
@@ -336,6 +369,18 @@ func _blueprint_for_mode() -> int:
 			return BuildBlueprint.Id.MEDITATION_PAD
 		Mode.BUILD_SENTIENCE_CRADLE:
 			return BuildBlueprint.Id.SENTIENCE_CRADLE
+		Mode.BUILD_FABRICATION_SPOT:
+			return BuildBlueprint.Id.FABRICATION_SPOT
+		Mode.PLACE_STORAGE_BIN:
+			return BuildBlueprint.Id.STORAGE_BIN
+		Mode.PLACE_OUTLET_EXTENSION:
+			return BuildBlueprint.Id.OUTLET_EXTENSION
+		Mode.PLACE_RUDIMENTARY_SENSOR:
+			return BuildBlueprint.Id.RUDIMENTARY_SENSOR
+		Mode.PLACE_SMALL_LIGHT_DEVICE:
+			return BuildBlueprint.Id.SMALL_LIGHT_DEVICE
+		Mode.PLACE_LARGE_LIGHT_DEVICE:
+			return BuildBlueprint.Id.LARGE_LIGHT_DEVICE
 		_:
 			return BuildBlueprint.Id.WALL
 
@@ -354,7 +399,13 @@ func _is_build_mode() -> bool:
 		or _mode == Mode.BUILD_MAINTENANCE_DOCK \
 		or _mode == Mode.BUILD_CALIBRATION_SHRINE \
 		or _mode == Mode.BUILD_MEDITATION_PAD \
-		or _mode == Mode.BUILD_SENTIENCE_CRADLE
+		or _mode == Mode.BUILD_SENTIENCE_CRADLE \
+		or _mode == Mode.BUILD_FABRICATION_SPOT \
+		or _mode == Mode.PLACE_STORAGE_BIN \
+		or _mode == Mode.PLACE_OUTLET_EXTENSION \
+		or _mode == Mode.PLACE_RUDIMENTARY_SENSOR \
+		or _mode == Mode.PLACE_SMALL_LIGHT_DEVICE \
+		or _mode == Mode.PLACE_LARGE_LIGHT_DEVICE
 
 
 func _world_to_grid(world_pos: Vector2) -> Vector2i:
@@ -391,7 +442,8 @@ func _draw() -> void:
 			border = ZONE_PREVIEW_BORDER
 		elif _mode == Mode.DESIGNATE_DOCK_ROOM \
 				or _mode == Mode.DESIGNATE_MEDITATION_CHAMBER \
-				or _mode == Mode.DESIGNATE_MECHANIC_ROOM:
+				or _mode == Mode.DESIGNATE_MECHANIC_ROOM \
+				or _mode == Mode.DESIGNATE_MACHINE_ROOM:
 			fill = ROOM_PREVIEW_FILL
 			border = ROOM_PREVIEW_BORDER
 		draw_rect(r, fill)
@@ -404,7 +456,12 @@ func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
 	var valid: bool = _structure_manager != null \
 		and _structure_manager.can_place_blueprint(blueprint_id, anchor, _build_rotation) \
 		and (_fog == null or _fog.is_explored(anchor))
+	var outlet_range: int = BuildBlueprint.outlet_range(blueprint_id)
+	if outlet_range > 0:
+		_draw_outlet_ranges(outlet_range)
 	var raw_fill: Color = BuildBlueprint.ghost_color(blueprint_id) if valid else Color(0.95, 0.2, 0.2, 0.38)
+	if outlet_range > 0 and valid:
+		raw_fill = Color(0.25, 0.95, 0.35, 0.45)
 	var fill: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, raw_fill.a * 0.55)
 	var border: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, 0.55)
 	for cell in BuildBlueprint.footprint(blueprint_id, anchor, _build_rotation):
@@ -412,3 +469,25 @@ func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(rect, fill)
 		draw_rect(rect, border, false, 0.8)
+
+
+func _draw_outlet_ranges(tile_radius: int) -> void:
+	if _chunk_manager == null or _camera == null:
+		return
+	var radius_px: float = tile_radius * Chunk.TILE_PIXELS
+	var view_size: Vector2 = get_viewport_rect().size / _camera.zoom.x
+	var view_rect := Rect2(_camera.get_screen_center_position() - view_size * 0.5, view_size).grow(radius_px)
+	for outlet in _chunk_manager.outlet_cells():
+		var outlet_cell: Vector2i = outlet as Vector2i
+		var center: Vector2 = Chunk.grid_to_pixel_center(outlet_cell)
+		if not view_rect.has_point(center):
+			continue
+		_draw_dashed_circle(center, radius_px, OUTLET_RANGE_COLOR, 1.0)
+
+
+func _draw_dashed_circle(center: Vector2, radius: float, color: Color, width: float) -> void:
+	var segments: int = 64
+	for i in range(0, segments, 2):
+		var a0: float = TAU * float(i) / float(segments)
+		var a1: float = TAU * float(i + 1) / float(segments)
+		draw_arc(center, radius, a0, a1, 4, color, width)

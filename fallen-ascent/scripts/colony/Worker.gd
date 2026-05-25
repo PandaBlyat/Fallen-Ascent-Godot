@@ -19,6 +19,8 @@ enum State {
 	MOVING_TO_DROP,
 	MOVING_TO_BUILD_SITE,
 	BUILDING,
+	MOVING_TO_CRAFT_SITE,
+	CRAFTING,
 	MOVING_FREEFORM,
 	MOVING_TO_CHARGE,
 	CHARGING,
@@ -64,6 +66,7 @@ const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
 const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
+const ACTION_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
 const ENTITY_REGION_SIZE := Vector2(32, 32)
 const FACING_SOUTH: int = 0
 const FACING_SOUTH_EAST: int = 1
@@ -92,11 +95,13 @@ const MOOD_NEED_DECAY_PER_SEC: float = 0.6       ## per-need extra decay while u
 const MOOD_LOW_THRESHOLD: float = 35.0
 const CROWD_SLOW_SECONDS: float = 1.0
 const CROWD_SLOW_MULTIPLIER: float = 0.55
+const DOOR_SLOW_SECONDS: float = 0.65
+const DOOR_SLOW_MULTIPLIER: float = 0.72
 const RUST_CONDITION_DECAY_MULTIPLIER: float = 3.0
 const TELEPORT_COOLDOWN_SECONDS: float = 1.0
 const SCRAPE_RUST_DURATION: float = 1.4
 const IDLE_SAMPLE_LIMIT: int = 48
-const IDLE_SCRAPE_RUST_RADIUS: int = 14
+const IDLE_SCRAPE_RUST_RADIUS: int = 28
 const ACTION_HISTORY_LIMIT: int = 96
 const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -34.0)
 const BLOCKED_ACTION_SECONDS: float = 2.0
@@ -164,6 +169,8 @@ var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
 var _dead: bool = false
 var _crowd_slow_remaining: float = 0.0
+var _door_slow_remaining: float = 0.0
+var _last_door_slow_cell: Vector2i = Pathfinder.UNREACHABLE
 var _crowd_contacts: Dictionary = {}
 var _direct_order_queue: Array[Dictionary] = []
 var _needs_refresh_timer: float = 0.0
@@ -382,8 +389,6 @@ func current_grid() -> Vector2i:
 
 func active_path_points() -> PackedVector2Array:
 	var pts := PackedVector2Array()
-	if _state != State.MOVING_FREEFORM:
-		return pts
 	if _path.is_empty() or _path_index >= _path.size():
 		return pts
 	pts.resize(_path.size() - _path_index + 1)
@@ -475,6 +480,8 @@ func job_label() -> String:
 		return "haul"
 	if _job is BuildJob:
 		return "build " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
+	if _job is OperateStructureJob:
+		return "operate " + BuildBlueprint.display_name((_job as OperateStructureJob).structure_id)
 	if _is_scrape_job(_job):
 		return "scrape rust"
 	return "none"
@@ -496,10 +503,14 @@ func state_label() -> String:
 			return "delivering"
 		State.BUILDING:
 			return "building"
+		State.MOVING_TO_CRAFT_SITE:
+			return "delivering"
+		State.CRAFTING:
+			return "crafting"
 		State.MOVING_FREEFORM:
 			return "moving"
 		State.MOVING_TO_CHARGE:
-			return "moving to charge"
+			return "moving to recharge"
 		State.CHARGING:
 			return "charging"
 		State.ROAMING:
@@ -621,6 +632,8 @@ func _process(delta: float) -> void:
 		return
 	if _crowd_slow_remaining > 0.0:
 		_crowd_slow_remaining = maxf(0.0, _crowd_slow_remaining - delta)
+	if _door_slow_remaining > 0.0:
+		_door_slow_remaining = maxf(0.0, _door_slow_remaining - delta)
 	if _teleport_cooldown > 0.0:
 		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
 	if _blocked_action_timer > 0.0:
@@ -678,6 +691,26 @@ func _process(delta: float) -> void:
 			build.progress += delta * _light_speed_multiplier()
 			if build.progress >= build.build_duration():
 				_complete_build(build)
+		State.MOVING_TO_CRAFT_SITE:
+			if _advance_path(delta):
+				if _job is OperateStructureJob:
+					_arrive_at_operation_site()
+				else:
+					_arrive_at_craft_site()
+		State.CRAFTING:
+			if _job is OperateStructureJob:
+				var op := _job as OperateStructureJob
+				op.progress += delta * _light_speed_multiplier()
+				if op.progress >= op.operate_duration():
+					_complete_operation(op)
+			else:
+				var craft := _job as CraftJob
+				if craft == null:
+					_abandon_job()
+					return
+				craft.progress += delta * _light_speed_multiplier()
+				if craft.progress >= craft.craft_duration():
+					_complete_craft(craft)
 		State.MOVING_FREEFORM:
 			if _advance_path(delta):
 				_state = State.IDLE
@@ -729,7 +762,7 @@ func _process(delta: float) -> void:
 				if _activity_partner != null and is_instance_valid(_activity_partner) and _is_adjacent_to(_activity_partner):
 					_state = State.SOCIALIZING
 					if _activity_timer <= 0.0:
-						_activity_timer = randf_range(2.0, 4.5)
+						_activity_timer = randf_range(7.0, 12.0)
 					_remember("chatting with %s" % _activity_partner.display_name())
 				else:
 					_remember("chat cancelled: not adjacent")
@@ -818,6 +851,10 @@ func _try_claim_job() -> bool:
 		_begin_haul(job as HaulJob)
 	elif job is BuildJob:
 		_begin_build(job as BuildJob)
+	elif job is CraftJob:
+		_begin_craft(job as CraftJob)
+	elif job is OperateStructureJob:
+		_begin_operation(job as OperateStructureJob)
 	elif _is_scrape_job(job):
 		_begin_scrape_rust(job)
 	return true
@@ -894,7 +931,7 @@ func _choose_idle_behavior() -> void:
 	if _mental_tiredness >= 55.0 and _begin_assigned_dock_rest():
 		return
 	var roll: float = randf()
-	if roll < 0.06:
+	if roll < 0.14:
 		if not _begin_idle_scrape_rust():
 			_idle_cooldown = randf_range(1.0, 2.5)
 	elif roll < 0.18:
@@ -1039,7 +1076,7 @@ func _begin_socialize() -> bool:
 	var path: PackedVector2Array = _social_path_to_partner(partner, target)
 	if path.is_empty() and current_grid() != target:
 		return false
-	var duration: float = randf_range(2.0, 4.5)
+	var duration: float = randf_range(7.0, 12.0)
 	if not partner.accept_chat_invite(self, partner.current_grid(), duration):
 		return false
 	_activity_partner = partner
@@ -1207,13 +1244,10 @@ func _find_explored_path(from: Vector2i, to: Vector2i) -> PackedVector2Array:
 
 
 func _begin_mine(job: MineJob) -> void:
-	var tile: int = _chunk_manager.get_tile_at(job.target)
-	if tile != TerrainGenerator.TILE_WALL \
-			and tile != TerrainGenerator.TILE_SERVICE_CORE \
-			and tile != TerrainGenerator.TILE_RICH_WALL:
+	if not _is_mineable_target(job.target):
 		_cancel_mine_job(job)
 		return
-	var stand: Vector2i = _reachable_neighbor_of(job.target)
+	var stand: Vector2i = _mine_stand_for(job.target)
 	if stand == Pathfinder.UNREACHABLE:
 		job.block_briefly()
 		_release_and_idle()
@@ -1334,11 +1368,157 @@ func _find_material_for_build(job: BuildJob) -> Item:
 	return best
 
 
+func _begin_craft(job: CraftJob) -> void:
+	if _structure_manager == null:
+		_release_and_idle()
+		return
+	if job.has_all_materials():
+		var stand_ready: Vector2i = _structure_manager.interaction_cell_for(job.station_anchor)
+		if stand_ready == Pathfinder.UNREACHABLE:
+			_release_and_idle()
+			return
+		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
+		if ready_path.is_empty() and current_grid() != stand_ready:
+			_release_and_idle()
+			return
+		_path = ready_path
+		_path_index = 0
+		_state = State.MOVING_TO_CRAFT_SITE
+		return
+	job.material_kind = job.next_missing_kind()
+	var source: Item = _find_material_for_craft(job)
+	if source == null:
+		_note_missing_craft_material(job)
+		_release_and_idle()
+		return
+	job.source_item = source
+	source.reserved_by = self
+	var sg: Vector2i = source.get_grid()
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
+	if path.is_empty() and current_grid() != sg:
+		source.reserved_by = null
+		_release_and_idle()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_PICKUP
+
+
+func _find_material_for_craft(job: CraftJob) -> Item:
+	var best: Item = null
+	var best_d: int = 0x7fffffff
+	var origin: Vector2i = current_grid()
+	if _items_root != null:
+		for child in _items_root.get_children():
+			var it := child as Item
+			if it == null or it.reserved_by != null or it.kind != job.material_kind:
+				continue
+			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+				continue
+			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
+			if d < best_d:
+				best = it
+				best_d = d
+	if best != null:
+		return best
+	if _stockpile_manager != null:
+		for zone in _stockpile_manager.zones:
+			for cell in zone.cells:
+				var occ: Variant = zone.occupant.get(cell)
+				if occ is Item:
+					var it2 := occ as Item
+					if it2.reserved_by == null and it2.kind == job.material_kind:
+						if cell != origin and not _pathfinder.has_path(origin, cell):
+							continue
+						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
+						if d2 < best_d:
+							best = it2
+							best_d = d2
+	return best
+
+
+func _begin_operation(job: OperateStructureJob) -> void:
+	if _structure_manager == null:
+		_release_and_idle()
+		return
+	if not _structure_manager.can_operate_structure(job.anchor):
+		job.block_briefly(2.0)
+		_release_and_idle()
+		return
+	if job.has_all_materials():
+		var stand_ready: Vector2i = _structure_manager.interaction_cell_for(job.anchor)
+		if stand_ready == Pathfinder.UNREACHABLE:
+			_release_and_idle()
+			return
+		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
+		if ready_path.is_empty() and current_grid() != stand_ready:
+			_release_and_idle()
+			return
+		_path = ready_path
+		_path_index = 0
+		_state = State.MOVING_TO_CRAFT_SITE
+		return
+	job.material_kind = job.next_missing_kind()
+	var source: Item = _find_material_for_operation(job)
+	if source == null:
+		_note_missing_operation_material(job)
+		_release_and_idle()
+		return
+	job.source_item = source
+	source.reserved_by = self
+	var sg: Vector2i = source.get_grid()
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
+	if path.is_empty() and current_grid() != sg:
+		source.reserved_by = null
+		_release_and_idle()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_PICKUP
+
+
+func _find_material_for_operation(job: OperateStructureJob) -> Item:
+	var best: Item = null
+	var best_d: int = 0x7fffffff
+	var origin: Vector2i = current_grid()
+	if _items_root != null:
+		for child in _items_root.get_children():
+			var it := child as Item
+			if it == null or it.reserved_by != null or it.kind != job.material_kind:
+				continue
+			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+				continue
+			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
+			if d < best_d:
+				best = it
+				best_d = d
+	if best != null:
+		return best
+	if _stockpile_manager != null:
+		for zone in _stockpile_manager.zones:
+			for cell in zone.cells:
+				var occ: Variant = zone.occupant.get(cell)
+				if occ is Item:
+					var it2 := occ as Item
+					if it2.reserved_by == null and it2.kind == job.material_kind:
+						if cell != origin and not _pathfinder.has_path(origin, cell):
+							continue
+						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
+						if d2 < best_d:
+							best = it2
+							best_d = d2
+	return best
+
+
 func _pickup_item() -> void:
 	if _job is HaulJob:
 		_pickup_for_haul()
 	elif _job is BuildJob:
 		_pickup_for_build()
+	elif _job is CraftJob:
+		_pickup_for_craft()
+	elif _job is OperateStructureJob:
+		_pickup_for_operation()
 	else:
 		_abandon_job()
 
@@ -1401,6 +1581,82 @@ func _pickup_for_build() -> void:
 	_state = State.MOVING_TO_BUILD_SITE
 
 
+func _pickup_for_craft() -> void:
+	var craft := _job as CraftJob
+	if craft == null or craft.source_item == null or not is_instance_valid(craft.source_item):
+		if craft == null:
+			_abandon_job()
+			return
+		craft.source_item = null
+		var replacement: Item = _find_material_for_craft(craft)
+		if replacement == null:
+			_note_missing_craft_material(craft)
+			_release_and_idle()
+			return
+		craft.source_item = replacement
+		replacement.reserved_by = self
+	var item := craft.source_item as Item
+	var src_parent: Node = item.get_parent()
+	if src_parent is StockpileZone:
+		(src_parent as StockpileZone).take(item.get_grid())
+	if item.count > 1:
+		var remainder: Item = ITEM_SCRIPT.new() as Item
+		_items_root.add_child(remainder)
+		remainder.setup(item.get_grid(), item.kind, item.count - 1)
+		_stockpile_manager.on_item_spawned(remainder)
+		item.count = 1
+	_take_into_hand(item)
+	var stand: Vector2i = _structure_manager.interaction_cell_for(craft.station_anchor) if _structure_manager != null else Pathfinder.UNREACHABLE
+	if stand == Pathfinder.UNREACHABLE:
+		_drop_in_place()
+		return
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		_drop_in_place()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_CRAFT_SITE
+
+
+func _pickup_for_operation() -> void:
+	var op := _job as OperateStructureJob
+	if op == null or op.source_item == null or not is_instance_valid(op.source_item):
+		if op == null:
+			_abandon_job()
+			return
+		op.source_item = null
+		var replacement: Item = _find_material_for_operation(op)
+		if replacement == null:
+			_note_missing_operation_material(op)
+			_release_and_idle()
+			return
+		op.source_item = replacement
+		replacement.reserved_by = self
+	var item := op.source_item as Item
+	var src_parent: Node = item.get_parent()
+	if src_parent is StockpileZone:
+		(src_parent as StockpileZone).take(item.get_grid())
+	if item.count > 1:
+		var remainder: Item = ITEM_SCRIPT.new() as Item
+		_items_root.add_child(remainder)
+		remainder.setup(item.get_grid(), item.kind, item.count - 1)
+		_stockpile_manager.on_item_spawned(remainder)
+		item.count = 1
+	_take_into_hand(item)
+	var stand: Vector2i = _structure_manager.interaction_cell_for(op.anchor) if _structure_manager != null else Pathfinder.UNREACHABLE
+	if stand == Pathfinder.UNREACHABLE:
+		_drop_in_place()
+		return
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		_drop_in_place()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_CRAFT_SITE
+
+
 func _arrive_at_build_site() -> void:
 	var build := _job as BuildJob
 	if build == null:
@@ -1417,6 +1673,42 @@ func _arrive_at_build_site() -> void:
 		_state = State.BUILDING
 		return
 	_begin_build(build)
+
+
+func _arrive_at_craft_site() -> void:
+	var craft := _job as CraftJob
+	if craft == null:
+		_abandon_job()
+		return
+	if _carried != null:
+		var delivered_kind: int = _carried.kind
+		remove_child(_carried)
+		_carried.queue_free()
+		_carried = null
+		craft.source_item = null
+		craft.accept_delivered(delivered_kind, 1)
+	if craft.has_all_materials():
+		_state = State.CRAFTING
+		return
+	_begin_craft(craft)
+
+
+func _arrive_at_operation_site() -> void:
+	var op := _job as OperateStructureJob
+	if op == null:
+		_abandon_job()
+		return
+	if _carried != null:
+		var delivered_kind: int = _carried.kind
+		remove_child(_carried)
+		_carried.queue_free()
+		_carried = null
+		op.source_item = null
+		op.accept_delivered(delivered_kind, 1)
+	if op.has_all_materials():
+		_state = State.CRAFTING
+		return
+	_begin_operation(op)
 
 
 func _take_into_hand(item: Item) -> void:
@@ -1496,7 +1788,7 @@ func _drop_in_place() -> void:
 		_carried.reserved_by = null
 		dropped = _carried
 		_carried = null
-	if _job is BuildJob:
+	if (_job is BuildJob) or (_job is CraftJob) or (_job is OperateStructureJob):
 		_release_and_idle()
 	else:
 		_finish_job()
@@ -1507,25 +1799,38 @@ func _drop_in_place() -> void:
 
 
 func _complete_mine(mine: MineJob) -> void:
+	if _has_mineable_static_prop(mine.target):
+		if _colony_site != null and _colony_site.has_method("mine_static_prop_at"):
+			var rewards: Dictionary = _colony_site.call("mine_static_prop_at", mine.target) as Dictionary
+			for kind in rewards.keys():
+				var amount: int = int(rewards[kind])
+				if amount > 0:
+					_colony_site.call("spawn_item_at", mine.target, int(kind), amount)
+		_remember("salvaged prop at %d,%d" % [mine.target.x, mine.target.y])
+		_finish_job()
+		return
 	var mined_tile: int = _chunk_manager.get_tile_at(mine.target)
 	_chunk_manager.set_tile_at(mine.target, TerrainGenerator.TILE_FLOOR)
 	if _colony_site != null and _colony_site.has_method("spawn_item_at"):
-		_colony_site.call("spawn_item_at", mine.target, Item.Kind.SCRAP)
-		if randf() < 0.45:
+		if randf() < 0.55:
+			_colony_site.call("spawn_item_at", mine.target, Item.Kind.SCRAP)
+		if randf() < 0.22:
 			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
 		if mined_tile == TerrainGenerator.TILE_SERVICE_CORE:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
-			if randf() < 0.7:
-				_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
+			if randf() < 0.50:
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
 			if randf() < 0.35:
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
+			if randf() < 0.18:
 				_colony_site.call("spawn_item_at", mine.target, Item.Kind.DATACORE)
-			if randf() < 0.15:
+			if randf() < 0.08:
 				_colony_site.call("spawn_item_at", mine.target, Item.Kind.CHARGE_CELL)
 		elif mined_tile == TerrainGenerator.TILE_RICH_WALL:
-			_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
-			if randf() < 0.35:
+			if randf() < 0.50:
+				_colony_site.call("spawn_item_at", mine.target, Item.Kind.PLATING)
+			if randf() < 0.18:
 				_colony_site.call("spawn_item_at", mine.target, Item.Kind.DATACORE)
-		elif randf() < 0.08:
+		elif randf() < 0.04:
 			_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
 	_remember("mined %d,%d" % [mine.target.x, mine.target.y])
 	_finish_job()
@@ -1553,6 +1858,34 @@ func _complete_build(build: BuildJob) -> void:
 		BuildBlueprint.display_name(build.blueprint_id),
 		build.anchor.x,
 		build.anchor.y,
+	])
+	_finish_job()
+
+
+func _complete_craft(craft: CraftJob) -> void:
+	if _structure_manager == null or not _structure_manager.spawn_crafted_object(craft.station_anchor, craft.object_kind):
+		craft.block_briefly(2.0)
+		_show_blocked_action("Output blocked")
+		_release_and_idle()
+		return
+	_remember("crafted %s at %d,%d" % [
+		Item.kind_name(craft.object_kind),
+		craft.station_anchor.x,
+		craft.station_anchor.y,
+	])
+	_finish_job()
+
+
+func _complete_operation(op: OperateStructureJob) -> void:
+	if _structure_manager == null or not _structure_manager.complete_operation(op.anchor):
+		op.block_briefly(2.0)
+		_show_blocked_action("Output blocked")
+		_release_and_idle()
+		return
+	_remember("operated %s at %d,%d" % [
+		BuildBlueprint.display_name(op.structure_id),
+		op.anchor.x,
+		op.anchor.y,
 	])
 	_finish_job()
 
@@ -1589,6 +1922,20 @@ func _note_missing_build_material(job: BuildJob) -> void:
 	var item_name: String = Item.kind_name(job.material_kind)
 	_show_blocked_action("Lacks " + item_name)
 	_remember("lacks %s for %s" % [item_name, BuildBlueprint.display_name(job.blueprint_id)])
+
+
+func _note_missing_craft_material(job: CraftJob) -> void:
+	job.block_briefly(2.0)
+	var item_name: String = Item.kind_name(job.material_kind)
+	_show_blocked_action("Lacks " + item_name)
+	_remember("lacks %s to craft %s" % [item_name, Item.kind_name(job.object_kind)])
+
+
+func _note_missing_operation_material(job: OperateStructureJob) -> void:
+	job.block_briefly(2.0)
+	var item_name: String = Item.kind_name(job.material_kind)
+	_show_blocked_action("Lacks " + item_name)
+	_remember("lacks %s to operate %s" % [item_name, BuildBlueprint.display_name(job.structure_id)])
 
 
 func _abandon_job(release_claim: bool = true) -> void:
@@ -1657,6 +2004,14 @@ func _clear_job_reservations() -> void:
 		var build := _job as BuildJob
 		if build.source_item != null and is_instance_valid(build.source_item):
 			(build.source_item as Item).reserved_by = null
+	elif _job is CraftJob:
+		var craft := _job as CraftJob
+		if craft.source_item != null and is_instance_valid(craft.source_item):
+			(craft.source_item as Item).reserved_by = null
+	elif _job is OperateStructureJob:
+		var op := _job as OperateStructureJob
+		if op.source_item != null and is_instance_valid(op.source_item):
+			(op.source_item as Item).reserved_by = null
 
 
 func _clear_activity() -> void:
@@ -1727,6 +2082,10 @@ func _replan() -> void:
 				target_grid = (_job as HaulJob).item.call("get_grid") as Vector2i
 			elif _job is BuildJob:
 				target_grid = ((_job as BuildJob).source_item as Item).get_grid()
+			elif _job is CraftJob:
+				target_grid = ((_job as CraftJob).source_item as Item).get_grid()
+			elif _job is OperateStructureJob:
+				target_grid = ((_job as OperateStructureJob).source_item as Item).get_grid()
 			else:
 				return
 		State.CARRYING, State.MOVING_TO_DROP:
@@ -1740,6 +2099,16 @@ func _replan() -> void:
 					_release_and_idle()
 				return
 			target_grid = b_stand
+		State.MOVING_TO_CRAFT_SITE:
+			var op_anchor: Vector2i = (_job as OperateStructureJob).anchor if _job is OperateStructureJob else (_job as CraftJob).station_anchor
+			var c_stand: Vector2i = _structure_manager.interaction_cell_for(op_anchor) if _structure_manager != null else Pathfinder.UNREACHABLE
+			if c_stand == Pathfinder.UNREACHABLE:
+				if _carried != null:
+					_drop_in_place()
+				else:
+					_release_and_idle()
+				return
+			target_grid = c_stand
 		_:
 			return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target_grid)
@@ -1769,6 +2138,29 @@ func _reachable_neighbor_of(grid: Vector2i) -> Vector2i:
 	return Pathfinder.UNREACHABLE
 
 
+func _is_mineable_target(target: Vector2i) -> bool:
+	if _has_mineable_static_prop(target):
+		return true
+	var tile: int = _chunk_manager.get_tile_at(target)
+	return tile == TerrainGenerator.TILE_WALL \
+		or tile == TerrainGenerator.TILE_SERVICE_CORE \
+		or tile == TerrainGenerator.TILE_RICH_WALL
+
+
+func _has_mineable_static_prop(target: Vector2i) -> bool:
+	return _colony_site != null \
+		and _colony_site.has_method("has_mineable_static_prop") \
+		and bool(_colony_site.call("has_mineable_static_prop", target))
+
+
+func _mine_stand_for(target: Vector2i) -> Vector2i:
+	if _has_mineable_static_prop(target) \
+			and _colony_site != null \
+			and _colony_site.has_method("static_prop_mine_stand_for"):
+		return _colony_site.call("static_prop_mine_stand_for", target, current_grid(), _pathfinder) as Vector2i
+	return _reachable_neighbor_of(target)
+
+
 # ----- Direct orders from the player ---------------------------------------
 
 func queue_command_move(target: Vector2i) -> bool:
@@ -1782,10 +2174,7 @@ func queue_command_move(target: Vector2i) -> bool:
 
 
 func queue_command_mine(target: Vector2i) -> bool:
-	var tile: int = _chunk_manager.get_tile_at(target)
-	if tile != TerrainGenerator.TILE_WALL \
-			and tile != TerrainGenerator.TILE_SERVICE_CORE \
-			and tile != TerrainGenerator.TILE_RICH_WALL:
+	if not _is_mineable_target(target):
 		return false
 	return _enqueue_direct_order({
 		"kind": ORDER_MINE,
@@ -1861,10 +2250,7 @@ func command_mine(target: Vector2i, clear_queue: bool = true) -> bool:
 	# Add a mine designation (if needed) and immediately take it for ourselves.
 	# If something else already had this job claimed, cancelling drops their
 	# claim cleanly via the job_cancelled signal.
-	var tile: int = _chunk_manager.get_tile_at(target)
-	if tile != TerrainGenerator.TILE_WALL \
-			and tile != TerrainGenerator.TILE_SERVICE_CORE \
-			and tile != TerrainGenerator.TILE_RICH_WALL:
+	if not _is_mineable_target(target):
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
@@ -1959,10 +2345,25 @@ func _advance_path(delta: float) -> bool:
 	if _path_index >= _path.size():
 		return true
 	var speed_mult: float = CROWD_SLOW_MULTIPLIER if _crowd_slow_remaining > 0.0 else 1.0
+	if _door_slow_remaining > 0.0:
+		speed_mult *= DOOR_SLOW_MULTIPLIER
 	speed_mult *= _light_speed_multiplier()
 	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
+		var target_grid := Vector2i(
+			int(floor(target.x / Chunk.TILE_PIXELS)),
+			int(floor(target.y / Chunk.TILE_PIXELS)),
+		)
+		if _structure_manager != null:
+			var structure: Dictionary = _structure_manager.structure_at(target_grid)
+			if not structure.is_empty() and int(structure["id"]) == BuildBlueprint.Id.DOOR:
+				_structure_manager.request_door_open(target_grid)
+				if not _structure_manager.is_door_open(target_grid):
+					return false
+				if _last_door_slow_cell != target_grid:
+					_last_door_slow_cell = target_grid
+					_door_slow_remaining = DOOR_SLOW_SECONDS
 		var to_target: Vector2 = target - position
 		var dist: float = to_target.length()
 		if dist > ARRIVE_EPSILON_PX:
@@ -2047,12 +2448,12 @@ func _update_energy(delta: float) -> void:
 	var drain: float = ENERGY_IDLE_DRAIN_PER_SEC
 	match _state:
 		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
-		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
+		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_TO_CRAFT_SITE, State.MOVING_FREEFORM, \
 		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
 		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE, \
 		State.MOVING_TO_MEDITATE:
 			drain = ENERGY_MOVE_DRAIN_PER_SEC
-		State.WORKING, State.BUILDING, State.FIGHTING:
+		State.WORKING, State.BUILDING, State.CRAFTING, State.FIGHTING:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
 		State.CHARGING, State.RESTING, State.MEDITATING:
 			drain = 0.0
@@ -2064,13 +2465,13 @@ func _update_body_stats(delta: float) -> void:
 	var condition_decay: float = 0.0
 	match _state:
 		State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING, \
-		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_FREEFORM, \
+		State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_TO_CRAFT_SITE, State.MOVING_FREEFORM, \
 		State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING, \
 		State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE, \
 		State.MOVING_TO_MEDITATE:
 			condition_decay = CONDITION_MOVE_DECAY_PER_SEC * delta
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
-		State.WORKING, State.BUILDING:
+		State.WORKING, State.BUILDING, State.CRAFTING:
 			condition_decay = CONDITION_WORK_DECAY_PER_SEC * delta
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_WORK_RISE_PER_SEC * delta)
 		State.RESTING:
@@ -2240,6 +2641,10 @@ func _refresh_action_text() -> void:
 			State.MOVING_TO_PICKUP:
 				if _job is BuildJob:
 					next_text = "Getting " + Item.kind_name((_job as BuildJob).material_kind)
+				elif _job is CraftJob:
+					next_text = "Getting " + Item.kind_name((_job as CraftJob).material_kind)
+				elif _job is OperateStructureJob:
+					next_text = "Getting " + Item.kind_name((_job as OperateStructureJob).material_kind)
 				elif _job is HaulJob:
 					next_text = "Getting item"
 			State.CARRYING, State.MOVING_TO_DROP:
@@ -2254,10 +2659,19 @@ func _refresh_action_text() -> void:
 					next_text = "Building " + BuildBlueprint.display_name((_job as BuildJob).blueprint_id)
 				else:
 					next_text = "Building"
+			State.MOVING_TO_CRAFT_SITE:
+				next_text = "Moving to operate" if _job is OperateStructureJob else "Delivering"
+			State.CRAFTING:
+				if _job is OperateStructureJob:
+					next_text = "Operating " + BuildBlueprint.display_name((_job as OperateStructureJob).structure_id)
+				elif _job is CraftJob:
+					next_text = "Crafting " + Item.kind_name((_job as CraftJob).object_kind)
+				else:
+					next_text = "Crafting"
 			State.MOVING_FREEFORM:
 				next_text = "Moving"
 			State.MOVING_TO_CHARGE:
-				next_text = "Moving to charge"
+				next_text = "Moving to recharge"
 			State.CHARGING:
 				next_text = "Charging"
 			State.ROAMING:
@@ -2322,7 +2736,7 @@ func _draw() -> void:
 func _draw_action_bubble() -> void:
 	if _action_text.is_empty():
 		return
-	var font: Font = ThemeDB.fallback_font
+	var font: Font = ACTION_FONT
 	var text_size := font.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
 	var pad := Vector2(4, 3)
 	var screen_scale: Vector2 = get_global_transform_with_canvas().get_scale()

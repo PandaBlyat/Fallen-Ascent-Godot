@@ -15,6 +15,7 @@ const INITIAL_NEUTRALS: int = 30
 @onready var pathfinder: Pathfinder = $Pathfinder
 @onready var stockpile_manager: StockpileManager = $StockpileManager
 @onready var structure_manager: StructureManager = $StructureManager
+@onready var static_prop_manager: Node = $StaticPropManager
 @onready var items_root: Node2D = $Items
 @onready var workers_root: Node2D = $Workers
 @onready var neutrals_root: Node2D = $Neutrals
@@ -24,6 +25,10 @@ const INITIAL_NEUTRALS: int = 30
 @onready var room_manager: RoomManager = $RoomManager
 
 var _site_seed: int = 0
+var _loading_overlay: Control = null
+var _loading_bar: ProgressBar = null
+var _loading_label: Label = null
+var _spawned_initial_workers: bool = false
 
 
 func _ready() -> void:
@@ -34,16 +39,27 @@ func _ready() -> void:
 		site.site_seed = 1234567
 	_site_seed = site.site_seed
 	chunk_manager.setup(site.site_seed)
+	static_prop_manager.setup(site.site_seed)
 	camera.set_world_bounds(chunk_manager.map_world_rect())
 
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.game_speed_changed.connect(_on_speed_changed)
+	EventBus.colony_load_progress.connect(_on_colony_load_progress)
 
-	# Workers need terrain to be queryable, so spawn after the first chunk batch.
-	call_deferred("_spawn_initial_workers")
+	if chunk_manager.preload_entire_map:
+		_show_loading_overlay()
+	else:
+		# Workers need terrain to be queryable, so spawn after the first chunk batch.
+		call_deferred("_spawn_initial_workers")
 
 
 func _spawn_initial_workers() -> void:
+	if _spawned_initial_workers:
+		return
+	_spawned_initial_workers = true
+	if static_prop_manager != null and static_prop_manager.has_method("generate_now_at"):
+		static_prop_manager.call("generate_now_at", Vector2i.ZERO)
+	chunk_manager.ensure_outlet_near(Vector2i.ZERO)
 	WorkerSpawner.spawn(
 		WorkerSpawner.INITIAL_WORKERS,
 		Vector2i.ZERO,
@@ -59,6 +75,88 @@ func _spawn_initial_workers() -> void:
 		room_manager,
 	)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
+
+
+func _show_loading_overlay() -> void:
+	Engine.time_scale = 0.0
+	camera.set_process(false)
+	camera.set_process_unhandled_input(false)
+	designator.set_process_unhandled_input(false)
+	$SelectionController.set_process_unhandled_input(false)
+
+	var overlay := Control.new()
+	overlay.name = "LoadingOverlay"
+	overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.z_index = 200
+	overlay.modulate = Color.WHITE
+	_loading_overlay = overlay
+	$HUD.add_child(overlay)
+
+	var bg := ColorRect.new()
+	bg.color = Color(0.02, 0.025, 0.03, 0.88)
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(bg)
+
+	var box := VBoxContainer.new()
+	box.anchor_left = 0.5
+	box.anchor_right = 0.5
+	box.anchor_top = 0.5
+	box.anchor_bottom = 0.5
+	box.offset_left = -180.0
+	box.offset_right = 180.0
+	box.offset_top = -34.0
+	box.offset_bottom = 34.0
+	box.add_theme_constant_override("separation", 10)
+	overlay.add_child(box)
+
+	var label := Label.new()
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 15)
+	label.add_theme_color_override("font_color", Color(0.92, 0.96, 0.97, 1.0))
+	label.text = "loading colony 0 / 0"
+	_loading_label = label
+	box.add_child(label)
+
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(360, 18)
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = 0.0
+	_loading_bar = bar
+	box.add_child(bar)
+
+
+func _hide_loading_overlay() -> void:
+	if static_prop_manager != null and static_prop_manager.has_method("generate_all_pending_now"):
+		if _loading_label != null:
+			_loading_label.text = "loading props"
+		static_prop_manager.call("generate_all_pending_now")
+	if _loading_overlay != null and is_instance_valid(_loading_overlay):
+		_loading_overlay.queue_free()
+	_loading_overlay = null
+	_loading_bar = null
+	_loading_label = null
+	Engine.time_scale = GameState.game_speed
+	camera.set_process(true)
+	camera.set_process_unhandled_input(true)
+	designator.set_process_unhandled_input(true)
+	$SelectionController.set_process_unhandled_input(true)
+	_spawn_initial_workers()
+
+
+func _on_colony_load_progress(loaded: int, total: int) -> void:
+	if _loading_overlay == null:
+		return
+	var safe_total: int = maxi(total, 1)
+	if _loading_bar != null:
+		_loading_bar.max_value = safe_total
+		_loading_bar.value = clampi(loaded, 0, safe_total)
+	if _loading_label != null:
+		_loading_label.text = "loading colony %d / %d" % [loaded, total]
+	if total > 0 and loaded >= total:
+		_hide_loading_overlay()
 
 
 func _spawn_neutral_bots(count: int) -> void:
@@ -90,6 +188,24 @@ func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP, count: int = 1) 
 	items_root.add_child(item)
 	item.setup(grid, kind, count)
 	stockpile_manager.on_item_spawned(item)
+
+
+func has_mineable_static_prop(grid: Vector2i) -> bool:
+	return static_prop_manager != null \
+		and static_prop_manager.has_method("has_mineable_prop") \
+		and bool(static_prop_manager.call("has_mineable_prop", grid))
+
+
+func static_prop_mine_stand_for(grid: Vector2i, from: Vector2i, pathfinder: Pathfinder) -> Vector2i:
+	if static_prop_manager == null:
+		return Pathfinder.UNREACHABLE
+	return static_prop_manager.call("mine_stand_for", grid, from, pathfinder) as Vector2i
+
+
+func mine_static_prop_at(grid: Vector2i) -> Dictionary:
+	if static_prop_manager == null:
+		return {}
+	return static_prop_manager.call("mine_prop_at", grid) as Dictionary
 
 
 func can_place_blueprint(blueprint_id: int, anchor: Vector2i, rotation: int = 0) -> bool:

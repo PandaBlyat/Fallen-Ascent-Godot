@@ -13,6 +13,9 @@ extends Node
 ##   chunk_loaded(chunk_coord)        - emitted by ChunkManager after a chunk
 ##                                      has been instantiated and populated.
 ##   chunk_unloaded(chunk_coord)      - emitted just before a chunk is freed.
+##   colony_load_progress(loaded,total)
+##                                    - emitted by ChunkManager while initial
+##                                      colony map preload drains over frames.
 ##   tile_changed(grid, new_tile)     - emitted by ChunkManager after a tile is
 ##                                      mutated via set_tile_at. Payload: global
 ##                                      grid coord (Vector2i) + new tile id.
@@ -53,6 +56,9 @@ extends Node
 ##                                    - emitted by StructureManager after a
 ##                                      Sentience Cradle finishes a build cycle
 ##                                      and a new Worker is added to the tree.
+##   fabricator_needs_inputs(anchor,missing_kinds)
+##                                    - emitted when automatic production stalls
+##                                      because required inputs are absent.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -64,6 +70,7 @@ signal game_speed_changed(speed: float)
 signal camera_moved(world_pos: Vector2, zoom: Vector2)
 signal chunk_loaded(chunk_coord: Vector2i)
 signal chunk_unloaded(chunk_coord: Vector2i)
+signal colony_load_progress(loaded: int, total: int)
 signal tile_changed(grid: Vector2i, new_tile: int)
 signal worker_selected(worker: Node)
 signal workers_selected(workers: Array)
@@ -80,4 +87,5 @@ signal hostile_spawned(node: Node)
 signal wisdom_changed(new_total: float)
 signal tech_unlocked(tech_id: StringName)
 signal worker_spawned_from_cradle(worker: Node)
+signal fabricator_needs_inputs(anchor: Vector2i, missing_kinds: Array)
 @warning_ignore_restore("unused_signal")

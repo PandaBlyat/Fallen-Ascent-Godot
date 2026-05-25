@@ -13,6 +13,7 @@ var _chunk_manager: ChunkManager
 var _astar: AStarGrid2D
 var _region: Rect2i = Rect2i()
 var _rebuild_pending: bool = false
+var _bulk_loading: bool = false
 ## Coords (chunk-space) whose cells need solidness re-evaluated next rebuild.
 var _dirty_chunks: Dictionary = {}
 ## Persistent solidness map. AStarGrid2D.update() wipes solidness whenever
@@ -32,6 +33,8 @@ func _ready() -> void:
 
 func _on_chunk_loaded(coord: Vector2i) -> void:
 	_dirty_chunks[coord] = true
+	if _bulk_loading:
+		return
 	_schedule_rebuild()
 
 
@@ -39,7 +42,23 @@ func _on_chunk_unloaded(coord: Vector2i) -> void:
 	# Cells fall back to TILE_VOID once unloaded; rebuild will flag them
 	# solid in the cache and on the grid. The region itself doesn't shrink.
 	_dirty_chunks[coord] = true
+	if _bulk_loading:
+		return
 	_schedule_rebuild()
+
+
+func set_bulk_loading(active: bool) -> void:
+	if _bulk_loading == active:
+		return
+	_bulk_loading = active
+	if not _bulk_loading and not _dirty_chunks.is_empty():
+		_schedule_rebuild()
+
+
+func flush_rebuild() -> void:
+	if _dirty_chunks.is_empty() and not _rebuild_pending:
+		return
+	_rebuild()
 
 
 func _schedule_rebuild() -> void:

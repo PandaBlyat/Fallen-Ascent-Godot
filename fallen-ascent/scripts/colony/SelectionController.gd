@@ -15,6 +15,7 @@ extends Node2D
 @export var stockpile_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var structure_manager_path: NodePath
+@export var static_prop_manager_path: NodePath
 @export var neutrals_root_path: NodePath
 @export var hostiles_root_path: NodePath
 
@@ -43,6 +44,7 @@ var _job_board: JobBoard
 var _stockpile_manager: StockpileManager
 var _fog: FogOfWar
 var _structure_manager: StructureManager
+var _static_prop_manager: Node
 var _neutrals_root: Node2D
 var _hostiles_root: Node2D
 var _selected: Array[Worker] = []
@@ -69,6 +71,7 @@ func _ready() -> void:
 	_stockpile_manager = get_node_or_null(stockpile_manager_path) as StockpileManager
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
+	_static_prop_manager = get_node_or_null(static_prop_manager_path)
 	_neutrals_root = get_node_or_null(neutrals_root_path) as Node2D
 	_hostiles_root = get_node_or_null(hostiles_root_path) as Node2D
 
@@ -227,6 +230,17 @@ func _handle_right_click(shift_held: bool) -> void:
 			_show_order_failed(grid, "No path", worker)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
+	if _static_prop_manager != null \
+			and _static_prop_manager.has_method("has_mineable_prop") \
+			and bool(_static_prop_manager.call("has_mineable_prop", grid)):
+		var prop_miner: Worker = selected_worker()
+		if prop_miner != null and is_instance_valid(prop_miner):
+			if shift_held:
+				prop_miner.queue_command_mine(grid)
+			else:
+				prop_miner.command_mine(grid)
+			_show_order_highlight(grid)
+		return
 	if tile == TerrainGenerator.TILE_WALL \
 			or tile == TerrainGenerator.TILE_SERVICE_CORE \
 			or tile == TerrainGenerator.TILE_RICH_WALL:

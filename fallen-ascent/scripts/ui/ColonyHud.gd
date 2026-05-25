@@ -7,11 +7,14 @@ extends Control
 ##
 
 const UI_ATLAS_PATH := "res://resources/ui/placeholder_ui_atlas.png"
+const STRUCTURE_ATLAS_PATH := "res://resources/objects/structures_atlas.png"
+const OBJECT_ATLAS_PATH := "res://resources/objects/craftable_objects_atlas.png"
 const ICON_CELL_SIZE := Vector2i(32, 32)
 
 const TAB_ORDERS := &"orders"
 const TAB_ZONES := &"zones"
 const TAB_STRUCTURES := &"structures"
+const TAB_OBJECTS := &"objects"
 const TAB_ROOMS := &"rooms"
 
 const ICON_CANCEL := Vector2i(0, 0)
@@ -32,6 +35,12 @@ const ICON_MAINTENANCE_DOCK := ICON_CHARGE_PAD
 const ICON_CALIBRATION_SHRINE := ICON_SENSOR
 const ICON_MEDITATION_PAD := ICON_SENSOR
 const ICON_SENTIENCE_CRADLE := ICON_FABRICATOR
+const ICON_FABRICATION_SPOT := ICON_FABRICATOR
+const ICON_STORAGE_BIN := ICON_STOCKPILE
+const ICON_OUTLET_EXTENSION := ICON_CHARGE_PAD
+const ICON_RUDIMENTARY_SENSOR := ICON_SENSOR
+const ICON_SMALL_LIGHT_DEVICE := ICON_LIGHT
+const ICON_LARGE_LIGHT_DEVICE := ICON_LIGHT
 
 # Colors for UI accents and states
 const COLOR_BG_DARK := Color(0.055, 0.072, 0.088, 0.94)
@@ -84,6 +93,8 @@ var _camera: CameraController
 var _selection_controller: SelectionController
 
 var _atlas: Texture2D
+var _structure_atlas: Texture2D
+var _object_atlas: Texture2D
 var _worker_atlas: Texture2D
 var _bot_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
@@ -94,6 +105,8 @@ var _workers_label: Label
 var _jobs_label: Label
 var _wisdom_label: Label
 var _resource_labels: Dictionary = {}            ## int -> Label
+var _resource_category_buttons: Dictionary = {}  ## int -> Button
+var _resource_popups: Dictionary = {}            ## int -> PanelContainer
 var _command_buttons: Dictionary = {}            ## int -> Button
 var _tech_tree_panel: CanvasLayer = null
 const TECH_TREE_SCENE: PackedScene = preload("res://scenes/ui/TechTreePanel.tscn")
@@ -126,6 +139,8 @@ func _ready() -> void:
 	_camera = get_node_or_null(camera_path) as CameraController
 	_selection_controller = get_node_or_null(selection_controller_path) as SelectionController
 	_atlas = load(UI_ATLAS_PATH) as Texture2D
+	_structure_atlas = load(STRUCTURE_ATLAS_PATH) as Texture2D
+	_object_atlas = load(OBJECT_ATLAS_PATH) as Texture2D
 	_worker_atlas = load(WORKER_ATLAS_PATH) as Texture2D
 	_bot_atlas = load(BOTS_ATLAS_PATH) as Texture2D
 
@@ -202,14 +217,11 @@ func _build_layout() -> void:
 
 	status_row.add_child(_separator())
 
-	# Resource Badges
-	for kind in _tracked_item_kinds():
-		var label := _status_label("%s 0" % Item.kind_name(kind))
-		label.add_theme_color_override("font_color", Item.kind_color(kind).lerp(Color.WHITE, 0.4))
-
-		var badge := _badge_container(label)
-		status_row.add_child(badge)
-		_resource_labels[kind] = label
+	for category in _resource_categories():
+		var button := _resource_category_button(category)
+		status_row.add_child(button)
+		_resource_category_buttons[category] = button
+		_build_resource_popup(category)
 
 	# Wisdom (research currency). Color-tinted lavender to read as abstract.
 	_wisdom_label = _status_label("wisdom 0")
@@ -300,6 +312,7 @@ func _build_layout() -> void:
 	_add_tab_button(tabs, TAB_ZONES, "Zones")
 	_add_tab_button(tabs, TAB_ROOMS, "Rooms")
 	_add_tab_button(tabs, TAB_STRUCTURES, "Structures")
+	_add_tab_button(tabs, TAB_OBJECTS, "Objects")
 
 	_command_grid = GridContainer.new()
 	_command_grid.columns = 5
@@ -438,12 +451,16 @@ func _set_tab(tab: StringName) -> void:
 
 	for command in _commands_for_tab(tab):
 		var build_id: int = int(command.get("build_id", -1))
+		var icon_texture: Texture2D = null
+		if build_id >= 0 and (tab == TAB_STRUCTURES or tab == TAB_OBJECTS):
+			icon_texture = _structure_icon(build_id)
 		_add_command_button(
 			int(command["mode"]),
 			command["label"] as String,
 			command["tooltip"] as String,
 			command["icon"] as Vector2i,
 			build_id,
+			icon_texture
 		)
 	_refresh_mode_buttons()
 
@@ -460,6 +477,7 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.DESIGNATE_DOCK_ROOM, "label": "Dock Room", "tooltip": "Dock Room\nPersonal space for a bot to rest.\nMinimum 1x2 with a Dock (bed). One bot per room.\nMissing rooms tank mood over time.", "icon": ICON_DOCK},
 				{"mode": Designator.Mode.DESIGNATE_MEDITATION_CHAMBER, "label": "Meditate", "tooltip": "Meditation Chamber\nMust contain a Meditation Pad.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
 				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nGates limb-heal services for room occupants (heal effect lands later).", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
+				{"mode": Designator.Mode.DESIGNATE_MACHINE_ROOM, "label": "Machine", "tooltip": "Machine Room\nRequired for worker-operated production structures.\nDesignate floor first, then build Extractor, Fabricator, Assembly Press, or Sentience Cradle inside.", "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
 				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_STRUCTURES:
@@ -474,10 +492,19 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.BUILD_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.SENSOR), "icon": ICON_SENSOR, "build_id": BuildBlueprint.Id.SENSOR},
 				{"mode": Designator.Mode.BUILD_CHARGE_PAD, "label": "Charge", "tooltip": _build_tooltip(BuildBlueprint.Id.CHARGE_PAD), "icon": ICON_CHARGE_PAD, "build_id": BuildBlueprint.Id.CHARGE_PAD},
 				{"mode": Designator.Mode.BUILD_FABRICATOR, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR},
+				{"mode": Designator.Mode.BUILD_FABRICATION_SPOT, "label": "Fab Spot", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATION_SPOT), "icon": ICON_FABRICATION_SPOT, "build_id": BuildBlueprint.Id.FABRICATION_SPOT},
 				{"mode": Designator.Mode.BUILD_PARTS_LOOM, "label": "Assembly", "tooltip": _build_tooltip(BuildBlueprint.Id.PARTS_LOOM), "icon": ICON_PARTS_LOOM, "build_id": BuildBlueprint.Id.PARTS_LOOM},
 				{"mode": Designator.Mode.BUILD_MAINTENANCE_DOCK, "label": "Mechanic Dock", "tooltip": _build_tooltip(BuildBlueprint.Id.MAINTENANCE_DOCK), "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK},
 				{"mode": Designator.Mode.BUILD_CALIBRATION_SHRINE, "label": "Calibrate", "tooltip": _build_tooltip(BuildBlueprint.Id.CALIBRATION_SHRINE), "icon": ICON_CALIBRATION_SHRINE, "build_id": BuildBlueprint.Id.CALIBRATION_SHRINE},
 				{"mode": Designator.Mode.BUILD_SENTIENCE_CRADLE, "label": "Cradle", "tooltip": _build_tooltip(BuildBlueprint.Id.SENTIENCE_CRADLE), "icon": ICON_SENTIENCE_CRADLE, "build_id": BuildBlueprint.Id.SENTIENCE_CRADLE},
+			]
+		TAB_OBJECTS:
+			return [
+				{"mode": Designator.Mode.PLACE_STORAGE_BIN, "label": "Storage Bin", "tooltip": _build_tooltip(BuildBlueprint.Id.STORAGE_BIN), "icon": ICON_STORAGE_BIN, "build_id": BuildBlueprint.Id.STORAGE_BIN},
+				{"mode": Designator.Mode.PLACE_OUTLET_EXTENSION, "label": "Outlet Ext", "tooltip": _build_tooltip(BuildBlueprint.Id.OUTLET_EXTENSION), "icon": ICON_OUTLET_EXTENSION, "build_id": BuildBlueprint.Id.OUTLET_EXTENSION},
+				{"mode": Designator.Mode.PLACE_RUDIMENTARY_SENSOR, "label": "Sensor", "tooltip": _build_tooltip(BuildBlueprint.Id.RUDIMENTARY_SENSOR), "icon": ICON_RUDIMENTARY_SENSOR, "build_id": BuildBlueprint.Id.RUDIMENTARY_SENSOR},
+				{"mode": Designator.Mode.PLACE_SMALL_LIGHT_DEVICE, "label": "Small Light", "tooltip": _build_tooltip(BuildBlueprint.Id.SMALL_LIGHT_DEVICE), "icon": ICON_SMALL_LIGHT_DEVICE, "build_id": BuildBlueprint.Id.SMALL_LIGHT_DEVICE},
+				{"mode": Designator.Mode.PLACE_LARGE_LIGHT_DEVICE, "label": "Large Light", "tooltip": _build_tooltip(BuildBlueprint.Id.LARGE_LIGHT_DEVICE), "icon": ICON_LARGE_LIGHT_DEVICE, "build_id": BuildBlueprint.Id.LARGE_LIGHT_DEVICE},
 			]
 		_:
 			return [
@@ -485,7 +512,14 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 			]
 
 
-func _add_command_button(mode: int, label_text: String, tooltip: String, icon_cell: Vector2i, build_id: int = -1) -> void:
+func _add_command_button(
+	mode: int,
+	label_text: String,
+	tooltip: String,
+	icon_cell: Vector2i,
+	build_id: int = -1,
+	icon_texture: Texture2D = null
+) -> void:
 	var locked: bool = false
 	var lock_tooltip: String = tooltip
 	if build_id >= 0 and TechManager != null and not TechManager.is_build_unlocked(build_id):
@@ -501,7 +535,7 @@ func _add_command_button(mode: int, label_text: String, tooltip: String, icon_ce
 	button.disabled = locked
 	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(96, 38)
-	button.icon = _atlas_icon(icon_cell)
+	button.icon = icon_texture if icon_texture != null else _atlas_icon(icon_cell)
 	button.expand_icon = true
 	button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 
@@ -689,6 +723,11 @@ func _refresh_status() -> void:
 		var label := _resource_labels[kind] as Label
 		if label != null:
 			label.text = "%s %d" % [Item.kind_name(int(kind)), int(counts.get(kind, 0))]
+	for category in _resource_category_buttons.keys():
+		var button := _resource_category_buttons[category] as Button
+		if button != null:
+			button.text = "%s %d" % [Item.category_name(int(category)), _category_total(int(category), counts)]
+			button.add_theme_color_override("font_color", Item.category_color(int(category)).lerp(Color.WHITE, 0.35))
 	if _wisdom_label != null and TechManager != null:
 		_wisdom_label.text = "wisdom %d" % int(roundf(TechManager.wisdom))
 	_refresh_npc_strip_if_needed()
@@ -727,11 +766,110 @@ func _tracked_item_kinds() -> Array[int]:
 		Item.Kind.PLATING,
 		Item.Kind.DATACORE,
 		Item.Kind.CHARGE_CELL,
+		Item.Kind.STORAGE_BIN,
+		Item.Kind.OUTLET_EXTENSION,
+		Item.Kind.RUDIMENTARY_SENSOR,
+		Item.Kind.SMALL_LIGHT_DEVICE,
+		Item.Kind.LARGE_LIGHT_DEVICE,
 	]
+
+
+func _resource_categories() -> Array[int]:
+	return [
+		Item.Category.RAW,
+		Item.Category.STRUCTURAL,
+		Item.Category.MECHANICAL,
+		Item.Category.DIGITAL,
+		Item.Category.ENERGY,
+	]
+
+
+func _category_total(category: int, counts: Dictionary) -> int:
+	var total: int = 0
+	for kind in _tracked_item_kinds():
+		if Item.kind_category(kind) == category:
+			total += int(counts.get(kind, 0))
+	return total
+
+
+func _resource_category_button(category: int) -> Button:
+	var button := Button.new()
+	button.text = "%s 0" % Item.category_name(category)
+	button.tooltip_text = _category_tooltip(category)
+	button.focus_mode = Control.FOCUS_NONE
+	button.custom_minimum_size = Vector2(104, 28)
+	button.add_theme_font_size_override("font_size", 11)
+	button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+	button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.14, 0.20, 1.0), COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", Item.category_color(category).lerp(Color.WHITE, 0.35))
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.pressed.connect(_toggle_resource_popup.bind(category))
+	return button
+
+
+func _build_resource_popup(category: int) -> void:
+	var popup := PanelContainer.new()
+	popup.name = "ResourcePopup_%s" % Item.category_name(category)
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup.visible = false
+	popup.z_index = 150
+	popup.custom_minimum_size = Vector2(220, 0)
+	popup.add_theme_stylebox_override("panel", _panel_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	add_child(popup)
+	_resource_popups[category] = popup
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 8)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	popup.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 4)
+	margin.add_child(box)
+
+	for kind in _tracked_item_kinds():
+		if Item.kind_category(kind) != category:
+			continue
+		var label := _status_label("%s 0" % Item.kind_name(kind))
+		label.mouse_filter = Control.MOUSE_FILTER_STOP
+		label.custom_minimum_size = Vector2(190, 20)
+		label.tooltip_text = "%s\n%s\nHow: %s" % [
+			Item.kind_name(kind).capitalize(),
+			Item.kind_description(kind),
+			Item.acquisition_text(kind),
+		]
+		label.add_theme_color_override("font_color", Item.kind_color(kind).lerp(Color.WHITE, 0.35))
+		box.add_child(label)
+		_resource_labels[kind] = label
+
+
+func _toggle_resource_popup(category: int) -> void:
+	var popup := _resource_popups.get(category) as PanelContainer
+	var button := _resource_category_buttons.get(category) as Button
+	if popup == null or button == null:
+		return
+	if popup.visible:
+		popup.visible = false
+		return
+	var pos: Vector2 = button.global_position + Vector2(0.0, button.size.y + 3.0)
+	popup.position = pos
+	popup.visible = true
 
 
 func _build_tooltip(blueprint_id: int) -> String:
 	return BuildBlueprint.tooltip_text(blueprint_id)
+
+
+func _category_tooltip(category: int) -> String:
+	var lines: Array[String] = [Item.category_name(category).capitalize()]
+	for kind in _tracked_item_kinds():
+		if Item.kind_category(kind) == category:
+			lines.append("%s: %s" % [Item.kind_name(kind), Item.acquisition_text(kind)])
+	return "\n".join(lines)
 
 
 func _refresh_inspect_card() -> void:
@@ -1036,6 +1174,63 @@ func _build_structure_card() -> void:
 	var blocked: String = status["blocked"] as String
 	if not blocked.is_empty():
 		_add_card_line(card, "blocked", blocked, Color(1.0, 0.5, 0.35))
+	if int(status["id"]) == BuildBlueprint.Id.FABRICATION_SPOT:
+		_add_card_line(card, "orders", "%d queued" % int(status.get("craft_orders", 0)))
+		var craft_missing: String = status.get("craft_missing_stockpile", "") as String
+		if not craft_missing.is_empty():
+			_add_card_line(card, "stockpile missing", craft_missing, Color(1.0, 0.5, 0.35))
+		_add_fabrication_controls(card)
+	elif BuildBlueprint.is_worker_operated(int(status["id"])):
+		_add_card_line(card, "job list", "%d operation queued" % int(status.get("operation_orders", 0)))
+
+
+func _add_fabrication_controls(parent: Control) -> void:
+	_add_section_label(parent, "craft orders")
+	for object_kind in Item.craftable_object_kinds():
+		var button := Button.new()
+		button.text = "Make " + Item.kind_name(object_kind)
+		button.tooltip_text = "%s\nCost: %s\nCraft: %.0fs" % [
+			Item.kind_name(object_kind).capitalize(),
+			Item.recipe_text(Item.craft_recipe(object_kind)),
+			Item.craft_duration(object_kind),
+		]
+		button.custom_minimum_size = Vector2(180, 30)
+		button.add_theme_font_size_override("font_size", 11)
+		button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+		button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+		button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+		button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		button.add_theme_color_override("font_color", Item.kind_color(object_kind).lerp(Color.WHITE, 0.35))
+		button.pressed.connect(_on_craft_order_pressed.bind(object_kind))
+		parent.add_child(button)
+	var clear := Button.new()
+	clear.text = "Clear orders"
+	clear.tooltip_text = "Clear craft orders\nCancels queued fabrication jobs at this spot."
+	clear.custom_minimum_size = Vector2(180, 30)
+	clear.add_theme_font_size_override("font_size", 11)
+	clear.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+	clear.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+	clear.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+	clear.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	clear.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	clear.pressed.connect(_on_clear_craft_orders_pressed)
+	parent.add_child(clear)
+
+
+func _on_craft_order_pressed(object_kind: int) -> void:
+	if _structure_manager == null:
+		return
+	if _structure_manager.add_craft_order(_selected_structure_anchor, object_kind):
+		_refresh_status()
+		_refresh_selection_panel()
+
+
+func _on_clear_craft_orders_pressed() -> void:
+	if _structure_manager == null or not _structure_manager.has_method("clear_craft_orders"):
+		return
+	_structure_manager.call("clear_craft_orders", _selected_structure_anchor)
+	_refresh_status()
+	_refresh_selection_panel()
 
 
 func _build_stockpile_card() -> void:
@@ -1262,6 +1457,23 @@ func _atlas_icon(cell: Vector2i) -> Texture2D:
 	var icon := AtlasTexture.new()
 	icon.atlas = _atlas
 	icon.region = Rect2(Vector2(cell * ICON_CELL_SIZE), Vector2(ICON_CELL_SIZE))
+	return icon
+
+
+func _structure_icon(build_id: int) -> Texture2D:
+	var icon := AtlasTexture.new()
+	if BuildBlueprint.is_object_placement(build_id):
+		var object_kind: int = BuildBlueprint.object_item_kind(build_id)
+		var object_index: int = Item.object_atlas_index(object_kind)
+		if _object_atlas == null or object_index < 0:
+			return null
+		icon.atlas = _object_atlas
+		icon.region = Rect2(Vector2(object_index * ICON_CELL_SIZE.x, 0), Vector2(ICON_CELL_SIZE))
+		return icon
+	if _structure_atlas == null:
+		return null
+	icon.atlas = _structure_atlas
+	icon.region = Rect2(Vector2(build_id * ICON_CELL_SIZE.x, 0), Vector2(ICON_CELL_SIZE))
 	return icon
 
 

@@ -69,6 +69,15 @@ func zone_at(grid: Vector2i) -> StockpileZone:
 	return null
 
 
+func register_storage_bin(cell: Vector2i) -> void:
+	var zone: StockpileZone = zone_at(cell)
+	if zone == null:
+		return
+	zone.set_capacity_multiplier(cell, 3)
+	stockpile_changed.emit()
+	_schedule_match_loose_items()
+
+
 func remove_zone(zone: StockpileZone) -> void:
 	if zone == null or not is_instance_valid(zone):
 		return

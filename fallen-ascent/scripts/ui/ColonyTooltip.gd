@@ -11,6 +11,7 @@ extends Label
 @export var items_root_path: NodePath
 @export var workers_root_path: NodePath
 @export var structure_manager_path: NodePath
+@export var static_prop_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var room_manager_path: NodePath
 
@@ -25,6 +26,7 @@ var _stockpile_manager: StockpileManager
 var _items_root: Node2D
 var _workers_root: Node2D
 var _structure_manager: StructureManager
+var _static_prop_manager: Node
 var _fog: FogOfWar
 var _room_manager: Node
 var _last_grid: Vector2i = Vector2i(2147483647, 2147483647)
@@ -48,6 +50,7 @@ func _ready() -> void:
 	_items_root = get_node(items_root_path) as Node2D
 	_workers_root = get_node(workers_root_path) as Node2D
 	_structure_manager = get_node(structure_manager_path) as StructureManager
+	_static_prop_manager = get_node_or_null(static_prop_manager_path)
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_room_manager = get_node_or_null(room_manager_path)
 	EventBus.visibility_changed.connect(_on_visibility_changed)
@@ -95,6 +98,17 @@ func _refresh(grid: Vector2i) -> void:
 	var structure_name: String = _structure_manager.structure_name_at(grid) if _structure_manager != null else ""
 	if not structure_name.is_empty():
 		lines.append("Object: " + structure_name)
+	elif _static_prop_manager != null:
+		var prop_name: String = ""
+		if _static_prop_manager.has_method("prop_name_at"):
+			prop_name = _static_prop_manager.call("prop_name_at", grid) as String
+		if not prop_name.is_empty():
+			lines.append("Object: " + prop_name)
+			var rewards: String = ""
+			if _static_prop_manager.has_method("mine_rewards_text_at"):
+				rewards = _static_prop_manager.call("mine_rewards_text_at", grid) as String
+			if not rewards.is_empty():
+				lines.append("Mine yields: " + rewards)
 	var item_line: String = _item_line_at(grid)
 	if not item_line.is_empty():
 		lines.append(item_line)

@@ -14,13 +14,14 @@ extends Node2D
 
 signal rooms_changed
 
-enum Kind { DOCK_ROOM, MEDITATION_CHAMBER, MECHANIC_ROOM }
+enum Kind { DOCK_ROOM, MEDITATION_CHAMBER, MECHANIC_ROOM, MACHINE_ROOM }
 
 const ROOM_FILL := Color(0.45, 0.62, 0.98, 0.05)
 const ROOM_BORDER := Color(0.45, 0.62, 0.98, 0.30)
 const ROOM_INVALID_BORDER := Color(0.95, 0.45, 0.45, 0.40)
 const MEDITATION_BORDER := Color(0.62, 0.78, 1.0, 0.32)
 const MECHANIC_BORDER := Color(0.98, 0.82, 0.42, 0.32)
+const MACHINE_BORDER := Color(0.42, 0.90, 0.88, 0.32)
 const MIN_ROOM_CELLS: int = 2
 const MECHANIC_HEAL_TICK_SECONDS: float = 1.0
 const MECHANIC_LIMB_REPAIR_PER_SEC: float = 5.0
@@ -64,6 +65,10 @@ func create_meditation_chamber(cells: Array[Vector2i]) -> Dictionary:
 
 func create_mechanic_room(cells: Array[Vector2i]) -> Dictionary:
 	return _create_room(Kind.MECHANIC_ROOM, cells)
+
+
+func create_machine_room(cells: Array[Vector2i]) -> Dictionary:
+	return _create_room(Kind.MACHINE_ROOM, cells)
 
 
 func _create_room(kind: int, cells: Array[Vector2i]) -> Dictionary:
@@ -174,6 +179,13 @@ func is_room_valid(room: Dictionary) -> bool:
 			return _room_has_structure(room, [BuildBlueprint.Id.MEDITATION_PAD])
 		Kind.MECHANIC_ROOM:
 			return _room_has_structure(room, [BuildBlueprint.Id.MAINTENANCE_DOCK])
+		Kind.MACHINE_ROOM:
+			return _room_has_structure(room, [
+				BuildBlueprint.Id.EXTRACTOR,
+				BuildBlueprint.Id.FABRICATOR,
+				BuildBlueprint.Id.PARTS_LOOM,
+				BuildBlueprint.Id.SENTIENCE_CRADLE,
+			])
 	return true
 
 
@@ -192,6 +204,14 @@ func invalid_reason(room: Dictionary) -> String:
 		Kind.MECHANIC_ROOM:
 			if not _room_has_structure(room, [BuildBlueprint.Id.MAINTENANCE_DOCK]):
 				return "needs mechanic dock"
+		Kind.MACHINE_ROOM:
+			if not _room_has_structure(room, [
+					BuildBlueprint.Id.EXTRACTOR,
+					BuildBlueprint.Id.FABRICATOR,
+					BuildBlueprint.Id.PARTS_LOOM,
+					BuildBlueprint.Id.SENTIENCE_CRADLE,
+				]):
+				return "needs machine"
 	return "unknown"
 
 
@@ -214,6 +234,8 @@ func _can_designate_room_cell(cell: Vector2i, kind: int) -> bool:
 			return id == BuildBlueprint.Id.MEDITATION_PAD
 		Kind.MECHANIC_ROOM:
 			return id == BuildBlueprint.Id.MAINTENANCE_DOCK
+		Kind.MACHINE_ROOM:
+			return BuildBlueprint.is_worker_operated(id)
 	return false
 
 
@@ -228,6 +250,27 @@ func _room_has_structure(room: Dictionary, ids: Array) -> bool:
 		if ids.has(int(s["id"])):
 			return true
 	return false
+
+
+func has_valid_room_for_structure(anchor: Vector2i, structure_id: int) -> bool:
+	if not BuildBlueprint.is_worker_operated(structure_id):
+		return true
+	var room: Dictionary = room_at(anchor)
+	if room.is_empty() or int(room["kind"]) != Kind.MACHINE_ROOM:
+		return false
+	return is_room_valid(room)
+
+
+func footprint_inside_room(cells: Array[Vector2i], kind: int) -> bool:
+	if cells.is_empty():
+		return false
+	var room: Dictionary = room_at(cells[0])
+	if room.is_empty() or int(room["kind"]) != kind:
+		return false
+	for raw_cell in cells:
+		if room_at(raw_cell as Vector2i) != room:
+			return false
+	return true
 
 
 func ensure_dock_room_for(worker: Node) -> Dictionary:
@@ -318,6 +361,8 @@ static func _border_for_kind(kind: int) -> Color:
 			return MEDITATION_BORDER
 		Kind.MECHANIC_ROOM:
 			return MECHANIC_BORDER
+		Kind.MACHINE_ROOM:
+			return MACHINE_BORDER
 		_:
 			return ROOM_BORDER
 
@@ -328,5 +373,7 @@ static func _room_kind_name(kind: int) -> String:
 			return "Meditation Chamber"
 		Kind.MECHANIC_ROOM:
 			return "Mechanic Room"
+		Kind.MACHINE_ROOM:
+			return "Machine Room"
 		_:
 			return "Dock Room"

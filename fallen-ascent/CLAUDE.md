@@ -34,6 +34,7 @@ tile is added, also add a flat-color placeholder entry for it:
 - Rust visuals go in `resources/tiles/rust_overlay_atlas.png`; rust draws over
   floor, not as a standalone base tile.
 - Structures go in `resources/objects/structures_atlas.png`.
+- Door animation states go in `resources/objects/doors_atlas.png`.
 - Static world props that are not terrain, structures, items, UI icons, or
   entities go in `resources/objects/placeholder_static_objects_atlas.png`.
 - Loose items and materials go in `resources/items/placeholder_items_atlas.png`.
@@ -80,8 +81,8 @@ fallen-ascent/
 │       ├── SpeedControls.gd     # pause / 1× / 2× / 3× buttons
 │       └── SiteTooltip.gd       # hover info on world map
 └── resources/
-    └── tiles/
-        └── placeholder_tiles.tres   # TileSet of flat-color 32×32 cells
+	└── tiles/
+		└── placeholder_tiles.tres   # TileSet of flat-color 32×32 cells
 ```
 
 Naming convention for script roles:
@@ -92,12 +93,13 @@ Naming convention for script roles:
 
 ## Designation tabs
 
-The colony palette is grouped into four tabs (`ColonyHud._set_tab`):
+The colony palette is grouped into five tabs (`ColonyHud._set_tab`):
 
 - **Orders** — task overlays (mine).
 - **Zones** — stockpile paint/remove.
 - **Rooms** — Rimworld-style room designations (currently Dock Room).
 - **Structures** — buildables.
+- **Objects** — crafted-object placement.
 
 There is no per-tab Cancel button: a left-click on any world tile while a
 designation mode is active cancels it (see `SelectionController._unhandled_input`),
@@ -153,7 +155,7 @@ Current autoloads, in load order:
    - `world_seed: int`
    - `selected_site: SiteData`
    - `game_speed: float`  (0.0 = paused; speed is applied via
-     `Engine.time_scale` so all sim systems pick it up for free)
+	 `Engine.time_scale` so all sim systems pick it up for free)
 
    Setters emit the matching `EventBus` signal — never write directly to
    these fields from outside, always go through the setter.

@@ -8,7 +8,8 @@ extends Node2D
 
 const FILL_COLOR := Color(0.25, 0.65, 0.35, 0.25)
 const BORDER_COLOR := Color(0.4, 0.85, 0.5, 0.5)
-const MAX_STACK_PER_CELL: int = 16
+const MAX_STACK_PER_CELL: int = 4
+const STORAGE_BIN_STACK_PER_CELL: int = 12
 
 # Reservation dict keys.
 const R_KIND: String = "kind"
@@ -26,6 +27,9 @@ var _empty_cells: Dictionary = {}                ## Vector2i -> true
 ## Cells that can still accept a given kind (partial stack or reserved
 ## slot). Lets first_free_cell_for find a merge slot in O(1) common case.
 var _partials_by_kind: Dictionary = {}           ## kind:int -> Dictionary[Vector2i, true]
+var _capacity_multipliers: Dictionary = {}       ## Vector2i -> int
+var _perimeter_edges := PackedVector2Array()
+var _perimeter_dirty: bool = true
 
 
 func setup(zone_cells: Array[Vector2i]) -> void:
@@ -33,6 +37,7 @@ func setup(zone_cells: Array[Vector2i]) -> void:
 	for c in cells:
 		_cell_set[c] = true
 		_empty_cells[c] = true
+	_perimeter_dirty = true
 	queue_redraw()
 
 
@@ -57,26 +62,29 @@ func first_free_cell_for(kind: int, amount: int = 1) -> Variant:
 func room_at(cell: Vector2i, kind: int) -> int:
 	var v: Variant = occupant.get(cell)
 	if v == null:
-		return MAX_STACK_PER_CELL
+		return _stack_limit_at(cell)
 	if v is Item:
 		var item := v as Item
 		if item.kind != kind:
 			return 0
-		return maxi(0, MAX_STACK_PER_CELL - item.count)
+		return maxi(0, _stack_limit_at(cell) - item.count)
 	if v is Dictionary:
 		var d := v as Dictionary
 		var existing: Item = d.get(R_EXISTING) as Item
 		if existing != null and is_instance_valid(existing):
 			if existing.kind != kind:
 				return 0
-			return maxi(0, MAX_STACK_PER_CELL - existing.count)
+			return maxi(0, _stack_limit_at(cell) - existing.count)
 		if int(d.get(R_KIND, -1)) == kind:
-			return MAX_STACK_PER_CELL
+			return _stack_limit_at(cell)
 	return 0
 
 
 func capacity() -> int:
-	return cells.size() * MAX_STACK_PER_CELL
+	var total: int = 0
+	for cell in cells:
+		total += cell_capacity(cell)
+	return total
 
 
 func stack_capacity() -> int:
@@ -168,7 +176,7 @@ func place(item: Item, cell: Vector2i) -> Item:
 		existing = prev as Item
 
 	if existing != null and is_instance_valid(existing) and existing.kind == item.kind:
-		var overflow: int = existing.add_to_stack(item.count)
+		var overflow: int = existing.add_to_stack(item.count, _stack_limit_at(cell))
 		item.count = overflow
 		if overflow <= 0 and item.get_parent() != null:
 			item.get_parent().remove_child(item)
@@ -209,7 +217,9 @@ func detach_cell(cell: Vector2i) -> Item:
 	occupant.erase(cell)
 	_cell_set.erase(cell)
 	cells.erase(cell)
+	_capacity_multipliers.erase(cell)
 	_empty_cells.erase(cell)
+	_perimeter_dirty = true
 	for kind_bucket in _partials_by_kind.values():
 		(kind_bucket as Dictionary).erase(cell)
 	queue_redraw()
@@ -219,6 +229,27 @@ func detach_cell(cell: Vector2i) -> Item:
 		var d := v as Dictionary
 		return d.get(R_EXISTING) as Item
 	return null
+
+
+func set_capacity_multiplier(cell: Vector2i, multiplier: int) -> void:
+	if not contains_cell(cell):
+		return
+	if multiplier <= 1:
+		_capacity_multipliers.erase(cell)
+	else:
+		_capacity_multipliers[cell] = multiplier
+	_refresh_cell_state(cell)
+	queue_redraw()
+
+
+func _stack_limit_at(cell: Vector2i) -> int:
+	return cell_capacity(cell)
+
+
+func cell_capacity(cell: Vector2i) -> int:
+	if int(_capacity_multipliers.get(cell, 1)) > 1:
+		return STORAGE_BIN_STACK_PER_CELL
+	return MAX_STACK_PER_CELL
 
 
 ## Clear all index entries for `cell`, then re-classify based on the current
@@ -234,13 +265,13 @@ func _refresh_cell_state(cell: Vector2i) -> void:
 	var partial_kind: int = -1
 	if v is Item:
 		var item := v as Item
-		if item.count < MAX_STACK_PER_CELL:
+		if item.count < _stack_limit_at(cell):
 			partial_kind = item.kind
 	elif v is Dictionary:
 		var d := v as Dictionary
 		var existing: Item = d.get(R_EXISTING) as Item
 		if existing != null and is_instance_valid(existing):
-			if existing.count < MAX_STACK_PER_CELL:
+			if existing.count < _stack_limit_at(cell):
 				partial_kind = existing.kind
 		else:
 			partial_kind = int(d.get(R_KIND, -1))
@@ -251,11 +282,28 @@ func _refresh_cell_state(cell: Vector2i) -> void:
 
 
 func _draw() -> void:
+	if _perimeter_dirty:
+		_rebuild_perimeter_edges()
+	if not _perimeter_edges.is_empty():
+		draw_multiline(_perimeter_edges, BORDER_COLOR, 1.0)
+
+
+func _rebuild_perimeter_edges() -> void:
+	_perimeter_edges.clear()
 	for c in cells:
-		var local := Vector2(
-			c.x * Chunk.TILE_PIXELS,
-			c.y * Chunk.TILE_PIXELS,
-		)
-		var r := Rect2(local, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
-		draw_rect(r, FILL_COLOR)
-		draw_rect(r, BORDER_COLOR, false, 1.0)
+		var x: float = c.x * Chunk.TILE_PIXELS
+		var y: float = c.y * Chunk.TILE_PIXELS
+		var s: float = Chunk.TILE_PIXELS
+		if not _cell_set.has(c + Vector2i(0, -1)):
+			_perimeter_edges.append(Vector2(x, y))
+			_perimeter_edges.append(Vector2(x + s, y))
+		if not _cell_set.has(c + Vector2i(1, 0)):
+			_perimeter_edges.append(Vector2(x + s, y))
+			_perimeter_edges.append(Vector2(x + s, y + s))
+		if not _cell_set.has(c + Vector2i(0, 1)):
+			_perimeter_edges.append(Vector2(x + s, y + s))
+			_perimeter_edges.append(Vector2(x, y + s))
+		if not _cell_set.has(c + Vector2i(-1, 0)):
+			_perimeter_edges.append(Vector2(x, y + s))
+			_perimeter_edges.append(Vector2(x, y))
+	_perimeter_dirty = false

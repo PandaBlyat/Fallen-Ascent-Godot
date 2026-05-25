@@ -24,6 +24,8 @@ const FACTION_HOSTILE: int = 2
 
 const MOVE_SPEED_PX_PER_SEC: float = 38.0
 const ARRIVE_EPSILON_PX: float = 1.0
+const DOOR_SLOW_SECONDS: float = 0.65
+const DOOR_SLOW_MULTIPLIER: float = 0.72
 const WANDER_RADIUS: int = 24
 const PICK_ATTEMPTS: int = 32
 ## Short-hop wander uses a tighter radius; long paths are kept for chase
@@ -53,6 +55,8 @@ var _last_seen_at: float = 0.0
 var _knockback_remaining: float = 0.0
 var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
+var _door_slow_remaining: float = 0.0
+var _last_door_slow_cell: Vector2i = Pathfinder.UNREACHABLE
 var _dead: bool = false
 var _facing: int = FACING_SOUTH
 ## LOS cache: target_instance_id -> {result: bool, expires_at_msec: int}.
@@ -171,6 +175,8 @@ func _process(delta: float) -> void:
 	if _stun_remaining > 0.0:
 		_stun_remaining = maxf(0.0, _stun_remaining - delta)
 		return
+	if _door_slow_remaining > 0.0:
+		_door_slow_remaining = maxf(0.0, _door_slow_remaining - delta)
 	if _state == State.CHASING and _target != null and is_instance_valid(_target):
 		var target_grid: Vector2i = (_target as Node2D).call("current_grid") as Vector2i
 		var cheb: int = maxi(absi(target_grid.x - current_grid().x), absi(target_grid.y - current_grid().y))
@@ -204,9 +210,23 @@ func _process(delta: float) -> void:
 func _advance_path(delta: float) -> bool:
 	if _path.is_empty() or _path_index >= _path.size():
 		return true
-	var step: float = MOVE_SPEED_PX_PER_SEC * delta
+	var speed_mult: float = DOOR_SLOW_MULTIPLIER if _door_slow_remaining > 0.0 else 1.0
+	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target_px: Vector2 = _path[_path_index]
+		var target_grid := Vector2i(
+			int(floor(target_px.x / Chunk.TILE_PIXELS)),
+			int(floor(target_px.y / Chunk.TILE_PIXELS)),
+		)
+		if _chunk_manager != null:
+			var structure: Dictionary = _chunk_manager.structure_at(target_grid)
+			if not structure.is_empty() and int(structure["id"]) == BuildBlueprint.Id.DOOR:
+				_chunk_manager.request_door_open(target_grid)
+				if not _chunk_manager.is_door_open(target_grid):
+					return false
+				if _last_door_slow_cell != target_grid:
+					_last_door_slow_cell = target_grid
+					_door_slow_remaining = DOOR_SLOW_SECONDS
 		var to_target: Vector2 = target_px - position
 		var dist: float = to_target.length()
 		if dist > ARRIVE_EPSILON_PX:

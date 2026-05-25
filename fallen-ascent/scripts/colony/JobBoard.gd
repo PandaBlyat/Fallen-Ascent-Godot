@@ -15,11 +15,14 @@ var pending: Array[Job] = []
 var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
 var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
 var _scrape_targets: Dictionary = {} ## Vector2i -> Job
+var _operation_targets: Dictionary = {} ## Vector2i -> OperateStructureJob
 ## Chunk-coord -> Array[Job]. Lets claim_next_for scan only nearby
 ## chunks first instead of the full pending list each poll.
 var _pending_by_chunk: Dictionary = {}
 
 const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
+const CRAFT_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/CraftJob.gd")
+const OPERATE_STRUCTURE_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/OperateStructureJob.gd")
 ## Chunk-radius scanned by claim_next_for before it falls back to the
 ## global pending list. 1 means worker chunk + 8 neighbors (3x3).
 const NEAR_CHUNK_RADIUS: int = 1
@@ -129,6 +132,55 @@ func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL,
 	_index_job(job)
 	job_added.emit(job)
 	return job
+
+
+func add_craft_job(station_anchor: Vector2i, object_kind: int) -> CraftJob:
+	var job: CraftJob = CRAFT_JOB_SCRIPT.new(station_anchor, object_kind) as CraftJob
+	pending.append(job)
+	_index_job(job)
+	job_added.emit(job)
+	return job
+
+
+func add_operation_job(anchor: Vector2i, structure_id: int) -> OperateStructureJob:
+	if _operation_targets.has(anchor):
+		return _operation_targets[anchor] as OperateStructureJob
+	var job: OperateStructureJob = OPERATE_STRUCTURE_JOB_SCRIPT.new(anchor, structure_id) as OperateStructureJob
+	pending.append(job)
+	_operation_targets[anchor] = job
+	_index_job(job)
+	job_added.emit(job)
+	return job
+
+
+func operation_job_at(anchor: Vector2i) -> OperateStructureJob:
+	return _operation_targets.get(anchor) as OperateStructureJob
+
+
+func operation_count_at(anchor: Vector2i) -> int:
+	return 1 if _operation_targets.has(anchor) else 0
+
+
+func cancel_craft_jobs_at(station_anchor: Vector2i) -> int:
+	var cancelled: int = 0
+	var i: int = pending.size() - 1
+	while i >= 0:
+		var job: Job = pending[i]
+		if job is CraftJob and (job as CraftJob).station_anchor == station_anchor:
+			pending.remove_at(i)
+			_unindex_job(job)
+			job_cancelled.emit(job)
+			cancelled += 1
+		i -= 1
+	return cancelled
+
+
+func craft_count_at(station_anchor: Vector2i) -> int:
+	var count: int = 0
+	for job in pending:
+		if job is CraftJob and (job as CraftJob).station_anchor == station_anchor:
+			count += 1
+	return count
 
 
 func cancel_build_at(target: Vector2i) -> BuildJob:
@@ -243,6 +295,8 @@ func complete(job: Job) -> void:
 			_build_targets.erase(cell)
 	elif job.kind == Job.Kind.SCRAPE_RUST:
 		_scrape_targets.erase(job.get("target") as Vector2i)
+	elif job is OperateStructureJob:
+		_operation_targets.erase((job as OperateStructureJob).anchor)
 	job_completed.emit(job)
 
 
@@ -277,12 +331,26 @@ static func _target_grid_of(job: Job) -> Vector2i:
 		if h.item != null and h.item.has_method("get_grid"):
 			return h.item.call("get_grid") as Vector2i
 		return h.dropoff
+	if job is CraftJob:
+		return (job as CraftJob).station_anchor
+	if job is OperateStructureJob:
+		return (job as OperateStructureJob).anchor
 	if job.kind == Job.Kind.SCRAPE_RUST:
 		return job.get("target") as Vector2i
 	return Vector2i.ZERO
 
 
 static func _priority_of(job: Job) -> int:
+	if job is CraftJob:
+		return 4
+	if job is BuildJob:
+		return 8
+	if job is OperateStructureJob:
+		return 12
+	if job is HaulJob:
+		return 16
+	if job is MineJob:
+		return 40
 	if job.kind == Job.Kind.SCRAPE_RUST:
-		return 20
-	return 0
+		return 100
+	return 50

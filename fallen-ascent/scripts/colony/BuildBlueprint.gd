@@ -24,6 +24,12 @@ enum Id {
 	CALIBRATION_SHRINE,
 	MEDITATION_PAD,
 	SENTIENCE_CRADLE,
+	FABRICATION_SPOT,
+	STORAGE_BIN,
+	OUTLET_EXTENSION,
+	RUDIMENTARY_SENSOR,
+	SMALL_LIGHT_DEVICE,
+	LARGE_LIGHT_DEVICE,
 }
 
 const WALL_COLOR := Color(0.55, 0.55, 0.58, 0.55)
@@ -40,6 +46,12 @@ const MAINTENANCE_DOCK_COLOR := Color(0.98, 0.82, 0.42, 0.50)
 const CALIBRATION_SHRINE_COLOR := Color(0.72, 0.58, 1.0, 0.50)
 const MEDITATION_PAD_COLOR := Color(0.62, 0.78, 1.0, 0.50)
 const SENTIENCE_CRADLE_COLOR := Color(0.95, 0.88, 0.55, 0.55)
+const FABRICATION_SPOT_COLOR := Color(0.90, 0.68, 0.42, 0.55)
+const STORAGE_BIN_COLOR := Color(0.68, 0.52, 0.32, 0.55)
+const OUTLET_EXTENSION_COLOR := Color(0.35, 0.95, 1.0, 0.55)
+const RUDIMENTARY_SENSOR_COLOR := Color(0.55, 0.95, 0.62, 0.55)
+const SMALL_LIGHT_DEVICE_COLOR := Color(1.0, 0.85, 0.35, 0.55)
+const LARGE_LIGHT_DEVICE_COLOR := Color(1.0, 0.66, 0.26, 0.55)
 
 
 static func display_name(id: int) -> String:
@@ -72,6 +84,18 @@ static func display_name(id: int) -> String:
 			return "meditation pad"
 		Id.SENTIENCE_CRADLE:
 			return "sentience cradle"
+		Id.FABRICATION_SPOT:
+			return "fabrication spot"
+		Id.STORAGE_BIN:
+			return "storage bin"
+		Id.OUTLET_EXTENSION:
+			return "outlet extension"
+		Id.RUDIMENTARY_SENSOR:
+			return "rudimentary sensor"
+		Id.SMALL_LIGHT_DEVICE:
+			return "small light device"
+		Id.LARGE_LIGHT_DEVICE:
+			return "large light device"
 		_:
 			return "unknown"
 
@@ -85,19 +109,19 @@ static func description(id: int) -> String:
 		Id.LIGHT:
 			return "Reveals nearby explored machinery."
 		Id.EXTRACTOR:
-			return "Pulls plating and mechanism scrap from exposed systems."
+			return "Worker-operated machine that pulls plating and mechanism scrap from exposed systems."
 		Id.SENSOR:
 			return "Long-range vision mast."
 		Id.CHARGE_PAD:
 			return "Turns floor into recharge outlet."
 		Id.FABRICATOR:
-			return "Assembles datacores and charge cells over time."
+			return "Worker-operated machine that assembles datacores and charge cells."
 		Id.DOCK:
 			return "Rest cradle for reducing mental exhaustion."
 		Id.REPAIR_BENCH:
 			return "Service station where bots restore condition."
 		Id.PARTS_LOOM:
-			return "Consumes plating and datacores to make advanced parts."
+			return "Worker-operated machine that consumes plating and datacores to make advanced parts."
 		Id.MAINTENANCE_DOCK:
 			return "Required structure inside a Mechanic Room. Gates limb-heal services for room occupants."
 		Id.CALIBRATION_SHRINE:
@@ -105,7 +129,19 @@ static func description(id: int) -> String:
 		Id.MEDITATION_PAD:
 			return "A still spot where bots gather wisdom over time. Place inside a Meditation Chamber for the room bonus."
 		Id.SENTIENCE_CRADLE:
-			return "Forges a new worker over a long cycle. Hungry for refined parts."
+			return "Worker-operated machine that forges a new worker over a long cycle. Hungry for refined parts."
+		Id.FABRICATION_SPOT:
+			return "Tiny work marker where workers craft placeable objects from stored parts."
+		Id.STORAGE_BIN:
+			return "Place on a stockpile tile to raise that tile's item capacity to 12."
+		Id.OUTLET_EXTENSION:
+			return "Place on an outlet so up to two workers can recharge there."
+		Id.RUDIMENTARY_SENSOR:
+			return "Short-radius crafted sensor."
+		Id.SMALL_LIGHT_DEVICE:
+			return "Small crafted work light."
+		Id.LARGE_LIGHT_DEVICE:
+			return "Large crafted work light with wider coverage."
 		_:
 			return ""
 
@@ -176,6 +212,18 @@ static func ingredients(id: int) -> Dictionary:
 			return {Item.Kind.SCRAP: 2, Item.Kind.PLATING: 1}
 		Id.SENTIENCE_CRADLE:
 			return {Item.Kind.SCRAP: 8, Item.Kind.PLATING: 6, Item.Kind.MECHANISM: 4, Item.Kind.DATACORE: 2}
+		Id.FABRICATION_SPOT:
+			return {Item.Kind.SCRAP: 1, Item.Kind.PLATING: 1}
+		Id.STORAGE_BIN:
+			return {Item.Kind.STORAGE_BIN: 1}
+		Id.OUTLET_EXTENSION:
+			return {Item.Kind.OUTLET_EXTENSION: 1}
+		Id.RUDIMENTARY_SENSOR:
+			return {Item.Kind.RUDIMENTARY_SENSOR: 1}
+		Id.SMALL_LIGHT_DEVICE:
+			return {Item.Kind.SMALL_LIGHT_DEVICE: 1}
+		Id.LARGE_LIGHT_DEVICE:
+			return {Item.Kind.LARGE_LIGHT_DEVICE: 1}
 		_:
 			return {}
 
@@ -192,6 +240,10 @@ static func build_duration(id: int) -> float:
 			return 3.0
 		Id.SENTIENCE_CRADLE:
 			return 8.0
+		Id.FABRICATION_SPOT:
+			return 1.5
+		Id.STORAGE_BIN, Id.OUTLET_EXTENSION, Id.RUDIMENTARY_SENSOR, Id.SMALL_LIGHT_DEVICE, Id.LARGE_LIGHT_DEVICE:
+			return 0.8
 		Id.DOOR, Id.LIGHT:
 			return 2.5
 		_:
@@ -226,6 +278,18 @@ static func ghost_color(id: int) -> Color:
 			return MEDITATION_PAD_COLOR
 		Id.SENTIENCE_CRADLE:
 			return SENTIENCE_CRADLE_COLOR
+		Id.FABRICATION_SPOT:
+			return FABRICATION_SPOT_COLOR
+		Id.STORAGE_BIN:
+			return STORAGE_BIN_COLOR
+		Id.OUTLET_EXTENSION:
+			return OUTLET_EXTENSION_COLOR
+		Id.RUDIMENTARY_SENSOR:
+			return RUDIMENTARY_SENSOR_COLOR
+		Id.SMALL_LIGHT_DEVICE:
+			return SMALL_LIGHT_DEVICE_COLOR
+		Id.LARGE_LIGHT_DEVICE:
+			return LARGE_LIGHT_DEVICE_COLOR
 		_:
 			return WALL_COLOR
 
@@ -237,15 +301,13 @@ static func produces_tile(id: int) -> bool:
 static func production_interval(id: int) -> float:
 	match id:
 		Id.EXTRACTOR:
-			return 8.0
+			return 7.0
 		Id.FABRICATOR:
-			return 12.0
+			return 9.0
 		Id.PARTS_LOOM:
-			return 14.0
-		Id.MAINTENANCE_DOCK:
-			return 24.0
+			return 10.0
 		Id.SENTIENCE_CRADLE:
-			return 180.0
+			return 120.0
 		_:
 			return 0.0
 
@@ -254,8 +316,6 @@ static func production_inputs(id: int) -> Dictionary:
 	match id:
 		Id.PARTS_LOOM:
 			return {Item.Kind.PLATING: 1, Item.Kind.DATACORE: 1}
-		Id.MAINTENANCE_DOCK:
-			return {Item.Kind.SCRAP: 1}
 		Id.SENTIENCE_CRADLE:
 			return {
 				Item.Kind.SCRAP: 20,
@@ -285,6 +345,21 @@ static func requirements(id: int) -> String:
 		return "Place on floor. Becomes solid wall."
 	if id == Id.CHARGE_PAD:
 		return "Place on walkable explored floor. Becomes outlet."
+	if id == Id.STORAGE_BIN:
+		return "Place on a stockpile tile after crafting one at a fabrication spot."
+	if id == Id.OUTLET_EXTENSION:
+		return "Place on an outlet tile after crafting one at a fabrication spot."
+	if is_object_placement(id):
+		return "Place on walkable explored floor after crafting one at a fabrication spot."
+	if is_worker_operated(id):
+		var outlet_text: String = ""
+		if outlet_range(id) > 0:
+			outlet_text = " and within %d tiles of an outlet" % outlet_range(id)
+		if requires_outlet(id):
+			outlet_text = " and with at least one footprint cell on an outlet"
+		return "Place in a Machine Room%s." % outlet_text
+	if outlet_range(id) > 0:
+		return "Place within %d tiles of an outlet." % outlet_range(id)
 	if requires_outlet(id):
 		return "Place with at least one footprint cell on an outlet."
 	return "Place on walkable explored floor, outside stockpiles."
@@ -298,6 +373,69 @@ static func requires_outlet(id: int) -> bool:
 		or id == Id.MAINTENANCE_DOCK \
 		or id == Id.CALIBRATION_SHRINE \
 		or id == Id.SENTIENCE_CRADLE
+
+
+static func is_worker_operated(id: int) -> bool:
+	return id == Id.EXTRACTOR \
+		or id == Id.FABRICATOR \
+		or id == Id.PARTS_LOOM \
+		or id == Id.SENTIENCE_CRADLE
+
+
+static func outlet_range(id: int) -> int:
+	if id == Id.LIGHT:
+		return 15
+	return -1
+
+
+static func is_object_placement(id: int) -> bool:
+	return id == Id.STORAGE_BIN \
+		or id == Id.OUTLET_EXTENSION \
+		or id == Id.RUDIMENTARY_SENSOR \
+		or id == Id.SMALL_LIGHT_DEVICE \
+		or id == Id.LARGE_LIGHT_DEVICE
+
+
+static func object_item_kind(id: int) -> int:
+	match id:
+		Id.STORAGE_BIN:
+			return Item.Kind.STORAGE_BIN
+		Id.OUTLET_EXTENSION:
+			return Item.Kind.OUTLET_EXTENSION
+		Id.RUDIMENTARY_SENSOR:
+			return Item.Kind.RUDIMENTARY_SENSOR
+		Id.SMALL_LIGHT_DEVICE:
+			return Item.Kind.SMALL_LIGHT_DEVICE
+		Id.LARGE_LIGHT_DEVICE:
+			return Item.Kind.LARGE_LIGHT_DEVICE
+		_:
+			return -1
+
+
+static func object_blueprint_for_item(kind: int) -> int:
+	match kind:
+		Item.Kind.STORAGE_BIN:
+			return Id.STORAGE_BIN
+		Item.Kind.OUTLET_EXTENSION:
+			return Id.OUTLET_EXTENSION
+		Item.Kind.RUDIMENTARY_SENSOR:
+			return Id.RUDIMENTARY_SENSOR
+		Item.Kind.SMALL_LIGHT_DEVICE:
+			return Id.SMALL_LIGHT_DEVICE
+		Item.Kind.LARGE_LIGHT_DEVICE:
+			return Id.LARGE_LIGHT_DEVICE
+		_:
+			return -1
+
+
+static func crafted_object_blueprints() -> Array[int]:
+	return [
+		Id.STORAGE_BIN,
+		Id.OUTLET_EXTENSION,
+		Id.RUDIMENTARY_SENSOR,
+		Id.SMALL_LIGHT_DEVICE,
+		Id.LARGE_LIGHT_DEVICE,
+	]
 
 
 static func ingredients_text(id: int) -> String:
@@ -326,15 +464,15 @@ static func production_text(id: int) -> String:
 				return "none"
 	if id == Id.SENTIENCE_CRADLE:
 		var inputs_text: String = ingredients_text_from(production_inputs(id))
-		return "Consumes %s; every %.0fs: new worker" % [inputs_text, interval]
+		return "Worker job consumes %s; %.0fs work: new worker" % [inputs_text, interval]
 	var outputs: Array[String] = []
 	for kind in possible_outputs(id):
 		outputs.append(Item.kind_name(kind))
 	var input_text: String = ingredients_text_from(production_inputs(id))
 	var prefix: String = ("Consumes %s; " % input_text) if input_text != "none" else ""
 	if outputs.is_empty():
-		return "%severy %.0fs: upkeep consumed" % [prefix, interval]
-	return "%severy %.0fs: %s" % [prefix, interval, " / ".join(outputs)]
+		return "%s%.0fs worker job" % [prefix, interval]
+	return "%s%.0fs worker job: %s" % [prefix, interval, " / ".join(outputs)]
 
 
 static func ingredients_text_from(recipe: Dictionary) -> String:

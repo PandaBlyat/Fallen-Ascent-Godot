@@ -369,16 +369,7 @@ static func _carve_room(
 	rng: RandomNumberGenerator,
 	zone: int,
 ) -> void:
-	var style: int = rng.randi_range(0, 5)
-
-	# Adjust style tendencies depending on the structural zone context
-	if zone == 1: # Industrial Core
-		if rng.randf() < 0.6:
-			style = 5 # machinery core
-	elif zone == 2: # Habitation
-		style = rng.randi_range(0, 4) # Avoid heavy machine cores, favor clean variants
-	elif zone == 3: # Lithic Vault
-		style = 0 # Favor basic rectangles to fit within constraints
+	var style: int = _pick_room_style(rng, zone, room)
 
 	match style:
 		0:
@@ -391,8 +382,16 @@ static func _carve_room(
 			_carve_cross_room(out, chunk_size, room, rng)
 		4:
 			_carve_bay_room(out, chunk_size, room, rng)
-		_:
+		5:
 			_carve_machinery_room(out, chunk_size, room, rng)
+		6:
+			_carve_oval_room(out, chunk_size, room, rng)
+		7:
+			_carve_triangle_room(out, chunk_size, room, rng)
+		8:
+			_carve_donut_room(out, chunk_size, room, rng)
+		_:
+			_carve_jagged_room(out, chunk_size, room, rng)
 
 	# Add support columns in sufficiently large rooms
 	if style != 5:
@@ -400,6 +399,25 @@ static func _carve_room(
 
 	var center: Vector2i = _rect_center(room)
 	out[center.y * chunk_size + center.x] = TILE_FLOOR
+
+
+static func _pick_room_style(rng: RandomNumberGenerator, zone: int, room: Rect2i) -> int:
+	var styles: Array[int] = [0, 1, 2, 3, 4, 6, 7, 9]
+	if room.size.x >= 6 and room.size.y >= 6:
+		styles.append(8)
+	if zone == 1 and room.size.x >= 6 and room.size.y >= 6:
+		styles.append(5)
+		styles.append(5)
+		styles.append(9)
+	elif zone == 2:
+		styles.append(6)
+		styles.append(7)
+	elif zone == 3:
+		styles = [0, 1, 6, 7, 9]
+	elif zone == 4:
+		styles.append(3)
+		styles.append(8)
+	return int(styles[rng.randi() % styles.size()])
 
 
 static func _carve_chamfer_room(
@@ -531,6 +549,107 @@ static func _carve_machinery_room(
 		# Edge outlets on the machinery block
 		if rng.randf() < 0.8:
 			out[cy * chunk_size + cx] = TILE_OUTLET
+
+
+static func _carve_oval_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	var center := Vector2(
+		float(room.position.x) + (float(room.size.x) - 1.0) * 0.5,
+		float(room.position.y) + (float(room.size.y) - 1.0) * 0.5,
+	)
+	var rx: float = maxf(1.0, float(room.size.x) * 0.5)
+	var ry: float = maxf(1.0, float(room.size.y) * 0.5)
+	for ly in range(room.position.y, room.position.y + room.size.y):
+		for lx in range(room.position.x, room.position.x + room.size.x):
+			var nx: float = (float(lx) - center.x) / rx
+			var ny: float = (float(ly) - center.y) / ry
+			var rough: float = rng.randf_range(-0.08, 0.08)
+			if nx * nx + ny * ny <= 1.0 + rough:
+				out[ly * chunk_size + lx] = TILE_FLOOR
+
+
+static func _carve_triangle_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	var orientation: int = rng.randi_range(0, 3)
+	for ly in range(room.position.y, room.position.y + room.size.y):
+		for lx in range(room.position.x, room.position.x + room.size.x):
+			var tx: float = float(lx - room.position.x) / maxf(1.0, float(room.size.x - 1))
+			var ty: float = float(ly - room.position.y) / maxf(1.0, float(room.size.y - 1))
+			var inside: bool = false
+			match orientation:
+				0:
+					inside = absf(tx - 0.5) <= ty * 0.55 + 0.12
+				1:
+					inside = absf(tx - 0.5) <= (1.0 - ty) * 0.55 + 0.12
+				2:
+					inside = absf(ty - 0.5) <= tx * 0.55 + 0.12
+				_:
+					inside = absf(ty - 0.5) <= (1.0 - tx) * 0.55 + 0.12
+			if inside:
+				out[ly * chunk_size + lx] = TILE_FLOOR
+
+
+static func _carve_donut_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	if room.size.x < 6 or room.size.y < 6:
+		_carve_oval_room(out, chunk_size, room, rng)
+		return
+	_carve_oval_room(out, chunk_size, room, rng)
+	var inset: int = rng.randi_range(2, 3)
+	var inner := Rect2i(
+		room.position + Vector2i(inset, inset),
+		room.size - Vector2i(inset * 2, inset * 2),
+	)
+	if inner.size.x <= 1 or inner.size.y <= 1:
+		return
+	var center := Vector2(
+		float(inner.position.x) + (float(inner.size.x) - 1.0) * 0.5,
+		float(inner.position.y) + (float(inner.size.y) - 1.0) * 0.5,
+	)
+	var rx: float = maxf(1.0, float(inner.size.x) * 0.5)
+	var ry: float = maxf(1.0, float(inner.size.y) * 0.5)
+	for ly in range(inner.position.y, inner.position.y + inner.size.y):
+		for lx in range(inner.position.x, inner.position.x + inner.size.x):
+			var nx: float = (float(lx) - center.x) / rx
+			var ny: float = (float(ly) - center.y) / ry
+			if nx * nx + ny * ny <= 1.0:
+				out[ly * chunk_size + lx] = TILE_WALL
+
+
+static func _carve_jagged_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	var lobes: int = rng.randi_range(2, 4)
+	for _i in lobes:
+		var w: int = rng.randi_range(maxi(2, int(float(room.size.x) / 3.0)), maxi(2, room.size.x))
+		var h: int = rng.randi_range(maxi(2, int(float(room.size.y) / 3.0)), maxi(2, room.size.y))
+		var x: int = rng.randi_range(room.position.x, room.position.x + room.size.x - w)
+		var y: int = rng.randi_range(room.position.y, room.position.y + room.size.y - h)
+		var lobe := Rect2i(x, y, w, h)
+		if rng.randf() < 0.55:
+			_carve_oval_room(out, chunk_size, lobe, rng)
+		else:
+			_fill_rect(out, chunk_size, lobe, TILE_FLOOR)
+	var center: Vector2i = _rect_center(room)
+	for ly in range(room.position.y, room.position.y + room.size.y):
+		for lx in range(room.position.x, room.position.x + room.size.x):
+			if out[ly * chunk_size + lx] == TILE_FLOOR and rng.randf() < 0.12:
+				_carve_corridor(out, chunk_size, center, Vector2i(lx, ly), rng, 1)
 
 
 ## Injects structured concrete columns inside larger cavernous spaces.

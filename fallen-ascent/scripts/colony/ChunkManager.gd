@@ -542,6 +542,23 @@ func ensure_outlet_near(origin: Vector2i) -> Vector2i:
 	return best_floor
 
 
+## Last-ditch outlet placement: if `ensure_outlet_near` could not seat an
+## outlet (no eligible floor-family tile in the spawn flood), force-paint the
+## tile under any spawn cell into an outlet. The spawner already guarantees
+## these are walkable cells inside the spawn room, so workers will always end
+## up with at least one reachable outlet on a fresh site.
+func force_outlet_on_spawn(spawn_cells: Array[Vector2i], fallback: Vector2i) -> Vector2i:
+	for cell in spawn_cells:
+		if not is_grid_in_map(cell):
+			continue
+		set_tile_at(cell, TerrainGenerator.TILE_OUTLET)
+		return cell
+	if is_grid_in_map(fallback):
+		set_tile_at(fallback, TerrainGenerator.TILE_OUTLET)
+		return fallback
+	return Pathfinder.UNREACHABLE
+
+
 func _nearest_floor_family_for_outlet(origin: Vector2i) -> Vector2i:
 	if _is_floor_family_for_outlet(get_tile_at(origin)):
 		return origin

@@ -78,7 +78,9 @@ func _spawn_initial_workers() -> void:
 	)
 	# Seed an outlet inside the actual spawn room. Using a spawn cell as the
 	# BFS origin (instead of Vector2i.ZERO) guarantees the placed outlet sits
-	# in the same connected region as the workers.
+	# in the same connected region as the workers. If the BFS-based placement
+	# fails (no eligible floor in the room flood), fall back to converting the
+	# spawn cell itself so workers never end up stranded without charge.
 	var outlet_seed: Vector2i = spawn_cells[0] if not spawn_cells.is_empty() else Vector2i.ZERO
 	var placed_outlet: Vector2i = Pathfinder.UNREACHABLE
 	for spawn_cell in spawn_cells:
@@ -86,7 +88,9 @@ func _spawn_initial_workers() -> void:
 		if placed_outlet != Pathfinder.UNREACHABLE:
 			break
 	if placed_outlet == Pathfinder.UNREACHABLE:
-		chunk_manager.ensure_outlet_near(outlet_seed)
+		placed_outlet = chunk_manager.ensure_outlet_near(outlet_seed)
+	if placed_outlet == Pathfinder.UNREACHABLE:
+		placed_outlet = chunk_manager.force_outlet_on_spawn(spawn_cells, outlet_seed)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
 
 

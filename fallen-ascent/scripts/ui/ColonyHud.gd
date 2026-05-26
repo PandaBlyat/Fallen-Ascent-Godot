@@ -18,9 +18,20 @@ const TAB_ZONES := &"zones"
 const TAB_ROOMS := &"rooms"
 const TAB_WORKSHOPS := &"workshops"
 const TAB_BUILDING := &"building"
+# Subtabs nested under Building — they don't get top-level tab buttons.
+const TAB_BUILD_GENERAL := &"build_general"
 const TAB_STORAGE := &"storage"
 const TAB_VISIBILITY := &"visibility"
 const TAB_OBJECTS := &"objects"
+const BUILDING_SUBTABS: Array[StringName] = [
+	TAB_BUILD_GENERAL, TAB_STORAGE, TAB_VISIBILITY, TAB_OBJECTS,
+]
+const BUILDING_SUBTAB_LABELS: Dictionary = {
+	TAB_BUILD_GENERAL: "General",
+	TAB_STORAGE: "Storage",
+	TAB_VISIBILITY: "Visibility",
+	TAB_OBJECTS: "Objects",
+}
 
 const ICON_CANCEL := Vector2i(0, 0)
 const ICON_MINE := Vector2i(1, 0)
@@ -111,6 +122,10 @@ var _worker_atlas: Texture2D
 var _bot_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
 var _current_tab: StringName = TAB_ORDERS
+var _current_building_subtab: StringName = TAB_BUILD_GENERAL
+var _building_subtab_group: ButtonGroup = ButtonGroup.new()
+var _building_subtab_row: HBoxContainer = null
+var _building_subtab_buttons: Dictionary = {}     ## StringName -> Button
 var _command_grid: GridContainer
 var _active_label: Label
 var _workers_label: Label
@@ -147,6 +162,11 @@ var _status_refresh_queued: bool = false
 var _last_npc_strip_count: int = -1
 var _npc_buttons_by_worker: Dictionary = {}       ## Worker -> Button
 var _combat_tweens_by_worker: Dictionary = {}     ## Worker -> Tween
+# Tracks the set of workers currently fighting so the auto-pause only fires
+# on the *first* worker entering combat each engagement. As long as somebody
+# is still fighting, additional `worker_entered_combat` signals do not
+# re-pause the game; the set is cleared once everyone is back to non-combat.
+var _workers_in_combat: Dictionary = {}           ## Worker -> true
 var _drag_offsets: Dictionary = {}                ## Control -> Vector2 user-positioned offset (top-left in viewport coords; Vector2.INF if untouched)
 var _dragging_panel: Control = null
 var _drag_grab_offset: Vector2 = Vector2.ZERO
@@ -351,10 +371,16 @@ func _build_layout() -> void:
 	_add_tab_button(tabs, TAB_ROOMS, "Rooms")
 	_add_tab_button(tabs, TAB_WORKSHOPS, "Workshops")
 	_add_tab_button(tabs, TAB_BUILDING, "Building")
-	_add_tab_button(tabs, TAB_STORAGE, "Storage")
-	_add_tab_button(tabs, TAB_VISIBILITY, "Visibility")
-	_add_tab_button(tabs, TAB_OBJECTS, "Objects")
 	_add_delete_button(tabs)
+
+	# Building subtabs (General / Storage / Visibility / Objects). The row is
+	# only made visible while the Building tab is active.
+	_building_subtab_row = HBoxContainer.new()
+	_building_subtab_row.add_theme_constant_override("separation", 4)
+	_building_subtab_row.visible = false
+	palette_box.add_child(_building_subtab_row)
+	for subtab_id in BUILDING_SUBTABS:
+		_add_building_subtab_button(_building_subtab_row, subtab_id, str(BUILDING_SUBTAB_LABELS[subtab_id]))
 
 	_command_grid = GridContainer.new()
 	_command_grid.columns = 5
@@ -435,6 +461,10 @@ func _build_layout() -> void:
 	_palette_panel.gui_input.connect(_on_drag_panel_input.bind(_palette_panel))
 	_npc_panel.gui_input.connect(_on_drag_panel_input.bind(_npc_panel))
 	_top_strip.gui_input.connect(_on_drag_panel_input.bind(_top_strip))
+	# The worker / selection info card is built dynamically when something is
+	# selected, but the outer panel persists across selections, so a single
+	# RMB-drag wiring at construction time is enough.
+	_selection_panel.gui_input.connect(_on_drag_panel_input.bind(_selection_panel))
 
 
 func _recenter_top_strip() -> void:
@@ -458,12 +488,15 @@ func _has_user_drag_offset(panel: Control) -> bool:
 
 
 func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
-	if panel == null:
+	if panel == null or not is_instance_valid(panel) or not panel.is_inside_tree():
 		return
 	# Secondary-button anywhere on the panel grabs it for dragging. The
 	# primary button stays free for buttons/sliders inside the panel. Which
 	# physical button counts as secondary depends on the swap-mouse-buttons
-	# setting (defaults to right-click).
+	# setting (defaults to right-click). We always consume RMB so it never
+	# leaks out to SelectionController and crashes when there is no world
+	# tile under the cursor (or fires an unintended order on the world tile
+	# that happens to be behind the HUD).
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index != SettingsManager.secondary_mouse_button():
@@ -471,16 +504,18 @@ func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
 		if mb.pressed:
 			_dragging_panel = panel
 			_drag_grab_offset = panel.global_position - panel.get_global_mouse_position()
-			get_viewport().set_input_as_handled()
 		else:
 			if _dragging_panel == panel:
 				_dragging_panel = null
-				get_viewport().set_input_as_handled()
+		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging_panel == panel:
 		var target: Vector2 = panel.get_global_mouse_position() + _drag_grab_offset
 		var viewport_size: Vector2 = get_viewport_rect().size
-		target.x = clampf(target.x, 0.0, maxf(0.0, viewport_size.x - panel.size.x))
-		target.y = clampf(target.y, 0.0, maxf(0.0, viewport_size.y - panel.size.y))
+		var panel_size: Vector2 = panel.size
+		if panel_size.x <= 0.0 or panel_size.y <= 0.0:
+			panel_size = panel.get_combined_minimum_size()
+		target.x = clampf(target.x, 0.0, maxf(0.0, viewport_size.x - panel_size.x))
+		target.y = clampf(target.y, 0.0, maxf(0.0, viewport_size.y - panel_size.y))
 		_apply_panel_absolute_position(panel, target)
 		_drag_offsets[panel] = target
 		get_viewport().set_input_as_handled()
@@ -617,20 +652,66 @@ func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String)
 	button.pressed.connect(_set_tab.bind(tab))
 	parent.add_child(button)
 
+
+func _add_building_subtab_button(parent: HBoxContainer, subtab: StringName, label_text: String) -> void:
+	var button := Button.new()
+	button.text = label_text
+	button.toggle_mode = true
+	button.button_group = _building_subtab_group
+	button.focus_mode = Control.FOCUS_NONE
+	button.custom_minimum_size = Vector2(86, 24)
+	button.add_theme_font_size_override("font_size", 11)
+	# Slightly subdued styling so the subtab row reads as secondary to the
+	# main tab row above it.
+	button.add_theme_stylebox_override("normal", _tab_style(Color(0.10, 0.12, 0.14, 0.35), Color.TRANSPARENT))
+	button.add_theme_stylebox_override("hover", _tab_style(Color(0.16, 0.18, 0.20, 0.55), COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.18, 0.16, 0.12, 0.85), COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.pressed.connect(_on_building_subtab_pressed.bind(subtab))
+	parent.add_child(button)
+	_building_subtab_buttons[subtab] = button
+
+
+func _on_building_subtab_pressed(subtab: StringName) -> void:
+	_current_building_subtab = subtab
+	# Subtab changes only rebuild the command grid; the Building tab itself
+	# stays selected.
+	_render_current_tab()
+
+
 func _set_tab(tab: StringName) -> void:
 	_set_palette_collapsed(false)
 	_current_tab = tab
+	_render_current_tab()
+
+
+func _render_current_tab() -> void:
 	for child in _command_grid.get_children():
 		_command_grid.remove_child(child)
 		child.queue_free()
 	_command_buttons.clear()
 
-	for command in _commands_for_tab(tab):
+	# Building tab is a wrapper: render the subtab row and use the active
+	# subtab as the effective source for `_commands_for_tab`.
+	var is_building: bool = _current_tab == TAB_BUILDING
+	if _building_subtab_row != null:
+		_building_subtab_row.visible = is_building
+	var effective_tab: StringName = _current_tab
+	if is_building:
+		effective_tab = _current_building_subtab
+		var subtab_button := _building_subtab_buttons.get(_current_building_subtab) as Button
+		if subtab_button != null:
+			subtab_button.set_pressed_no_signal(true)
+
+	for command in _commands_for_tab(effective_tab):
 		var build_id: int = int(command.get("build_id", -1))
 		var required_tech_id: StringName = StringName(command.get("required_tech_id", &""))
 		var lock_build: bool = bool(command.get("lock_build", true))
 		var icon_texture: Texture2D = null
-		if build_id >= 0 and (tab == TAB_WORKSHOPS or tab == TAB_BUILDING or tab == TAB_STORAGE or tab == TAB_VISIBILITY or tab == TAB_OBJECTS):
+		if build_id >= 0 and (effective_tab == TAB_WORKSHOPS or effective_tab == TAB_BUILD_GENERAL or effective_tab == TAB_STORAGE or effective_tab == TAB_VISIBILITY or effective_tab == TAB_OBJECTS):
 			icon_texture = _structure_icon(build_id)
 		_add_command_button(
 			int(command["mode"]),
@@ -673,7 +754,7 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.BUILD_FABRICATOR_ADVANCED, "label": "Fabricator", "tooltip": _build_tooltip(BuildBlueprint.Id.FABRICATOR_ADVANCED), "icon": ICON_FABRICATOR, "build_id": BuildBlueprint.Id.FABRICATOR_ADVANCED},
 				{"mode": Designator.Mode.BUILD_SENTIENCE_CRADLE, "label": "Cradle", "tooltip": _build_tooltip(BuildBlueprint.Id.SENTIENCE_CRADLE), "icon": ICON_SENTIENCE_CRADLE, "build_id": BuildBlueprint.Id.SENTIENCE_CRADLE},
 			]
-		TAB_BUILDING:
+		TAB_BUILD_GENERAL:
 			return [
 				{"mode": Designator.Mode.BUILD_WALL, "label": "Wall", "tooltip": _build_tooltip(BuildBlueprint.Id.WALL), "icon": ICON_WALL, "build_id": BuildBlueprint.Id.WALL},
 				{"mode": Designator.Mode.BUILD_DOOR, "label": "Door", "tooltip": _build_tooltip(BuildBlueprint.Id.DOOR), "icon": ICON_DOOR, "build_id": BuildBlueprint.Id.DOOR},
@@ -887,6 +968,7 @@ func _on_combatant_died(node: Node, _faction: int) -> void:
 		_inspected_node = null
 		_refresh_inspect_card()
 	_stop_combat_blink(node)
+	_workers_in_combat.erase(node)
 
 
 func _on_wisdom_changed(new_total: float) -> void:
@@ -1837,7 +1919,13 @@ func _focus_worker(worker: Worker) -> void:
 func _on_worker_entered_combat(worker: Node) -> void:
 	if worker == null or not is_instance_valid(worker):
 		return
-	GameState.set_game_speed(0.0)
+	# Only pause when this is a *fresh* engagement. As long as another worker
+	# was already fighting, the player has already been alerted; re-pausing
+	# on every individual attack thereafter was the original bug.
+	var any_in_combat: bool = not _workers_in_combat.is_empty()
+	_workers_in_combat[worker] = true
+	if not any_in_combat:
+		GameState.set_game_speed(0.0)
 	var button := _npc_buttons_by_worker.get(worker) as Button
 	if button != null:
 		_start_combat_blink(worker, button)
@@ -1848,6 +1936,13 @@ func _refresh_combat_portraits() -> void:
 		var worker := worker_key as Worker
 		if worker == null or not is_instance_valid(worker) or worker.state_label() != "fighting":
 			_stop_combat_blink(worker_key as Node)
+			_workers_in_combat.erase(worker_key)
+	# Drop any tracked worker that has died or is no longer in the tree so the
+	# next combat is treated as a fresh engagement.
+	for w_key in _workers_in_combat.keys():
+		var w := w_key as Worker
+		if w == null or not is_instance_valid(w) or w.state_label() != "fighting":
+			_workers_in_combat.erase(w_key)
 
 
 func _start_combat_blink(worker: Node, button: Button) -> void:

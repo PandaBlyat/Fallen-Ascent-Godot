@@ -111,7 +111,7 @@ Naming convention for script roles:
 
 ## Designation tabs
 
-The colony palette is grouped into eight tabs (`ColonyHud._set_tab`):
+The colony palette is grouped into five top-level tabs (`ColonyHud._set_tab`):
 
 - **Orders** — task overlays (mine).
 - **Zones** — stockpile paint/remove.
@@ -119,10 +119,11 @@ The colony palette is grouped into eight tabs (`ColonyHud._set_tab`):
 - **Workshops** — worker-operated structures (dock bed, repair bench, research bench,
   crafting spot/bench, sensor, extractor, charge, assembler press, mechanic dock,
   fabricator, replication cradle).
-- **Building** — wall, door, outlet extension.
-- **Storage** — storage bin.
-- **Visibility** — small/large light devices, rudimentary sensor.
-- **Objects** — placeholder for future crafted-object placements.
+- **Building** — wraps four subtabs (`ColonyHud._render_current_tab`):
+  - **General** — wall, door, outlet extension.
+  - **Storage** — storage bin.
+  - **Visibility** — small/large light devices, rudimentary sensor.
+  - **Objects** — placeholder for future crafted-object placements.
 
 There is no per-tab Cancel button: a left-click on any world tile while a
 designation mode is active cancels it (see `SelectionController._unhandled_input`),

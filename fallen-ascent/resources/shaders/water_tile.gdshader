@@ -64,7 +64,10 @@ void fragment() {
 	float grit = noise(p * 17.0);
 
 	// Atlas row → depth band. UV.y is in [0,1] across the whole atlas, 6 rows.
-	float depth_band = floor(UV.y * 6.0);
+	// Bias by half a row so floating-point precision near a row boundary
+	// (UV.y = N/6) can never tip a fragment into the next band: row N spans
+	// [N/6, (N+1)/6) → we want depth_band == N for every fragment in it.
+	float depth_band = clamp(floor(UV.y * 6.0 + 0.0001), 0.0, 5.0);
 
 	vec3 low_color;
 	vec3 high_color;

@@ -247,7 +247,6 @@ func _build_layout() -> void:
 	top_strip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_top_strip = top_strip
 	add_child(top_strip)
-	top_strip.resized.connect(_recenter_top_strip)
 
 	var top_margin := MarginContainer.new()
 	top_margin.add_theme_constant_override("margin_left", 10)
@@ -336,6 +335,8 @@ func _build_layout() -> void:
 	palette.anchor_top = 1.0
 	palette.anchor_right = 0.5
 	palette.anchor_bottom = 1.0
+	palette.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	palette.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	palette.offset_left = -PALETTE_WIDTH * 0.5
 	palette.offset_top = -PALETTE_HEIGHT - 16.0
 	palette.offset_right = PALETTE_WIDTH * 0.5
@@ -457,8 +458,6 @@ func _build_layout() -> void:
 	_position_selection_panel()
 	_position_palette_panel()
 	resized.connect(_position_selection_panel)
-	resized.connect(_position_palette_panel)
-	_palette_panel.resized.connect(_position_palette_panel)
 
 	# Allow click-drag near panel edges to relocate the HUD panels around the
 	# screen. gui_input fires before the panel's children consume the event,
@@ -512,9 +511,12 @@ func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
 			_drag_grab_offset = panel.global_position - panel.get_global_mouse_position()
 		else:
 			if _dragging_panel == panel:
-				_dragging_panel = null
+				_stop_panel_drag()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _dragging_panel == panel:
+		if not Input.is_mouse_button_pressed(SettingsManager.secondary_mouse_button()):
+			_stop_panel_drag()
+			return
 		var target: Vector2 = panel.get_global_mouse_position() + _drag_grab_offset
 		var viewport_size: Vector2 = get_viewport_rect().size
 		var panel_size: Vector2 = panel.size
@@ -525,6 +527,11 @@ func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
 		_apply_panel_absolute_position(panel, target)
 		_drag_offsets[panel] = target
 		get_viewport().set_input_as_handled()
+
+
+func _stop_panel_drag() -> void:
+	_dragging_panel = null
+	_drag_grab_offset = Vector2.ZERO
 
 
 func _is_on_panel_drag_border(local: Vector2, rect: Rect2) -> bool:
@@ -1173,6 +1180,7 @@ func _resource_category_button(category: int) -> Button:
 	button.add_theme_color_override("font_color", Item.category_color(category).lerp(Color.WHITE, 0.35))
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 	button.pressed.connect(_toggle_resource_popup.bind(category))
+	button.gui_input.connect(_on_drag_panel_input.bind(_top_strip))
 	return button
 
 
@@ -1184,6 +1192,7 @@ func _build_resource_popup(category: int) -> void:
 	popup.z_index = 150
 	popup.custom_minimum_size = Vector2(220, 0)
 	popup.add_theme_stylebox_override("panel", _panel_textured_style("resource_popup", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	popup.gui_input.connect(_on_drag_panel_input.bind(popup))
 	add_child(popup)
 	_resource_popups[category] = popup
 
@@ -1221,6 +1230,8 @@ func _toggle_resource_popup(category: int) -> void:
 		return
 	if popup.visible:
 		popup.visible = false
+		if _dragging_panel == popup:
+			_stop_panel_drag()
 		return
 	for other_key in _resource_popups.keys():
 		if other_key == category:
@@ -1228,6 +1239,8 @@ func _toggle_resource_popup(category: int) -> void:
 		var other_popup := _resource_popups[other_key] as PanelContainer
 		if other_popup != null:
 			other_popup.visible = false
+			if _dragging_panel == other_popup:
+				_stop_panel_drag()
 	var pos: Vector2 = button.global_position + Vector2(0.0, button.size.y + 3.0)
 	popup.position = pos
 	popup.visible = true

@@ -29,11 +29,17 @@ const _REPAINT_OFFSETS: Array[Vector2i] = [
 	Vector2i(-1, 0),
 ]
 
+## Six fluid bands (deep water/shallow water/water puddle/deep acid/shallow
+## acid/acid puddle) — each rendered through its own TileMapLayer so the
+## shader can read the band from a per-material uniform. See water_tile.gdshader
+## for why we don't recover the band from UV.y anymore.
+const WATER_BAND_COUNT: int = 6
+
 var chunk_coord: Vector2i = Vector2i.ZERO
 var _tiles: PackedInt32Array
 var _grass_masks: PackedInt32Array
 var _base_layer: TileMapLayer
-var _water_layer: TileMapLayer
+var _water_layers: Array[TileMapLayer] = []
 var _grass_layer: TileMapLayer
 var _wall_layer: TileMapLayer
 var _overlay_layer: TileMapLayer
@@ -58,15 +64,19 @@ func _init() -> void:
 	_walker_positions.resize(8)
 	_base_layer = _make_layer("BaseTerrain", TERRAIN_Z_BASE)
 	_base_layer.material = _floor_variation_material_shared()
-	_water_layer = _make_layer("WaterTerrain", TERRAIN_Z_BASE + 1)
-	_water_layer.material = _water_material()
+	_water_layers.clear()
+	for band in WATER_BAND_COUNT:
+		var water_layer := _make_layer("WaterTerrain%d" % band, TERRAIN_Z_BASE + 1)
+		water_layer.material = _water_material_for_band(band)
+		_water_layers.append(water_layer)
 	_grass_layer = _make_layer("GrassOverlay", TERRAIN_Z_GRASS)
 	_grass_material = _grass_material_new()
 	_grass_layer.material = _grass_material
 	_wall_layer = _make_layer("RaisedTerrain", TERRAIN_Z_WALL)
 	_overlay_layer = _make_layer("Overlays", TERRAIN_Z_OVERLAY)
 	add_child(_base_layer)
-	add_child(_water_layer)
+	for water_layer in _water_layers:
+		add_child(water_layer)
 	add_child(_grass_layer)
 	add_child(_wall_layer)
 	add_child(_overlay_layer)
@@ -136,9 +146,10 @@ func _make_layer(layer_name: String, z: int) -> TileMapLayer:
 	return layer
 
 
-func _water_material() -> ShaderMaterial:
+func _water_material_for_band(band: int) -> ShaderMaterial:
 	var shader_material := ShaderMaterial.new()
 	shader_material.shader = _WATER_SHADER
+	shader_material.set_shader_parameter("depth_band", band)
 	return shader_material
 
 
@@ -172,13 +183,13 @@ func _repaint_cell(local: Vector2i) -> void:
 	var base_source: int = TileVisuals.base_source(tile)
 	if TileVisuals.is_water_or_acid_family(tile):
 		_base_layer.erase_cell(local)
-		_water_layer.set_cell(local, TileVisuals.SOURCE_WATER, TileVisuals.base_atlas_coords(tile, mask))
+		_set_water_cell_for_band(local, TileVisuals.water_band(tile), mask)
 	elif base_source == TileVisuals.NO_SOURCE:
 		_base_layer.erase_cell(local)
-		_water_layer.erase_cell(local)
+		_erase_water_cell(local)
 	else:
 		_base_layer.set_cell(local, base_source, TileVisuals.base_atlas_coords(tile, mask))
-		_water_layer.erase_cell(local)
+		_erase_water_cell(local)
 
 	var wall_source: int = TileVisuals.wall_source(tile)
 	if wall_source == TileVisuals.NO_SOURCE:
@@ -222,6 +233,21 @@ func _connects_at(local: Vector2i, tile: int, offset: Vector2i) -> bool:
 
 func _is_local_cell(local: Vector2i) -> bool:
 	return local.x >= 0 and local.x < SIZE and local.y >= 0 and local.y < SIZE
+
+
+func _set_water_cell_for_band(local: Vector2i, band: int, mask: int) -> void:
+	# Atlas y matches the band so the placeholder PNG still draws the right
+	# row underneath the shader; the shader output is driven by `depth_band`.
+	for i in _water_layers.size():
+		if i == band:
+			_water_layers[i].set_cell(local, TileVisuals.SOURCE_WATER, Vector2i(mask, band))
+		else:
+			_water_layers[i].erase_cell(local)
+
+
+func _erase_water_cell(local: Vector2i) -> void:
+	for water_layer in _water_layers:
+		water_layer.erase_cell(local)
 
 
 func _global_cell(local: Vector2i) -> Vector2i:

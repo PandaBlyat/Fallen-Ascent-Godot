@@ -9,8 +9,10 @@ const UNREACHABLE: Vector2i = Vector2i(2147483647, 2147483647)
 
 ## Multiplier on the original path length above which the "dry" alternative
 ## is rejected (bots wade through fluid rather than take an absurd detour).
+## Acid is much higher than water because wading through it costs hp; we'd
+## rather a worker walk a long way around than take a few damaging steps.
 const WATER_AVOID_FACTOR: float = 1.5
-const ACID_AVOID_FACTOR: float = 3.0
+const ACID_AVOID_FACTOR: float = 12.0
 
 @export var chunk_manager_path: NodePath
 

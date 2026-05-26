@@ -137,6 +137,26 @@ static func is_water_or_acid_family(tile: int) -> bool:
 	return is_water_family(tile) or is_acid_family(tile)
 
 
+## Returns 0..5 matching the `depth_band` uniform in `water_tile.gdshader`.
+## Tiles that are not fluid return -1.
+static func water_band(tile: int) -> int:
+	match tile:
+		TerrainGenerator.TILE_WATER:
+			return 0
+		TerrainGenerator.TILE_WATER_SHALLOW:
+			return 1
+		TerrainGenerator.TILE_WATER_PUDDLE:
+			return 2
+		TerrainGenerator.TILE_ACID:
+			return 3
+		TerrainGenerator.TILE_ACID_SHALLOW:
+			return 4
+		TerrainGenerator.TILE_ACID_PUDDLE:
+			return 5
+		_:
+			return -1
+
+
 static func connects(tile: int, neighbor: int) -> bool:
 	# Each water/acid depth connects only to itself so the 4-bit mask
 	# geometry stays meaningful per depth band.

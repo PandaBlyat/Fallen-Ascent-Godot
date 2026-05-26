@@ -169,6 +169,12 @@ var _combat_tweens_by_worker: Dictionary = {}     ## Worker -> Tween
 var _workers_in_combat: Dictionary = {}           ## Worker -> true
 var _drag_offsets: Dictionary = {}                ## Control -> Vector2 user-positioned offset (top-left in viewport coords; Vector2.INF if untouched)
 var _dragging_panel: Control = null
+## Re-entry guards. `_position_palette_panel` and `_position_selection_panel`
+## modify their panels' anchors/offsets, which can fire the panel's `resized`
+## signal — which is connected back to the same function. Without these flags
+## a stable size never gets reached and GDScript blows the script stack.
+var _positioning_palette: bool = false
+var _positioning_selection: bool = false
 var _drag_grab_offset: Vector2 = Vector2.ZERO
 var _last_dynamic_refresh_ms: int = 0
 const DYNAMIC_REFRESH_INTERVAL_MS: int = 500
@@ -549,7 +555,7 @@ func _apply_panel_absolute_position(panel: Control, top_left: Vector2) -> void:
 
 
 func _position_selection_panel() -> void:
-	if _selection_panel == null:
+	if _selection_panel == null or _positioning_selection:
 		return
 	if _has_user_drag_offset(_selection_panel):
 		return
@@ -562,17 +568,20 @@ func _position_selection_panel() -> void:
 	var left: float = viewport_size.x - width - 16.0
 	var top: float = 72.0
 	var bottom: float = minf(viewport_size.y - 24.0, top + SELECTION_PANEL_HEIGHT)
+	_positioning_selection = true
 	_selection_panel.offset_left = left
 	_selection_panel.offset_top = top
 	_selection_panel.offset_right = left + width
 	_selection_panel.offset_bottom = bottom
+	_positioning_selection = false
 
 
 func _position_palette_panel() -> void:
-	if _palette_panel == null:
+	if _palette_panel == null or _positioning_palette:
 		return
 	if _has_user_drag_offset(_palette_panel):
 		return
+	_positioning_palette = true
 	# Anchor to bottom-center so width auto-sizes from content (tab row +
 	# command grid) and we manually recenter horizontally.
 	_palette_panel.anchor_left = 0.5
@@ -584,6 +593,7 @@ func _position_palette_panel() -> void:
 		_palette_panel.offset_top = -PALETTE_COLLAPSED_HEIGHT - 16.0
 		_palette_panel.offset_right = PALETTE_COLLAPSED_WIDTH * 0.5
 		_palette_panel.offset_bottom = -16.0
+		_positioning_palette = false
 		return
 	# Use the larger of the explicit min-width and the actual measured width
 	# so all designation tabs fit even when categories are added later.
@@ -593,6 +603,7 @@ func _position_palette_panel() -> void:
 	_palette_panel.offset_top = -PALETTE_HEIGHT - 16.0
 	_palette_panel.offset_right = width * 0.5
 	_palette_panel.offset_bottom = -16.0
+	_positioning_palette = false
 
 
 func _add_delete_button(parent: HBoxContainer) -> void:
@@ -1117,6 +1128,7 @@ func _resource_counts() -> Dictionary:
 func _tracked_item_kinds() -> Array[int]:
 	return [
 		Item.Kind.SCRAP,
+		Item.Kind.BIOMASS,
 		Item.Kind.MECHANISM,
 		Item.Kind.PLATING,
 		Item.Kind.DATACORE,

@@ -131,7 +131,7 @@ const BLOCKED_ACTION_SECONDS: float = 2.0
 const CROWD_FRAME_META: StringName = &"fa_crowd_frame"
 const CROWD_CELLS_META: StringName = &"fa_crowd_cells"
 const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
-const WISDOM_PER_SEC: float = 0.6
+const WISDOM_PER_SEC: float = 0.18
 const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
 const ASSIGNED_DOCK_REST_MULTIPLIER: float = 1.6
 const ASSIGNED_DOCK_MOOD_PER_SEC: float = 0.35
@@ -1453,6 +1453,10 @@ func _random_idle_target(frontier: bool) -> Vector2i:
 			continue
 		if not _chunk_manager.is_walkable(candidate):
 			continue
+		# Wandering is leisure — never pick a cell that bites back. Acid is
+		# walkable but always damaging; let workers idle elsewhere.
+		if _is_acid_tile_at(candidate):
+			continue
 		if candidate == current_grid():
 			continue
 		if _pathfinder.has_path(current_grid(), candidate):
@@ -1463,9 +1467,22 @@ func _random_idle_target(frontier: bool) -> Vector2i:
 func _random_walkable_near(origin: Vector2i, radius: int) -> Vector2i:
 	for _i in range(IDLE_SAMPLE_LIMIT):
 		var candidate := origin + Vector2i(randi_range(-radius, radius), randi_range(-radius, radius))
-		if _chunk_manager.is_walkable(candidate) and _pathfinder.has_path(origin, candidate):
+		if not _chunk_manager.is_walkable(candidate):
+			continue
+		if _is_acid_tile_at(candidate):
+			continue
+		if _pathfinder.has_path(origin, candidate):
 			return candidate
 	return Pathfinder.UNREACHABLE
+
+
+func _is_acid_tile_at(grid: Vector2i) -> bool:
+	if _chunk_manager == null:
+		return false
+	var tile: int = _chunk_manager.get_tile_at(grid)
+	return tile == TerrainGenerator.TILE_ACID_SHALLOW \
+		or tile == TerrainGenerator.TILE_ACID_PUDDLE \
+		or tile == TerrainGenerator.TILE_ACID
 
 
 func _begin_structure_activity(ids: Array, next_state: int) -> bool:

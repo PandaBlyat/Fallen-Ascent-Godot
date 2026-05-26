@@ -35,6 +35,14 @@ enum State {
 	MOVING_TO_MEDITATE,
 	MEDITATING,
 	FIGHTING,
+	# Rescue states: a non-downed worker carries a downed worker to an outlet
+	# or repair bench. MOVING_TO_SAVE = walking to the downed body;
+	# CARRYING_WORKER = downed has been picked up; MOVING_TO_DELIVER = the
+	# carrier is en route to the chosen delivery point.
+	MOVING_TO_SAVE,
+	CARRYING_WORKER,
+	MOVING_TO_DELIVER,
+	REBOOTING,
 	DEAD,
 }
 
@@ -135,6 +143,7 @@ const ORDER_BUILD := &"build"
 const ORDER_TAKE_BUILD_JOB := &"take_build_job"
 const ORDER_CHARGE := &"charge"
 const ORDER_ATTACK := &"attack"
+const ORDER_SAVE := &"save"
 ## Throttle for RoomManager interaction in _update_mood; per-frame calls
 ## were O(workers * rooms) and dominated `_process` cost.
 const NEEDS_REFRESH_SECONDS: float = 0.5
@@ -197,6 +206,16 @@ var _last_action_job: Job = null
 var _no_repair_bench_complaint_timer: float = 0.0
 var _research_urge_cooldown: float = 0.0
 var _paused: bool = false
+# Rescue (save downed worker) state. The carrier holds a reference to the
+# downed worker plus the cell it intends to drop them off in. While carried,
+# `_carried_worker` is reparented to the carrier and hidden.
+var _carried_worker: Worker = null
+var _save_target: Worker = null
+var _save_destination: Vector2i = Pathfinder.UNREACHABLE
+var _save_destination_kind: int = -1   ## BuildBlueprint.Id of the destination structure, or -1 for stockpile/outlet tile
+const REBOOT_CONDITION_THRESHOLD: float = 0.5
+const SAVE_REVIVE_CONDITION: float = 30.0
+const SAVE_REVIVE_ENERGY: float = 35.0
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -375,6 +394,14 @@ func _die() -> void:
 	_state = State.DEAD
 	_path = PackedVector2Array()
 	_path_index = 0
+	# If we were mid-rescue, drop the rescued worker here (still downed) so
+	# another teammate can pick the save back up where the carrier fell.
+	if _carried_worker != null and is_instance_valid(_carried_worker):
+		_carried_worker.position = position
+		_carried_worker.visible = true
+		_carried_worker = null
+		_save_target = null
+		_save_destination = Pathfinder.UNREACHABLE
 	if _carried != null:
 		var here := current_grid()
 		remove_child(_carried)
@@ -587,6 +614,12 @@ func state_label() -> String:
 			return "meditating"
 		State.FIGHTING:
 			return "fighting"
+		State.MOVING_TO_SAVE:
+			return "moving to save"
+		State.CARRYING_WORKER, State.MOVING_TO_DELIVER:
+			return "carrying"
+		State.REBOOTING:
+			return "rebooting"
 		State.DEAD:
 			return "down"
 		_:
@@ -690,6 +723,16 @@ func _process(delta: float) -> void:
 		# player resumes the worker explicitly. Drawing still ticks via the
 		# selection layer.
 		return
+	# Update reboot state from condition. Workers entering REBOOTING release
+	# any in-flight job so the rest of the colony can claim it; workers
+	# whose condition has recovered (e.g. via a save → repair bench) exit
+	# REBOOTING and resume idle behavior on their own.
+	_update_reboot_state()
+	if _state == State.REBOOTING:
+		# Downed bots only update their stats; they cannot pursue jobs, fight,
+		# or move on their own. They wait for a teammate to save them.
+		queue_redraw()
+		return
 	if _knockback_remaining > 0.0:
 		var step: float = delta / KNOCKBACK_DURATION
 		position += _knockback_vec * step
@@ -718,7 +761,11 @@ func _process(delta: float) -> void:
 	if _entity_grid_timer <= 0.0:
 		_entity_grid_timer = ENTITY_GRID_SYNC_SECONDS
 		EntityGrid.update_position(self, current_grid())
-	if _state != State.FIGHTING and _should_seek_charge():
+	# Rescuers can't drop the body to chase charge — finish the delivery first.
+	var rescuing: bool = _state == State.MOVING_TO_SAVE \
+		or _state == State.CARRYING_WORKER \
+		or _state == State.MOVING_TO_DELIVER
+	if _state != State.FIGHTING and not rescuing and _should_seek_charge():
 		_begin_auto_charge()
 		return
 	match _state:
@@ -892,6 +939,22 @@ func _process(delta: float) -> void:
 				_idle_cooldown = randf_range(0.6, 2.0)
 		State.FIGHTING:
 			_process_fighting(delta)
+		State.MOVING_TO_SAVE:
+			if _advance_path(delta):
+				_pickup_downed_worker()
+		State.CARRYING_WORKER:
+			# Brief transition; _pickup_downed_worker sets MOVING_TO_DELIVER
+			# directly. If we land here without a target, abort cleanly.
+			if _carried_worker == null or not is_instance_valid(_carried_worker):
+				_abort_save()
+			else:
+				_state = State.MOVING_TO_DELIVER
+		State.MOVING_TO_DELIVER:
+			# Keep the downed body visually stuck to the carrier each tick.
+			if _carried_worker != null and is_instance_valid(_carried_worker):
+				_carried_worker.position = position
+			if _advance_path(delta):
+				_drop_off_carried_worker()
 	_check_teleporter()
 	# Action text only depends on state/job/blocked timer — skip the match
 	# statement allocation entirely when nothing relevant changed.
@@ -899,6 +962,179 @@ func _process(delta: float) -> void:
 		_last_action_state = _state
 		_last_action_job = _job
 		_refresh_action_text()
+
+
+## True when this worker is in the rebooting (downed) state — condition has
+## hit zero and they cannot act on their own. A teammate can rescue them via
+## `command_save`. Excludes fully dead bots (HP-0 fadeout); those can't be
+## saved.
+func is_downed() -> bool:
+	return _state == State.REBOOTING and not _dead
+
+
+func _update_reboot_state() -> void:
+	if _dead:
+		return
+	if _state == State.MOVING_TO_SAVE or _state == State.CARRYING_WORKER or _state == State.MOVING_TO_DELIVER:
+		# Carriers don't drop into REBOOT mid-rescue; they have to deliver
+		# their charge first.
+		return
+	var should_be_rebooting: bool = _condition <= REBOOT_CONDITION_THRESHOLD
+	if should_be_rebooting and _state != State.REBOOTING:
+		# Snap into REBOOT. Drop any in-flight work so the rest of the colony
+		# can claim it instead of waiting for a body that can't show up.
+		_abandon_job()
+		_path = PackedVector2Array()
+		_path_index = 0
+		_direct_order_queue.clear()
+		_release_charge_reservation()
+		_state = State.REBOOTING
+		_remember("rebooting (condition 0)")
+	elif not should_be_rebooting and _state == State.REBOOTING:
+		# A successful save restored condition above the threshold — wake up.
+		_state = State.IDLE
+		_idle_cooldown = 0.0
+		_remember("recovered from reboot")
+
+
+## Player-issued rescue. The carrier walks to `target`, picks them up, then
+## hauls them to a Repair Bench / Mechanic Dock (preferred) or Outlet
+## (charging) or, failing both, the nearest stockpile zone. Returns false
+## with a thought-bubble explanation when no destination can be reached.
+func command_save(target: Worker, clear_queue: bool = true) -> bool:
+	if target == null or not is_instance_valid(target) or target == self:
+		return false
+	if not target.is_downed():
+		return false
+	if _dead or _state == State.REBOOTING:
+		return false
+	if _pathfinder == null or _chunk_manager == null:
+		return false
+	var stand: Vector2i = _pathfinder.walkable_neighbor_of(target.current_grid())
+	if stand == Pathfinder.UNREACHABLE:
+		_remember("Can't save, no path")
+		return false
+	var dest_info: Dictionary = _find_save_destination(stand)
+	if dest_info.is_empty():
+		_remember("Can't save, no repair bench")
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
+	_abandon_job()
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		_remember("Can't save, no path")
+		return false
+	_save_target = target
+	_save_destination = dest_info["cell"] as Vector2i
+	_save_destination_kind = int(dest_info.get("kind", -1))
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_SAVE
+	_remember("Saving %s" % target.display_name())
+	return true
+
+
+## Resolve where a carried downed worker should be dropped off. Priority:
+## Repair Bench / Mechanic Dock → Outlet (visible) → nearest stockpile zone.
+## Each candidate is filtered through pathing from `stand` so we never start
+## a rescue we can't finish.
+func _find_save_destination(stand: Vector2i) -> Dictionary:
+	if _structure_manager != null:
+		var bench: Vector2i = _structure_manager.nearest_structure_anchor(
+			[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
+			stand,
+			_pathfinder,
+			_fog,
+		)
+		if bench != Pathfinder.UNREACHABLE:
+			var interaction: Vector2i = _structure_manager.interaction_cell_for(bench)
+			if interaction != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, interaction):
+				return {"cell": interaction, "kind": BuildBlueprint.Id.REPAIR_BENCH}
+	# Outlets — workers ARE allowed to stand on outlet tiles, so deliver
+	# directly onto the outlet cell to start a passive charge.
+	var outlet: Vector2i = _nearest_outlet_via_explored()
+	if outlet != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, outlet):
+		return {"cell": outlet, "kind": -2}
+	# Stockpile fallback — dump the body somewhere the colony will notice.
+	if _stockpile_manager != null and _stockpile_manager.has_method("any_zone_cell"):
+		var stockpile_cell: Vector2i = _stockpile_manager.call("any_zone_cell") as Vector2i
+		if stockpile_cell != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, stockpile_cell):
+			return {"cell": stockpile_cell, "kind": -3}
+	return {}
+
+
+func _pickup_downed_worker() -> void:
+	if _save_target == null or not is_instance_valid(_save_target) or not _save_target.is_downed():
+		_abort_save()
+		return
+	_carried_worker = _save_target
+	# Hide the body and slave its position to ours. We don't actually
+	# reparent (Item-style) — keeping the worker under the same workers_root
+	# avoids breaking selection/inspection logic. Visible=false hides it.
+	_carried_worker.visible = false
+	_carried_worker.position = position
+	# Plan the deliver leg now that we have a confirmed pickup.
+	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), _save_destination)
+	if path.is_empty() and current_grid() != _save_destination:
+		_abort_save()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_DELIVER
+
+
+func _drop_off_carried_worker() -> void:
+	var carried := _carried_worker
+	_carried_worker = null
+	_save_target = null
+	_state = State.IDLE
+	_idle_cooldown = 0.0
+	if carried == null or not is_instance_valid(carried):
+		return
+	carried.position = position
+	carried.visible = true
+	# Mini-revive: enough condition + energy that the carried worker can
+	# crawl off the dropoff under their own power. A repair bench dropoff
+	# gives a meatier boost; outlets top up energy more than condition.
+	var condition_bonus: float = SAVE_REVIVE_CONDITION
+	var energy_bonus: float = SAVE_REVIVE_ENERGY
+	if _save_destination_kind == BuildBlueprint.Id.REPAIR_BENCH or _save_destination_kind == BuildBlueprint.Id.MAINTENANCE_DOCK:
+		condition_bonus = 60.0
+		energy_bonus = 20.0
+	elif _save_destination_kind == -2:
+		condition_bonus = 15.0
+		energy_bonus = 80.0
+	carried._revive(condition_bonus, energy_bonus)
+	_remember("dropped off %s" % carried.display_name())
+	_save_destination = Pathfinder.UNREACHABLE
+	_save_destination_kind = -1
+
+
+func _abort_save() -> void:
+	if _carried_worker != null and is_instance_valid(_carried_worker):
+		_carried_worker.visible = true
+		_carried_worker.position = position
+	_carried_worker = null
+	_save_target = null
+	_save_destination = Pathfinder.UNREACHABLE
+	_save_destination_kind = -1
+	_state = State.IDLE
+	_idle_cooldown = 0.0
+	_remember("save aborted")
+
+
+## Restore condition / energy after being rescued. Called by the carrier.
+func _revive(condition_bonus: float, energy_bonus: float) -> void:
+	_condition = clampf(_condition + condition_bonus, 0.0, CONDITION_MAX)
+	_energy = clampf(_energy + energy_bonus, 0.0, ENERGY_MAX)
+	# Repair limbs proportionally to the condition bonus so a rescued bot
+	# isn't immediately downed again from limb damage.
+	_repair_limbs(condition_bonus)
+	if _condition > REBOOT_CONDITION_THRESHOLD and _state == State.REBOOTING:
+		_state = State.IDLE
+		_idle_cooldown = 0.0
+		_remember("woken up after save")
 
 
 func _process_fighting(delta: float) -> void:
@@ -994,6 +1230,9 @@ func _start_direct_order(order: Dictionary) -> bool:
 			var target := order.get("target") as Node2D
 			var stand: Vector2i = order.get("stand", Pathfinder.UNREACHABLE) as Vector2i
 			return command_attack(target, stand, false)
+		ORDER_SAVE:
+			var save_target := order.get("target") as Worker
+			return command_save(save_target, false)
 	return false
 
 
@@ -1062,7 +1301,30 @@ func _choose_idle_behavior() -> void:
 	for behavior in behaviors:
 		if behavior.call() as bool:
 			return
+	# Last-resort wander: pick any walkable cell nearby so a worker in a
+	# sparse area (no rust/grass/explored frontier/chat partners/structures)
+	# still moves around instead of freezing in place. This is the
+	# safety-net that guarantees idle ticks always have *something* to do.
+	if _begin_short_wander():
+		return
 	_idle_cooldown = randf_range(0.4, IDLE_FALLBACK_RETRY_SECONDS)
+
+
+func _begin_short_wander() -> bool:
+	if _chunk_manager == null or _pathfinder == null:
+		return false
+	var here: Vector2i = current_grid()
+	var target: Vector2i = _random_walkable_near(here, 6)
+	if target == Pathfinder.UNREACHABLE or target == here:
+		return false
+	var path: PackedVector2Array = _pathfinder.find_path(here, target)
+	if path.is_empty():
+		return false
+	_path = path
+	_path_index = 0
+	_activity_target = target
+	_state = State.WANDERING
+	return true
 
 
 func _idle_behavior_order() -> Array[Callable]:
@@ -2447,6 +2709,15 @@ func queue_command_attack(target: Node2D, preferred_stand: Vector2i = Pathfinder
 	}, "attack %s" % _target_label(target))
 
 
+func queue_command_save(target: Worker) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	return _enqueue_direct_order({
+		"kind": ORDER_SAVE,
+		"target": target,
+	}, "save %s" % target.display_name())
+
+
 func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 	if not _chunk_manager.is_walkable(target):
 		show_order_failed("Blocked tile")
@@ -3085,15 +3356,28 @@ func _draw() -> void:
 	if _selected:
 		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.0)
+	# Rebooting / downed bots get a dim red halo so the player can spot them
+	# from across the colony and right-click a save order.
+	var downed: bool = _state == State.REBOOTING and not _dead
+	if downed:
+		var pulse: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() * 0.004)
+		draw_arc(Vector2.ZERO, BODY_RADIUS + 5.0, 0.0, TAU, 24, Color(0.95, 0.32, 0.30, pulse), 1.5)
 	if _entity_atlas != null:
 		var atlas_cell: Vector2i = _facing_atlas_cell()
 		var source := Rect2(
 			Vector2(atlas_cell.x * int(ENTITY_REGION_SIZE.x), atlas_cell.y * int(ENTITY_REGION_SIZE.y)),
 			ENTITY_REGION_SIZE,
 		)
-		draw_texture_rect_region(_entity_atlas, Rect2(-ENTITY_REGION_SIZE * 0.5, ENTITY_REGION_SIZE), source)
+		var sprite_modulate: Color = Color(0.7, 0.45, 0.45, 0.85) if downed else Color(1, 1, 1, 1)
+		draw_texture_rect_region(
+			_entity_atlas,
+			Rect2(-ENTITY_REGION_SIZE * 0.5, ENTITY_REGION_SIZE),
+			source,
+			sprite_modulate,
+		)
 	else:
-		draw_circle(Vector2.ZERO, BODY_RADIUS, BODY_COLOR)
+		var body_color: Color = BODY_COLOR if not downed else Color(0.55, 0.25, 0.25)
+		draw_circle(Vector2.ZERO, BODY_RADIUS, body_color)
 	if _carried != null:
 		draw_circle(Vector2(0, -BODY_RADIUS - 2), 2.0, Item.kind_color(_carried.kind))
 	var bar_pos := Vector2(-BODY_RADIUS, BODY_RADIUS + 3.0)

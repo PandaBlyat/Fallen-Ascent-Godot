@@ -234,6 +234,14 @@ func _finish_drag(screen_pos: Vector2) -> void:
 
 func _handle_right_click(shift_held: bool) -> void:
 	var world_pos: Vector2 = _camera.get_global_mouse_position()
+	# Rescue: if the cursor is on a *downed* colony worker, route to the
+	# save flow before any other right-click order so the player can't
+	# accidentally try to "attack" their own rebooting bot.
+	var downed: Worker = _downed_worker_under(world_pos)
+	if downed != null:
+		_command_save_downed(downed, shift_held)
+		_show_entity_order_highlight(downed)
+		return
 	# Attack any hostile/neutral under cursor (multi-bot via stand spreading).
 	var attack_target: Node2D = _attackable_under(world_pos)
 	if attack_target != null:
@@ -640,6 +648,36 @@ func _worker_under(world_pos: Vector2) -> Array[Worker]:
 	if best != null:
 		out.append(best)
 	return out
+
+
+func _downed_worker_under(world_pos: Vector2) -> Worker:
+	var best: Worker = null
+	var best_d: float = SELECT_RADIUS_PX
+	for child in _workers_root.get_children():
+		var w := child as Worker
+		if w == null or not w.has_method("is_downed") or not w.is_downed():
+			continue
+		var d: float = (w.position - world_pos).length()
+		if d <= best_d:
+			best = w
+			best_d = d
+	return best
+
+
+func _command_save_downed(target: Worker, append: bool) -> void:
+	# First selected worker who can path to the downed body wins the save.
+	for worker in _selected_by_distance(target.current_grid()):
+		if worker == target:
+			continue
+		var ok: bool = false
+		if append:
+			ok = worker.queue_command_save(target)
+		else:
+			ok = worker.command_save(target)
+		if ok:
+			return
+	# Nothing took the order — surface the failure visually on the body.
+	_show_order_failed(target.current_grid(), "Can't save")
 
 
 func _workers_in_rect(a: Vector2, b: Vector2) -> Array[Worker]:

@@ -277,3 +277,54 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       and idle workers roll a 15% chance per idle tick to break for research
       (with a 45–90s cooldown). All of these are eyeballed — tune once the
       colony loop is balanced.
+
+## Quick-fix session 2026-05-26 (bugs + save-worker)
+
+- [ ] **Puddle/acid puddle texture mismatch.** `water_tile.gdshader` now
+      biases `depth_band = floor(UV.y * 6.0 + 0.0001)` and clamps to
+      `[0,5]` to keep rows from slipping into the next band on a row
+      boundary. The user-reported behaviour (water puddles rendering as
+      acid puddles, acid puddles blank) was likely a precision/boundary
+      issue between TileMapLayer fragment UVs and the 6-row depth
+      classification. If it recurs with the precision fix in, double-check
+      that the placeholder cells in `water_atlas.png` for rows 2 and 5
+      actually have content under every mask (0..15), since the shader is
+      procedural-color today but a future variant might sample the atlas.
+- [ ] **Worker info panel is RMB-draggable.** `_selection_panel` is now
+      wired through `_on_drag_panel_input` like the top strip, worker
+      list, and designation palette. Drag any panel by right-clicking and
+      dragging on a non-button area.
+- [ ] **Designation tabs collapsed to five.** Storage, Visibility, and
+      Objects now live as subtabs under the Building tab (General /
+      Storage / Visibility / Objects). `_render_current_tab` resolves the
+      active subtab; `_current_building_subtab` persists across tab
+      switches. Update CLAUDE.md when adding more subtabs.
+- [ ] **Workers always have a fallback wander.** `_choose_idle_behavior`
+      now ends with `_begin_short_wander` (random walkable cell within 6
+      tiles) so a worker that fails every roll never freezes in place.
+- [ ] **Pause-on-attack only fires once per engagement.**
+      `ColonyHud._workers_in_combat` tracks the set of fighting workers;
+      `_on_worker_entered_combat` only pauses on the *first* worker
+      entering combat and the set is drained as bots exit combat or die.
+- [ ] **Spawn always gets at least one outlet.** `ColonySite` falls back
+      to `ChunkManager.force_outlet_on_spawn` which paints an outlet on
+      one of the spawn cells directly when the BFS-based placement
+      fails. Workers can no longer be marooned in an outlet-free room.
+- [ ] **Save downed worker (NEW).** Workers whose `_condition` falls to 0
+      enter `State.REBOOTING` (red pulsing halo, sprite tinted, `_process`
+      early-out). Selecting another worker and right-clicking the downed
+      body via `SelectionController._downed_worker_under` issues
+      `Worker.command_save`, which paths the carrier to the body, picks
+      it up (visible=false + position-slaved), then delivers to:
+      Repair Bench/Mechanic Dock → Outlet → first stockpile cell. On
+      drop the carried worker is revived via `_revive(condition, energy)`
+      with bigger bonuses for repair-bench dropoffs. If no destination is
+      reachable the carrier remembers "Can't save, no repair bench".
+      Carriers can't auto-charge mid-rescue (gated in `_process`).
+- [ ] **Grass shader sways the leaf, not the stem.**
+      `grass_overlay.gdshader` switched to a fragment-shader UV-warp
+      driven by `fract(UV.y * atlas_rows)` so the bottom of each blade
+      (high `local_v`) stays put and the tip (low `local_v`) gets the
+      full quadratic-ramped sway. `max_sway_uv` tunes amplitude in UV
+      units; clamp keeps samples inside the source cell so neighbouring
+      grass variants don't bleed in.

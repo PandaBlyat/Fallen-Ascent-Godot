@@ -121,6 +121,16 @@ func _cell_in_any_zone(grid: Vector2i) -> bool:
 	return false
 
 
+## Returns any cell that belongs to a stockpile zone, or `Pathfinder.UNREACHABLE`
+## when no zones exist. Used by the worker save flow as a fallback drop-off
+## point when no repair bench or outlet is reachable.
+func any_zone_cell() -> Vector2i:
+	for z in zones:
+		if z != null and not z.cells.is_empty():
+			return z.cells[0]
+	return Pathfinder.UNREACHABLE
+
+
 ## Iterate loose items and post a HaulJob for each that has an open slot.
 func _match_loose_items() -> void:
 	_rematch_queued = false

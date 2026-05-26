@@ -122,6 +122,7 @@ var _resource_labels: Dictionary = {}            ## int -> Label
 var _resource_category_buttons: Dictionary = {}  ## int -> Button
 var _resource_popups: Dictionary = {}            ## int -> PanelContainer
 var _command_buttons: Dictionary = {}            ## int -> Button
+var _delete_button: Button = null
 var _tech_tree_panel: CanvasLayer = null
 const TECH_TREE_SCENE: PackedScene = preload("res://scenes/ui/TechTreePanel.tscn")
 var _selection_panel: PanelContainer
@@ -353,6 +354,7 @@ func _build_layout() -> void:
 	_add_tab_button(tabs, TAB_STORAGE, "Storage")
 	_add_tab_button(tabs, TAB_VISIBILITY, "Visibility")
 	_add_tab_button(tabs, TAB_OBJECTS, "Objects")
+	_add_delete_button(tabs)
 
 	_command_grid = GridContainer.new()
 	_command_grid.columns = 5
@@ -458,17 +460,15 @@ func _has_user_drag_offset(panel: Control) -> bool:
 func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
 	if panel == null:
 		return
+	# Secondary-button anywhere on the panel grabs it for dragging. The
+	# primary button stays free for buttons/sliders inside the panel. Which
+	# physical button counts as secondary depends on the swap-mouse-buttons
+	# setting (defaults to right-click).
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index != MOUSE_BUTTON_LEFT:
+		if mb.button_index != SettingsManager.secondary_mouse_button():
 			return
 		if mb.pressed:
-			# Only grab the panel if the click is in the border zone — clicks
-			# in the interior fall through to the buttons/labels inside.
-			var local: Vector2 = mb.position
-			var rect := Rect2(Vector2.ZERO, panel.size)
-			if not _is_on_panel_drag_border(local, rect):
-				return
 			_dragging_panel = panel
 			_drag_grab_offset = panel.global_position - panel.get_global_mouse_position()
 			get_viewport().set_input_as_handled()
@@ -560,6 +560,42 @@ func _position_palette_panel() -> void:
 	_palette_panel.offset_bottom = -16.0
 
 
+func _add_delete_button(parent: HBoxContainer) -> void:
+	# Sits at the end of the tab row as a bold red toggle. Activates the
+	# global DELETE designation mode that can wipe any player-built
+	# structure, stockpile, room, or pending order under the cursor (RMB),
+	# refunding 50% of build ingredients where applicable.
+	var button := Button.new()
+	button.text = "Delete"
+	button.toggle_mode = true
+	button.focus_mode = Control.FOCUS_NONE
+	button.custom_minimum_size = Vector2(112, 32)
+	button.add_theme_font_size_override("font_size", 13)
+	button.tooltip_text = "Delete tool\nRight-click any player-built workshop, building, object, stockpile, or pending order to remove it.\nRefunds 50% of build ingredients where applicable."
+
+	var normal_fill := Color(0.55, 0.16, 0.16, 0.92)
+	var hover_fill := Color(0.78, 0.22, 0.22, 0.95)
+	var pressed_fill := Color(0.92, 0.30, 0.26, 1.0)
+	var red_border := Color(1.0, 0.42, 0.36, 0.95)
+	button.add_theme_stylebox_override("normal", _button_style(normal_fill, red_border))
+	button.add_theme_stylebox_override("hover", _button_style(hover_fill, red_border))
+	button.add_theme_stylebox_override("pressed", _button_style(pressed_fill, Color(1.0, 0.6, 0.4, 1.0)))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.pressed.connect(_on_delete_button_pressed)
+	parent.add_child(button)
+	_delete_button = button
+
+
+func _on_delete_button_pressed() -> void:
+	if _designator == null:
+		return
+	_set_palette_collapsed(false)
+	_designator.toggle_mode(Designator.Mode.DELETE)
+
+
 func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String) -> void:
 	var button := Button.new()
 	button.text = label_text
@@ -614,7 +650,6 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 		TAB_ZONES:
 			return [
 				{"mode": Designator.Mode.STOCKPILE, "label": "Stockpile", "tooltip": "Stockpile\nPaint explored walkable cells for loose item storage.\nWorkers haul loose stacks here and merge same-kind stacks.", "icon": ICON_STOCKPILE},
-				{"mode": Designator.Mode.REMOVE_STOCKPILE, "label": "Remove", "tooltip": "Remove stockpile\nDeletes stockpile zone under cursor.\nStored items drop in place as loose stacks.", "icon": ICON_REMOVE},
 			]
 		TAB_ROOMS:
 			return [
@@ -622,7 +657,6 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.DESIGNATE_RESEARCH_ROOM, "label": "Research", "tooltip": "Research Room\nMust contain a Research Bench.\nBots earn wisdom while seated and gather a small mood lift.", "icon": ICON_MEDITATION_PAD, "build_id": BuildBlueprint.Id.MEDITATION_PAD},
 				{"mode": Designator.Mode.DESIGNATE_MECHANIC_ROOM, "label": "Mechanic", "tooltip": "Mechanic Room\nMust contain a Mechanic Dock.\nWhen valid, that dock heals room occupants faster.", "icon": ICON_MAINTENANCE_DOCK, "build_id": BuildBlueprint.Id.MAINTENANCE_DOCK, "required_tech_id": TechDatabase.MECHANIC_ROOM, "lock_build": false},
 				{"mode": Designator.Mode.DESIGNATE_WORKSHOP_ROOM, "label": "Workshop", "tooltip": "Workshop Room\nMust be enclosed by walls + door, contain a light source object, and a workshop structure.\nWorkshops inside get a speed buff; outside any room they suffer a debuff.", "icon": ICON_FABRICATION_SPOT, "build_id": BuildBlueprint.Id.FABRICATION_SPOT},
-				{"mode": Designator.Mode.REMOVE_ROOM, "label": "Remove", "tooltip": "Remove room\nDeletes the room designation under cursor.\nAssigned bot loses its room satisfier.", "icon": ICON_REMOVE},
 			]
 		TAB_WORKSHOPS:
 			return [
@@ -880,7 +914,7 @@ func _on_palette_gui_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+		if mb.pressed and mb.button_index == SettingsManager.primary_mouse_button():
 			_set_palette_collapsed(false)
 			get_viewport().set_input_as_handled()
 
@@ -927,6 +961,8 @@ func _refresh_mode_buttons() -> void:
 		if button == null:
 			continue
 		button.set_pressed_no_signal(int(key) == active)
+	if _delete_button != null:
+		_delete_button.set_pressed_no_signal(active == Designator.Mode.DELETE)
 
 
 func _refresh_status() -> void:
@@ -1258,6 +1294,7 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	margin.add_child(card)
 
 	_add_worker_header(card, worker)
+	_add_worker_pause_button(card, worker)
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 14)
 	card.add_child(columns)
@@ -1288,6 +1325,32 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
 	_add_history_panel(right, worker)
 	_add_limb_grid(right, worker)
+
+
+func _add_worker_pause_button(parent: Control, worker: Worker) -> void:
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_NONE
+	button.toggle_mode = true
+	button.button_pressed = worker.is_paused()
+	button.text = "Resume Worker" if worker.is_paused() else "Pause Worker"
+	button.custom_minimum_size = Vector2(0, 30)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.add_theme_font_size_override("font_size", 12)
+	button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT))
+	button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _button_style(Color(0.30, 0.20, 0.10, 1.0), COLOR_ACCENT_AMBER))
+	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.toggled.connect(_on_worker_pause_toggled.bind(worker))
+	parent.add_child(button)
+
+
+func _on_worker_pause_toggled(pressed: bool, worker: Worker) -> void:
+	if worker == null or not is_instance_valid(worker):
+		return
+	worker.set_paused(pressed)
+	_schedule_status_refresh()
 
 
 func _add_worker_header(parent: Control, worker: Worker) -> void:

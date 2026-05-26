@@ -92,6 +92,13 @@ var _door_close_at_msec: Dictionary = {}         ## Vector2i -> msec when visual
 var _site_seed: int = 0
 var _generated_light_chunks: Dictionary = {}      ## Vector2i -> true
 var _removed_generated_lights: Dictionary = {}    ## Vector2i -> true
+## Cells with an active delete-overlay flash. Vector2i -> expires_at_msec.
+## Painted in `_draw` as a translucent red square so the player sees what
+## was just removed; cleared automatically once the timestamp lapses.
+const DELETE_OVERLAY_SECONDS: float = 0.7
+const DELETE_OVERLAY_FILL := Color(0.95, 0.20, 0.20, 0.55)
+const DELETE_OVERLAY_BORDER := Color(1.0, 0.32, 0.28, 0.95)
+var _delete_overlays: Dictionary = {}             ## Vector2i -> expires_at_msec
 
 
 func _ready() -> void:
@@ -400,6 +407,95 @@ func scrap_structure_at(grid: Vector2i) -> Dictionary:
 	return rewards
 
 
+## Global delete tool target. Removes ANY player-placed structure under
+## `grid` and refunds 50% (rounded down, minimum 1 per non-zero ingredient
+## that survives the halving) of its build ingredients as loose stacks near
+## the structure. Returns true if a structure was removed. Generated
+## (world-spawned) structures are deliberately not deletable here — use
+## `scrap_structure_at` for the few that allow it.
+func delete_structure_at(grid: Vector2i) -> bool:
+	var structure: Dictionary = structure_at(grid)
+	if structure.is_empty():
+		return false
+	if bool(structure.get("generated", false)):
+		return false
+	var id: int = int(structure["id"])
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	var cells: Array = structure["cells"] as Array
+	_structures.erase(structure)
+	for raw_cell in cells:
+		var cell: Vector2i = raw_cell as Vector2i
+		_cell_to_structure.erase(cell)
+		if id == BuildBlueprint.Id.CHARGE_PAD:
+			_chunk_manager.set_tile_at(cell, TerrainGenerator.TILE_FLOOR)
+		if id == BuildBlueprint.Id.STORAGE_BIN and _stockpile_manager != null \
+				and _stockpile_manager.has_method("unregister_storage_bin"):
+			_stockpile_manager.call("unregister_storage_bin", cell)
+		EventBus.tile_changed.emit(cell, _chunk_manager.get_tile_at(cell))
+		_mark_delete_overlay(cell)
+	_refund_ingredients(structure, anchor, 0.5)
+	EventBus.structure_built.emit(self)
+	queue_redraw()
+	return true
+
+
+func _refund_ingredients(structure: Dictionary, anchor: Vector2i, ratio: float) -> void:
+	if _items_root == null:
+		return
+	var id: int = int(structure["id"])
+	var recipe: Dictionary = BuildBlueprint.ingredients(id)
+	for kind in recipe.keys():
+		var full: int = int(recipe[kind])
+		var refund: int = int(floor(float(full) * ratio))
+		if refund <= 0:
+			continue
+		# Spawn one stack per refunded unit at the nearest walkable cell to
+		# the structure's anchor. _spawn_item_from already handles fallback.
+		for _i in refund:
+			if not _spawn_item_from(structure, int(kind)):
+				# Final fallback: drop on the anchor itself even if blocked.
+				var item := Item.new()
+				_items_root.add_child(item)
+				item.setup(anchor, int(kind), 1)
+				if _stockpile_manager != null:
+					_stockpile_manager.on_item_spawned(item)
+
+
+func _mark_delete_overlay(cell: Vector2i) -> void:
+	_delete_overlays[cell] = Time.get_ticks_msec() + int(DELETE_OVERLAY_SECONDS * 1000.0)
+
+
+func _tick_delete_overlays() -> void:
+	if _delete_overlays.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	var expired: Array[Vector2i] = []
+	for key in _delete_overlays.keys():
+		if int(_delete_overlays[key]) <= now:
+			expired.append(key as Vector2i)
+	for key in expired:
+		_delete_overlays.erase(key)
+	# Always repaint while any overlay is live so the flash fades smoothly.
+	queue_redraw()
+
+
+func _draw_delete_overlays() -> void:
+	if _delete_overlays.is_empty():
+		return
+	var now: int = Time.get_ticks_msec()
+	for key in _delete_overlays.keys():
+		var cell: Vector2i = key as Vector2i
+		var expires: int = int(_delete_overlays[key])
+		if expires <= now:
+			continue
+		var remaining: float = float(expires - now) / 1000.0
+		var alpha: float = clampf(remaining / DELETE_OVERLAY_SECONDS, 0.0, 1.0)
+		var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
+		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(rect, Color(DELETE_OVERLAY_FILL.r, DELETE_OVERLAY_FILL.g, DELETE_OVERLAY_FILL.b, DELETE_OVERLAY_FILL.a * alpha))
+		draw_rect(rect, Color(DELETE_OVERLAY_BORDER.r, DELETE_OVERLAY_BORDER.g, DELETE_OVERLAY_BORDER.b, DELETE_OVERLAY_BORDER.a * alpha), false, 1.5)
+
+
 func light_speed_multiplier_at(grid: Vector2i) -> float:
 	var best: float = 1.0
 	for structure in _structures:
@@ -508,6 +604,7 @@ func activity_fx_sources() -> Array[Dictionary]:
 
 
 func _process(delta: float) -> void:
+	_tick_delete_overlays()
 	_accum += delta
 	if _accum < 1.0:
 		_process_doors()
@@ -980,6 +1077,7 @@ func _craft_stockpile_missing_text(anchor: Vector2i) -> String:
 
 
 func _draw() -> void:
+	_draw_delete_overlays()
 	for structure in _structures:
 		if not _is_structure_draw_visible(structure):
 			continue

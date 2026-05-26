@@ -196,6 +196,7 @@ var _last_action_state: int = -1
 var _last_action_job: Job = null
 var _no_repair_bench_complaint_timer: float = 0.0
 var _research_urge_cooldown: float = 0.0
+var _paused: bool = false
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -523,7 +524,22 @@ func job_label() -> String:
 	return "none"
 
 
+func is_paused() -> bool:
+	return _paused
+
+
+func set_paused(paused: bool) -> void:
+	if _paused == paused:
+		return
+	_paused = paused
+	if paused:
+		_idle_cooldown = 0.0
+	queue_redraw()
+
+
 func state_label() -> String:
+	if _paused:
+		return "paused"
 	match _state:
 		State.IDLE:
 			return "idle"
@@ -667,6 +683,12 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 
 func _process(delta: float) -> void:
 	if _dead:
+		return
+	if _paused:
+		# Player-paused workers freeze in place: no AI, no path progression,
+		# no idle behavior. Combat and direct orders are also gated until the
+		# player resumes the worker explicitly. Drawing still ticks via the
+		# selection layer.
 		return
 	if _knockback_remaining > 0.0:
 		var step: float = delta / KNOCKBACK_DURATION

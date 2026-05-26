@@ -17,7 +17,7 @@ extends Label
 
 const TOOLTIP_OFFSET := Vector2(14, 14)
 const EDGE_PADDING := 12.0
-const HOVER_DWELL_SECONDS: float = 0.5
+const HOVER_DWELL_SECONDS: float = 0.25
 
 var _camera: Camera2D
 var _chunk_manager: ChunkManager

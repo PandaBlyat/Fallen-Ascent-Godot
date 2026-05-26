@@ -140,6 +140,42 @@ layout_mode = 2
 text = "1.00x"
 horizontal_alignment = 2
 
+[node name="DarknessLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
+tooltip_text = "Multiplier on fog-of-war alpha. 0.5 = brighter discovered/dim cells; 1.5 = darker."
+text = "Overall Darkness"
+
+[node name="DarknessRow" type="HBoxContainer" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="DarknessSlider" type="HSlider" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid/DarknessRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 0.0
+max_value = 2.0
+step = 0.05
+value = 1.0
+
+[node name="DarknessValue" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid/DarknessRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 0)
+layout_mode = 2
+text = "1.00x"
+horizontal_alignment = 2
+
+[node name="SwapMouseLabel" type="Label" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+layout_mode = 2
+tooltip_text = "When on, left-click cancels/places and right-click selects (inverted from default)."
+text = "Swap Mouse Buttons"
+
+[node name="SwapMouseCheck" type="CheckButton" parent="Panel/Margin/VBox/Tabs/Display/DisplayBox/Grid"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+
 [node name="Audio" type="MarginContainer" parent="Panel/Margin/VBox/Tabs"]
 visible = false
 layout_mode = 2

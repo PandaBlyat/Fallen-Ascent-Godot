@@ -78,6 +78,14 @@ func register_storage_bin(cell: Vector2i) -> void:
 	_schedule_match_loose_items()
 
 
+func unregister_storage_bin(cell: Vector2i) -> void:
+	var zone: StockpileZone = zone_at(cell)
+	if zone == null:
+		return
+	zone.set_capacity_multiplier(cell, 1)
+	stockpile_changed.emit()
+
+
 func remove_zone(zone: StockpileZone) -> void:
 	if zone == null or not is_instance_valid(zone):
 		return
@@ -177,16 +185,30 @@ func _try_post_haul_for(item: Item) -> void:
 		_schedule_match_loose_items()
 		return
 	var haul_amount: int = mini(item.count, Worker.MAX_CARRY_STACK)
+	# Prefer the *nearest* viable stockpile cell instead of the first one in
+	# `zones` order. Chebyshev distance matches the metric used elsewhere
+	# (pathfinder cost, group orders), so workers don't trek across the
+	# colony to drop something off when a closer stockpile has room.
+	var item_grid: Vector2i = item.get_grid()
+	var best_zone: StockpileZone = null
+	var best_cell: Vector2i = Vector2i.ZERO
+	var best_dist: int = 0x7fffffff
 	for zone in zones:
 		var cell_v: Variant = zone.first_free_cell_for(item.kind, haul_amount)
 		if cell_v == null:
 			continue
 		var cell: Vector2i = cell_v
-		zone.reserve(cell, item.kind)
-		item.reserved_by = self
-		_job_board.add_haul_job(item, zone, cell)
-		_pending_haul_jobs += 1
+		var d: int = maxi(absi(cell.x - item_grid.x), absi(cell.y - item_grid.y))
+		if d < best_dist:
+			best_zone = zone
+			best_cell = cell
+			best_dist = d
+	if best_zone == null:
 		return
+	best_zone.reserve(best_cell, item.kind)
+	item.reserved_by = self
+	_job_board.add_haul_job(item, best_zone, best_cell)
+	_pending_haul_jobs += 1
 
 
 func _pending_haul_count() -> int:

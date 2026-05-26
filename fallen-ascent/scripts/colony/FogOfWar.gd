@@ -11,8 +11,8 @@ const FOG_Z_INDEX: int = 900
 ## Fully opaque so glowing tiles (acid, lights) under undiscovered fog
 ## don't leak through.
 const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 1.0)
-const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.80)
-const LIT_MEMORY_MIN_ALPHA: float = 0.16
+const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.55)
+const LIT_MEMORY_MIN_ALPHA: float = 0.10
 const VISIBLE_EDGE_ALPHA: float = 0.10
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
@@ -55,6 +55,8 @@ func _ready() -> void:
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.structure_built.connect(_on_structure_built)
 	EventBus.tile_changed.connect(_on_tile_changed)
+	if SettingsManager != null:
+		SettingsManager.settings_changed.connect(queue_redraw)
 	call_deferred("_refresh_visibility")
 
 
@@ -359,6 +361,7 @@ func _rebuild_light_buffer(bounds: Rect2i) -> void:
 func _draw() -> void:
 	if _camera == null or _chunk_manager == null:
 		return
+	var darkness: float = clampf(SettingsManager.overall_darkness, 0.0, 2.0)
 	var bounds: Rect2i = _visible_grid_bounds()
 	var map_bounds: Rect2i = _chunk_manager.map_grid_bounds()
 	var lo := Vector2i(
@@ -378,7 +381,7 @@ func _draw() -> void:
 			if _visible.has(g):
 				var sight_strength: float = clampf(float(_visible.get(g, 1.0)), 0.0, 1.0)
 				if sight_strength < 0.92:
-					var edge_alpha: float = (1.0 - sight_strength) * VISIBLE_EDGE_ALPHA
+					var edge_alpha: float = (1.0 - sight_strength) * VISIBLE_EDGE_ALPHA * darkness
 					_draw_fog_run(x, x + 1, y, Color(0.0, 0.0, 0.0, edge_alpha))
 				if run_active:
 					_draw_fog_run(run_start, x, y, run_color)
@@ -388,7 +391,9 @@ func _draw() -> void:
 			if _explored.has(g):
 				var lit: float = clampf(float(_lit_memory.get(g, 0.0)), 0.0, 1.0)
 				var alpha: float = lerpf(MEMORY_COLOR.a, LIT_MEMORY_MIN_ALPHA, smoothstep(0.05, 0.95, lit))
-				color = Color(MEMORY_COLOR.r, MEMORY_COLOR.g, MEMORY_COLOR.b, alpha)
+				color = Color(MEMORY_COLOR.r, MEMORY_COLOR.g, MEMORY_COLOR.b, clampf(alpha * darkness, 0.0, 1.0))
+			else:
+				color = Color(UNEXPLORED_COLOR.r, UNEXPLORED_COLOR.g, UNEXPLORED_COLOR.b, clampf(UNEXPLORED_COLOR.a * darkness, 0.0, 1.0))
 			if run_active and color == run_color:
 				continue
 			if run_active:

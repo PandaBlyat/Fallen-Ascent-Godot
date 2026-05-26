@@ -176,6 +176,40 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       always positive. Consider a fatigue mechanic (consecutive sessions
       yield less) once players are exploiting it.
 
+## Quick-fix session 2026-05-26 (later batch)
+
+- [ ] **Swap mouse buttons setting.** `SettingsManager.swap_mouse_buttons`
+      now flips the LMB/RMB roles. `primary_mouse_button()` returns the
+      "select/cancel" button and `secondary_mouse_button()` returns the
+      "place/order/drag" button. Used by `SelectionController`,
+      `Designator`, and `ColonyHud` panel drag. Designation hotkeys
+      (`designate_mine`, etc.) still go through their action bindings.
+- [ ] **Tooltip dwell halved.** `ColonyTooltip.HOVER_DWELL_SECONDS` is now
+      0.25 (was 0.5). Tune again once full art lands.
+- [ ] **Workers can be paused per-bot.** New `Worker.set_paused/is_paused`
+      gates the entire `_process` early; `state_label()` reads "paused".
+      Toggle UI is a button at the top of the worker detail card
+      (`ColonyHud._add_worker_pause_button`).
+- [ ] **Discovered-area darkness lifted.** `FogOfWar.MEMORY_COLOR.a`
+      dropped 0.80 → 0.55 and `LIT_MEMORY_MIN_ALPHA` 0.16 → 0.10. The new
+      `SettingsManager.overall_darkness` multiplier (0.0–2.0) modulates
+      all fog alpha at draw time, exposed as a slider in the Display tab.
+- [ ] **Global Delete tool.** Per-tab "Remove" buttons (Zones,
+      Rooms) are gone. A single big red "Delete" button at the end of the
+      tab row enters `Designator.Mode.DELETE`, which on RMB removes the
+      first hit among: pending build job → player-placed structure (with
+      50% ingredient refund via `StructureManager.delete_structure_at`) →
+      stockpile zone → room → pending mine/biomass order. The targeted
+      tile gets a fading red overlay (`_delete_overlays` in
+      StructureManager) for ~0.7s after removal.
+- [ ] **Nearest-stockpile haul.** `StockpileManager._try_post_haul_for`
+      picks the zone whose free cell is closest (Chebyshev) to the loose
+      item, instead of the first zone in `zones` order. Items no longer
+      trek across the colony when a nearer stockpile is open.
+- [ ] **Panel drag is now RMB-anywhere.** `ColonyHud._on_drag_panel_input`
+      grabs on the secondary mouse button anywhere in a HUD panel instead
+      of LMB on the 8-px border. Buttons inside still consume LMB normally.
+
 ## Quick-fix session 2026-05-26
 
 - [ ] **Teleporter pathfinding shortcut.** Pathfinder now treats teleporters

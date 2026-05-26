@@ -40,6 +40,7 @@ enum Mode {
 	DESIGNATE_MECHANIC_ROOM,
 	DESIGNATE_WORKSHOP_ROOM,
 	REMOVE_ROOM,
+	DELETE,
 }
 
 const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.09)
@@ -49,6 +50,8 @@ const ORDER_PREVIEW_BORDER := Color(0.95, 0.82, 0.45, 0.40)
 const ROOM_PREVIEW_FILL := Color(0.45, 0.62, 0.98, 0.09)
 const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.45)
 const OUTLET_RANGE_COLOR := Color(0.35, 0.78, 1.0, 0.20)
+const DELETE_PREVIEW_FILL := Color(0.95, 0.20, 0.20, 0.18)
+const DELETE_PREVIEW_BORDER := Color(1.0, 0.32, 0.28, 0.85)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -129,6 +132,7 @@ func mode_label() -> String:
 		Mode.DESIGNATE_MECHANIC_ROOM: return "MECHANIC ROOM"
 		Mode.DESIGNATE_WORKSHOP_ROOM: return "WORKSHOP ROOM"
 		Mode.REMOVE_ROOM: return "REMOVE ROOM"
+		Mode.DELETE: return "DELETE"
 		_: return "-"
 
 
@@ -195,10 +199,11 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		# Right click drives every mode (paint, designate, place). Left click
-		# is reserved for the SelectionController which uses it to cancel
-		# the active designation mode.
-		if mb.button_index == MOUSE_BUTTON_RIGHT:
+		# The secondary mouse button drives every mode (paint, designate,
+		# place). The primary button is reserved for SelectionController and
+		# cancels the active designation mode. Which physical button is
+		# "primary" depends on the swap-mouse-buttons setting.
+		if mb.button_index == SettingsManager.secondary_mouse_button():
 			if mb.pressed:
 				_on_right_press()
 			else:
@@ -219,7 +224,8 @@ func _on_right_press() -> void:
 		Mode.PLACE_STORAGE_BIN, Mode.PLACE_OUTLET_EXTENSION, Mode.PLACE_RUDIMENTARY_SENSOR, \
 		Mode.PLACE_SMALL_LIGHT_DEVICE, Mode.PLACE_LARGE_LIGHT_DEVICE, \
 		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_RESEARCH_ROOM, \
-		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_WORKSHOP_ROOM, Mode.REMOVE_ROOM:
+		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_WORKSHOP_ROOM, Mode.REMOVE_ROOM, \
+		Mode.DELETE:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -262,6 +268,9 @@ func _on_right_release() -> void:
 			Mode.REMOVE_ROOM:
 				for cell in cells:
 					_apply_remove_room(cell)
+			Mode.DELETE:
+				for cell in cells:
+					_apply_delete_click(cell)
 			_:
 				if _is_build_mode():
 					var anchors: Array[Vector2i] = []
@@ -347,6 +356,36 @@ func _apply_workshop_room(cells: Array[Vector2i]) -> void:
 	if _room_manager == null or not _room_manager.has_method("create_workshop_room"):
 		return
 	_room_manager.call("create_workshop_room", cells)
+
+
+func _apply_delete_click(grid: Vector2i) -> void:
+	# Global delete tool: tries each player-affecting thing under the cursor
+	# in priority order (build job > placed structure > stockpile zone > room
+	# designation > mineable prop > scrappable world light). Refund handling
+	# lives in the destination managers.
+	if _fog != null and not _fog.is_explored(grid):
+		return
+	if _job_board != null and _job_board.has_build_at(grid):
+		_job_board.cancel_build_at(grid)
+		return
+	if _structure_manager != null and _structure_manager.has_method("delete_structure_at"):
+		var removed: bool = bool(_structure_manager.call("delete_structure_at", grid))
+		if removed:
+			return
+	if _stockpile_manager != null:
+		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
+		if zone != null:
+			_stockpile_manager.remove_zone(zone)
+			return
+	if _room_manager != null and _room_manager.has_method("remove_room_at"):
+		_room_manager.call("remove_room_at", grid)
+		return
+	if _job_board != null and _job_board.has_mine_at(grid):
+		_job_board.cancel_mine_at(grid)
+		return
+	if _job_board != null and _job_board.has_scrape_biomass_at(grid):
+		_job_board.cancel_scrape_biomass_at(grid)
+		return
 
 
 func _apply_remove_room(grid: Vector2i) -> void:
@@ -473,8 +512,17 @@ func _draw() -> void:
 				or _mode == Mode.DESIGNATE_WORKSHOP_ROOM:
 			fill = ROOM_PREVIEW_FILL
 			border = ROOM_PREVIEW_BORDER
+		elif _mode == Mode.DELETE or _mode == Mode.REMOVE_STOCKPILE or _mode == Mode.REMOVE_ROOM:
+			fill = DELETE_PREVIEW_FILL
+			border = DELETE_PREVIEW_BORDER
 		draw_rect(r, fill)
 		draw_rect(r, border, false, 0.8)
+	if _mode == Mode.DELETE:
+		# Hover indicator outside of dragging — a single red cell under the cursor.
+		var origin := Vector2(_hover_grid.x * Chunk.TILE_PIXELS, _hover_grid.y * Chunk.TILE_PIXELS)
+		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+		draw_rect(rect, DELETE_PREVIEW_FILL)
+		draw_rect(rect, DELETE_PREVIEW_BORDER, false, 1.2)
 	if _is_build_mode():
 		_draw_build_ghost(_blueprint_for_mode(), _hover_grid)
 

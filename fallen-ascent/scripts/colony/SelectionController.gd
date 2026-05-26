@@ -123,13 +123,15 @@ func clear_selection() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# When a designator mode is active, a plain left-click anywhere cancels
-	# it. Right-click drives every mode (place, paint, designate), so we
-	# never steal RMB events from the Designator.
+	var primary: int = SettingsManager.primary_mouse_button()
+	var secondary: int = SettingsManager.secondary_mouse_button()
+	# When a designator mode is active, a plain primary-click anywhere
+	# cancels it. The secondary button drives every mode (place, paint,
+	# designate), so we never steal those events from the Designator.
 	if _designator != null and _designator.current_mode() != Designator.Mode.NONE:
 		if event is InputEventMouseButton:
 			var mb_d := event as InputEventMouseButton
-			if mb_d.pressed and mb_d.button_index == MOUSE_BUTTON_LEFT:
+			if mb_d.pressed and mb_d.button_index == primary:
 				_designator.cancel_active()
 				var grid: Vector2i = _world_to_grid(_camera.get_global_mouse_position())
 				# Collapse the designation palette on any in-map tile click,
@@ -140,13 +142,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT:
+		if mb.button_index == primary:
 			if mb.pressed:
 				_begin_drag(mb.position)
 			else:
 				_finish_drag(mb.position)
 			get_viewport().set_input_as_handled()
-		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and not _selected.is_empty():
+		elif mb.pressed and mb.button_index == secondary and not _selected.is_empty():
 			_handle_right_click(mb.shift_pressed)
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion:

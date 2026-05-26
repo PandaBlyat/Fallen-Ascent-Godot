@@ -21,6 +21,9 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 @onready var _fps_button: OptionButton = %MaxFpsButton
 @onready var _ui_scale_slider: HSlider = %UiScaleSlider
 @onready var _ui_scale_value: Label = %UiScaleValue
+@onready var _darkness_slider: HSlider = %DarknessSlider
+@onready var _darkness_value: Label = %DarknessValue
+@onready var _swap_mouse_check: CheckButton = %SwapMouseCheck
 @onready var _master_slider: HSlider = %MasterSlider
 @onready var _music_slider: HSlider = %MusicSlider
 @onready var _sfx_slider: HSlider = %SfxSlider
@@ -51,6 +54,8 @@ func _ready() -> void:
 	_initialize_vsync()
 	_initialize_fps()
 	_initialize_ui_scale()
+	_initialize_darkness()
+	_initialize_swap_mouse()
 	_initialize_audio()
 	_rebuild_controls()
 
@@ -134,6 +139,20 @@ func _initialize_ui_scale() -> void:
 	_ui_scale_slider.value = SettingsManager.ui_scale
 	_update_ui_scale_label(SettingsManager.ui_scale)
 	_ui_scale_slider.value_changed.connect(_on_ui_scale_changed)
+
+
+func _initialize_darkness() -> void:
+	_darkness_slider.min_value = 0.0
+	_darkness_slider.max_value = 2.0
+	_darkness_slider.step = 0.05
+	_darkness_slider.value = SettingsManager.overall_darkness
+	_update_darkness_label(SettingsManager.overall_darkness)
+	_darkness_slider.value_changed.connect(_on_darkness_changed)
+
+
+func _initialize_swap_mouse() -> void:
+	_swap_mouse_check.button_pressed = SettingsManager.swap_mouse_buttons
+	_swap_mouse_check.toggled.connect(_on_swap_mouse_toggled)
 
 
 func _initialize_audio() -> void:
@@ -226,6 +245,21 @@ func _on_fps_selected(index: int) -> void:
 func _on_ui_scale_changed(value: float) -> void:
 	SettingsManager.set_ui_scale(value)
 	_update_ui_scale_label(SettingsManager.ui_scale)
+
+
+func _on_darkness_changed(value: float) -> void:
+	SettingsManager.set_overall_darkness(value)
+	_update_darkness_label(SettingsManager.overall_darkness)
+
+
+func _on_swap_mouse_toggled(pressed: bool) -> void:
+	SettingsManager.set_swap_mouse_buttons(pressed)
+
+
+func _update_darkness_label(value: float) -> void:
+	if _darkness_value == null:
+		return
+	_darkness_value.text = "%.2fx" % clampf(value, 0.0, 2.0)
 
 
 func _on_main_menu_pressed() -> void:

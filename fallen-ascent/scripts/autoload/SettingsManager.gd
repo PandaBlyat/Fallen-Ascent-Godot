@@ -13,6 +13,7 @@ const CONFIG_PATH := "user://settings.cfg"
 const SECTION_DISPLAY := "display"
 const SECTION_AUDIO := "audio"
 const SECTION_INPUT := "input"
+const SECTION_GAMEPLAY := "gameplay"
 
 enum DisplayMode { WINDOWED, BORDERLESS, FULLSCREEN }
 enum VSyncMode { DISABLED, ENABLED, ADAPTIVE }
@@ -55,6 +56,14 @@ var ui_scale: float = 1.0
 var master_volume: float = 1.0
 var music_volume: float = 0.5
 var sfx_volume: float = 1.0
+## Gameplay options.
+## When true, left-click drives designation/place/cancel and right-click
+## drives camera-world selection. When false (default), left-click selects
+## and right-click drives designation/orders.
+var swap_mouse_buttons: bool = false
+## Multiplier applied on top of fog-of-war alpha. 1.0 = stock; 0.5 = half
+## as dark; 1.5 = darker. Clamped to [0.0, 2.0].
+var overall_darkness: float = 1.0
 
 
 func _ready() -> void:
@@ -134,6 +143,35 @@ func set_music_volume(value: float) -> void:
 func set_sfx_volume(value: float) -> void:
 	sfx_volume = clampf(value, 0.0, 1.0)
 	_apply_bus_volume(BUS_SFX, sfx_volume)
+	save_to_disk()
+	settings_changed.emit()
+
+
+func set_swap_mouse_buttons(value: bool) -> void:
+	if swap_mouse_buttons == value:
+		return
+	swap_mouse_buttons = value
+	save_to_disk()
+	settings_changed.emit()
+
+
+## The mouse button used for "select / cancel / clear" (default left).
+## Returns the user-configured value, swapping LMB↔RMB when
+## `swap_mouse_buttons` is on.
+func primary_mouse_button() -> int:
+	return MOUSE_BUTTON_RIGHT if swap_mouse_buttons else MOUSE_BUTTON_LEFT
+
+
+## The mouse button used for "place / order / drag" (default right).
+func secondary_mouse_button() -> int:
+	return MOUSE_BUTTON_LEFT if swap_mouse_buttons else MOUSE_BUTTON_RIGHT
+
+
+func set_overall_darkness(value: float) -> void:
+	value = clampf(value, 0.0, 2.0)
+	if is_equal_approx(value, overall_darkness):
+		return
+	overall_darkness = value
 	save_to_disk()
 	settings_changed.emit()
 
@@ -232,6 +270,8 @@ func load_from_disk() -> void:
 	master_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "master_volume", master_volume)), 0.0, 1.0)
 	music_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "music_volume", music_volume)), 0.0, 1.0)
 	sfx_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "sfx_volume", sfx_volume)), 0.0, 1.0)
+	swap_mouse_buttons = bool(cfg.get_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons))
+	overall_darkness = clampf(float(cfg.get_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)), 0.0, 2.0)
 	_load_keybindings(cfg)
 
 
@@ -245,6 +285,8 @@ func save_to_disk() -> void:
 	cfg.set_value(SECTION_AUDIO, "master_volume", master_volume)
 	cfg.set_value(SECTION_AUDIO, "music_volume", music_volume)
 	cfg.set_value(SECTION_AUDIO, "sfx_volume", sfx_volume)
+	cfg.set_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons)
+	cfg.set_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)
 	_save_keybindings(cfg)
 	cfg.save(CONFIG_PATH)
 

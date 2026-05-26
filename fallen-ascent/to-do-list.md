@@ -280,16 +280,17 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 
 ## Quick-fix session 2026-05-26 (bugs + save-worker)
 
-- [ ] **Puddle/acid puddle texture mismatch.** `water_tile.gdshader` now
-      biases `depth_band = floor(UV.y * 6.0 + 0.0001)` and clamps to
-      `[0,5]` to keep rows from slipping into the next band on a row
-      boundary. The user-reported behaviour (water puddles rendering as
-      acid puddles, acid puddles blank) was likely a precision/boundary
-      issue between TileMapLayer fragment UVs and the 6-row depth
-      classification. If it recurs with the precision fix in, double-check
-      that the placeholder cells in `water_atlas.png` for rows 2 and 5
-      actually have content under every mask (0..15), since the shader is
-      procedural-color today but a future variant might sample the atlas.
+- [ ] **Fluid tiles split per band (NEW).** The `UV.y * 6` approach in
+      `water_tile.gdshader` was still rendering water/acid tiles with the
+      wrong band — TileMapLayer's per-tile UV in canvas_item shaders
+      isn't reliably across-atlas. Each `Chunk` now owns six
+      `WaterTerrain<band>` TileMapLayers (one per band) and sets a
+      `depth_band` uniform on each sub-layer's `ShaderMaterial`. The
+      shader reads that uniform directly. Repaint paths route through
+      `Chunk._set_water_cell_for_band` / `_erase_water_cell` and the
+      band index resolves via `TileVisuals.water_band(tile)`. Per-chunk
+      water draw calls went from 1 to up-to-6 worst case, but empty
+      sub-layers don't issue draws so the typical cost is 1-2.
 - [ ] **Worker info panel is RMB-draggable.** `_selection_panel` is now
       wired through `_on_drag_panel_input` like the top strip, worker
       list, and designation palette. Drag any panel by right-clicking and
@@ -328,3 +329,33 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       full quadratic-ramped sway. `max_sway_uv` tunes amplitude in UV
       units; clamp keeps samples inside the source cell so neighbouring
       grass variants don't bleed in.
+
+## Quick-fix session 2026-05-26 (HUD recursion + biomass + acid avoidance + wisdom curve)
+
+- [ ] **ColonyHud panel positioning re-entry guard.** Right-clicking the
+      HUD could blow the script stack with an "infinite recursion"
+      runtime error. The connect at `_palette_panel.resized →
+      _position_palette_panel` (and the parent `resized → _position_*_panel`
+      hooks) can loop when the function rewrites anchors/offsets whose
+      side effects re-emit `resized`. Added `_positioning_palette` /
+      `_positioning_selection` re-entry flags around both positioner
+      functions in `scripts/ui/ColonyHud.gd`. Keep these in mind when
+      adding more HUD repositioners — they all need the same guard.
+- [ ] **Biomass shows up under Raw.** `ColonyHud._tracked_item_kinds()`
+      now includes `Item.Kind.BIOMASS`, so the Raw resource popup lists
+      biomass next to scrap. Without this, even though
+      `Item.kind_category(Kind.BIOMASS) == Category.RAW`, the popup was
+      iterating a hand-rolled allow-list that skipped it.
+- [ ] **Acid avoidance much stricter.** `Pathfinder.ACID_AVOID_FACTOR`
+      bumped from 3.0 to 12.0 so workers will take big detours rather
+      than wade through acid. Idle wandering also filters out acid as a
+      *destination* (`Worker._random_idle_target` /
+      `_random_walkable_near` → new `_is_acid_tile_at`) so bots don't
+      pick a puddle as their leisure stroll target. Tune the factor down
+      again if workers start failing reachable jobs because every dry
+      path got rejected as too long.
+- [ ] **Wisdom curve slowed.** `Worker.WISDOM_PER_SEC` dropped from 0.6
+      to 0.18 (with the same 1.25x Focused-Mind multiplier). Re-tune
+      session length, tech costs, and this rate together once a real
+      colony loop is on the floor — the existing "Tune the wisdom curve"
+      to-do above still applies.

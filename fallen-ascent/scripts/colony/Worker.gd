@@ -100,8 +100,8 @@ const FACING_WEST: int = 6
 const FACING_SOUTH_WEST: int = 7
 const CONDITION_MAX: float = 100.0
 const MENTAL_TIRED_MAX: float = 100.0
-const CONDITION_MOVE_DECAY_PER_SEC: float = 0.035
-const CONDITION_WORK_DECAY_PER_SEC: float = 0.09
+const CONDITION_MOVE_DECAY_PER_SEC: float = 0.010
+const CONDITION_WORK_DECAY_PER_SEC: float = 0.05
 const MENTAL_IDLE_RISE_PER_SEC: float = 0.04
 const MENTAL_WORK_RISE_PER_SEC: float = 0.16
 const REST_RECOVERY_PER_SEC: float = 8.0
@@ -206,6 +206,7 @@ var _last_action_job: Job = null
 var _no_repair_bench_complaint_timer: float = 0.0
 var _research_urge_cooldown: float = 0.0
 var _paused: bool = false
+var _failed_jobs_cooldowns: Dictionary = {}
 # Rescue (save downed worker) state. The carrier holds a reference to the
 # downed worker plus the cell it intends to drop them off in. While carried,
 # `_carried_worker` is reparented to the carrier and hidden.
@@ -216,6 +217,9 @@ var _save_destination_kind: int = -1   ## BuildBlueprint.Id of the destination s
 const REBOOT_CONDITION_THRESHOLD: float = 0.5
 const SAVE_REVIVE_CONDITION: float = 30.0
 const SAVE_REVIVE_ENERGY: float = 35.0
+
+# Fix for Rescue carry state tracking
+var carried_by: Worker = null
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -265,6 +269,8 @@ func _ready() -> void:
 	stats.dodge_chance = 0.12
 	if _job_board != null:
 		_job_board.job_cancelled.connect(_on_job_cancelled)
+		if _job_board.has_signal("job_added"):
+			_job_board.job_added.connect(_on_job_added)
 	EventBus.tile_changed.connect(_on_tile_changed)
 	EntityGrid.register(self, FACTION_COLONY, current_grid())
 	tree_exiting.connect(_on_tree_exiting)
@@ -394,9 +400,8 @@ func _die() -> void:
 	_state = State.DEAD
 	_path = PackedVector2Array()
 	_path_index = 0
-	# If we were mid-rescue, drop the rescued worker here (still downed) so
-	# another teammate can pick the save back up where the carrier fell.
 	if _carried_worker != null and is_instance_valid(_carried_worker):
+		_carried_worker.carried_by = null # Drop safely if dead
 		_carried_worker.position = position
 		_carried_worker.visible = true
 		_carried_worker = null
@@ -723,6 +728,15 @@ func _process(delta: float) -> void:
 		# player resumes the worker explicitly. Drawing still ticks via the
 		# selection layer.
 		return
+
+	# If this worker is currently being carried by another bot, suppress all AI, 
+	# movement, and state updates, pinning position to the carrier.
+	if carried_by != null and is_instance_valid(carried_by):
+		position = carried_by.position
+		visible = false
+		queue_redraw()
+		return
+
 	# Update reboot state from condition. Workers entering REBOOTING release
 	# any in-flight job so the rest of the colony can claim it; workers
 	# whose condition has recovered (e.g. via a save → repair bench) exit
@@ -766,8 +780,8 @@ func _process(delta: float) -> void:
 		or _state == State.CARRYING_WORKER \
 		or _state == State.MOVING_TO_DELIVER
 	if _state != State.FIGHTING and not rescuing and _should_seek_charge():
-		_begin_auto_charge()
-		return
+		if _begin_auto_charge():
+			return
 	match _state:
 		State.IDLE:
 			if _try_start_next_direct_order():
@@ -896,14 +910,20 @@ func _process(delta: float) -> void:
 				_state = State.IDLE
 				_idle_cooldown = randf_range(0.5, 1.5)
 		State.MOVING_TO_SOCIALIZE:
-			if _advance_path(delta):
-				if _activity_partner != null and is_instance_valid(_activity_partner) and _is_adjacent_to(_activity_partner):
-					_state = State.SOCIALIZING
-					if _activity_timer <= 0.0:
-						_activity_timer = randf_range(7.0, 12.0)
-					_remember("chatting with %s" % _activity_partner.display_name())
-				else:
-					_remember("chat cancelled: not adjacent")
+			var reached: bool = _advance_path(delta)
+			var partner_valid: bool = _activity_partner != null and is_instance_valid(_activity_partner)
+			if partner_valid and _is_adjacent_to(_activity_partner):
+				_state = State.SOCIALIZING
+				if _activity_timer <= 0.0:
+					_activity_timer = randf_range(7.0, 12.0)
+				_remember("chatting with %s" % _activity_partner.display_name())
+			elif reached:
+				# Hold position and wait for the slower partner to walk adjacent
+				var partner_still_coming: bool = partner_valid and \
+					(_activity_partner._state == State.MOVING_TO_SOCIALIZE or _activity_partner._state == State.SOCIALIZING) and \
+					_activity_partner._activity_partner == self
+				if not partner_still_coming:
+					_remember("chat cancelled: partner abandoned")
 					_resume_after_chat()
 		State.SOCIALIZING:
 			_activity_timer -= delta
@@ -1069,12 +1089,10 @@ func _pickup_downed_worker() -> void:
 		_abort_save()
 		return
 	_carried_worker = _save_target
-	# Hide the body and slave its position to ours. We don't actually
-	# reparent (Item-style) — keeping the worker under the same workers_root
-	# avoids breaking selection/inspection logic. Visible=false hides it.
+	_carried_worker.carried_by = self # Register carrying
 	_carried_worker.visible = false
 	_carried_worker.position = position
-	# Plan the deliver leg now that we have a confirmed pickup.
+	
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), _save_destination)
 	if path.is_empty() and current_grid() != _save_destination:
 		_abort_save()
@@ -1092,11 +1110,10 @@ func _drop_off_carried_worker() -> void:
 	_idle_cooldown = 0.0
 	if carried == null or not is_instance_valid(carried):
 		return
+	carried.carried_by = null # Deregister carrying
 	carried.position = position
 	carried.visible = true
-	# Mini-revive: enough condition + energy that the carried worker can
-	# crawl off the dropoff under their own power. A repair bench dropoff
-	# gives a meatier boost; outlets top up energy more than condition.
+	
 	var condition_bonus: float = SAVE_REVIVE_CONDITION
 	var energy_bonus: float = SAVE_REVIVE_ENERGY
 	if _save_destination_kind == BuildBlueprint.Id.REPAIR_BENCH or _save_destination_kind == BuildBlueprint.Id.MAINTENANCE_DOCK:
@@ -1113,6 +1130,7 @@ func _drop_off_carried_worker() -> void:
 
 func _abort_save() -> void:
 	if _carried_worker != null and is_instance_valid(_carried_worker):
+		_carried_worker.carried_by = null # Deregister carrying
 		_carried_worker.visible = true
 		_carried_worker.position = position
 	_carried_worker = null
@@ -1170,29 +1188,68 @@ func _process_fighting(delta: float) -> void:
 		_path = PackedVector2Array()
 		_path_index = 0
 
+## Registers a job as temporarily un-executable for this worker.
+func _mark_job_failed(job: Job) -> void:
+	if job != null:
+		_failed_jobs_cooldowns[job] = _now_seconds() + 15.0
+
 
 func _try_claim_job() -> bool:
 	if _job_board == null or _pathfinder == null:
 		return false
-	var job: Job = _job_board.claim_next_for(self, current_grid())
-	if job == null:
+	
+	var claimed_this_tick: Array[Job] = []
+	var selected_job: Job = null
+	var now := _now_seconds()
+	
+	# Clean up expired or invalid failed jobs
+	var active_keys := _failed_jobs_cooldowns.keys()
+	for f_job in active_keys:
+		if not is_instance_valid(f_job) or now >= _failed_jobs_cooldowns[f_job]:
+			_failed_jobs_cooldowns.erase(f_job)
+	
+	# Keep pulling jobs until we find one that hasn't recently failed.
+	# Includes a safety limit to prevent infinite loops if the board contains duplicate entries.
+	var safety_limit := 128
+	while safety_limit > 0:
+		safety_limit -= 1
+		var job: Job = _job_board.claim_next_for(self, current_grid())
+		if job == null:
+			break
+		
+		if _failed_jobs_cooldowns.has(job):
+			# Hold this job claim temporarily so the board doesn't return 
+			# it to us on the next iteration of this loop.
+			claimed_this_tick.append(job)
+			continue
+		
+		selected_job = job
+		break
+	
+	# Release any temporarily held failed jobs back to the board
+	for f_job in claimed_this_tick:
+		_job_board.release(f_job)
+	
+	if selected_job == null:
 		return false
-	_job = job
-	if job is MineJob:
-		_begin_mine(job as MineJob)
-	elif job is HaulJob:
-		_begin_haul(job as HaulJob)
-	elif job is BuildJob:
-		_begin_build(job as BuildJob)
-	elif job is CraftJob:
-		_begin_craft(job as CraftJob)
-	elif job is OperateStructureJob:
-		_begin_operation(job as OperateStructureJob)
-	elif _is_scrape_rust_job(job):
-		_begin_scrape_rust(job)
-	elif _is_scrape_biomass_job(job):
-		_begin_scrape_biomass(job)
+	
+	_job = selected_job
+	if selected_job is MineJob:
+		_begin_mine(selected_job as MineJob)
+	elif selected_job is HaulJob:
+		_begin_haul(selected_job as HaulJob)
+	elif selected_job is BuildJob:
+		_begin_build(selected_job as BuildJob)
+	elif selected_job is CraftJob:
+		_begin_craft(selected_job as CraftJob)
+	elif selected_job is OperateStructureJob:
+		_begin_operation(selected_job as OperateStructureJob)
+	elif _is_scrape_rust_job(selected_job):
+		_begin_scrape_rust(selected_job)
+	elif _is_scrape_biomass_job(selected_job):
+		_begin_scrape_biomass(selected_job)
 	return true
+
 
 
 func _try_start_next_direct_order() -> bool:
@@ -1374,7 +1431,9 @@ func _idle_try_meditate() -> bool:
 
 
 func _idle_try_top_off_charge() -> bool:
-	if _energy >= ENERGY_MAX - 1.0:
+	# Shift threshold to 80.0 to prevent workers from oscillating 
+	# in and out of charge states during idle periods.
+	if _energy >= 80.0:
 		return false
 	var outlet: Vector2i = _nearest_outlet_via_explored()
 	if outlet == Pathfinder.UNREACHABLE:
@@ -1735,6 +1794,8 @@ func _begin_scrape_rust(job: Job) -> void:
 		return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
+		if job.has_method("block_briefly"):
+			job.block_briefly(2.0)
 		_release_and_idle()
 		return
 	_path = path
@@ -1752,6 +1813,8 @@ func _begin_scrape_biomass(job: Job) -> void:
 		return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
+		if job.has_method("block_briefly"):
+			job.block_briefly(2.0)
 		_release_and_idle()
 		return
 	_path = path
@@ -1768,6 +1831,8 @@ func _begin_haul(job: HaulJob) -> void:
 	if path.is_empty() and current_grid() != item_grid:
 		var item := job.item as Item
 		_clear_job_reservations()
+		if job.has_method("block_briefly"):
+			job.block_briefly(2.0)
 		_finish_job()
 		if _stockpile_manager != null:
 			_stockpile_manager.on_item_spawned(item)
@@ -1781,10 +1846,14 @@ func _begin_build(job: BuildJob) -> void:
 	if job.has_all_materials():
 		var stand_ready: Vector2i = _pathfinder.walkable_neighbor_of(job.anchor)
 		if stand_ready == Pathfinder.UNREACHABLE:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		_path = ready_path
@@ -1792,8 +1861,6 @@ func _begin_build(job: BuildJob) -> void:
 		_state = State.MOVING_TO_BUILD_SITE
 		return
 	job.material_kind = job.next_missing_kind()
-	# Build needs one missing material at a time. Find nearest unreserved item
-	# of that kind from loose items or stockpiles, claim it as source.
 	var source: Item = _find_material_for_build(job)
 	if source == null:
 		_note_missing_build_material(job)
@@ -1801,11 +1868,12 @@ func _begin_build(job: BuildJob) -> void:
 		return
 	job.source_item = source
 	source.reserved_by = self
-	# Phase 1: walk to the source item.
 	var sg: Vector2i = source.get_grid()
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
+		job.block_briefly(2.0)
+		_mark_job_failed(job)
 		_release_and_idle()
 		return
 	_path = path
@@ -1855,10 +1923,14 @@ func _begin_craft(job: CraftJob) -> void:
 	if job.has_all_materials():
 		var stand_ready: Vector2i = _structure_manager.interaction_cell_for(job.station_anchor)
 		if stand_ready == Pathfinder.UNREACHABLE:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		_path = ready_path
@@ -1877,6 +1949,8 @@ func _begin_craft(job: CraftJob) -> void:
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
+		job.block_briefly(2.0)
+		_mark_job_failed(job)
 		_release_and_idle()
 		return
 	_path = path
@@ -1923,15 +1997,20 @@ func _begin_operation(job: OperateStructureJob) -> void:
 		return
 	if not _structure_manager.can_operate_structure(job.anchor):
 		job.block_briefly(2.0)
+		_mark_job_failed(job)
 		_release_and_idle()
 		return
 	if job.has_all_materials():
 		var stand_ready: Vector2i = _structure_manager.interaction_cell_for(job.anchor)
 		if stand_ready == Pathfinder.UNREACHABLE:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
+			job.block_briefly(2.0)
+			_mark_job_failed(job)
 			_release_and_idle()
 			return
 		_path = ready_path
@@ -1950,6 +2029,8 @@ func _begin_operation(job: OperateStructureJob) -> void:
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
+		job.block_briefly(2.0)
+		_mark_job_failed(job)
 		_release_and_idle()
 		return
 	_path = path
@@ -2409,6 +2490,7 @@ func _release_and_idle() -> void:
 
 func _note_missing_build_material(job: BuildJob) -> void:
 	job.block_briefly(2.0)
+	_mark_job_failed(job)
 	var item_name: String = Item.kind_name(job.material_kind)
 	_show_blocked_action("Lacks " + item_name)
 	_remember("lacks %s for %s" % [item_name, BuildBlueprint.display_name(job.blueprint_id)])
@@ -2416,6 +2498,7 @@ func _note_missing_build_material(job: BuildJob) -> void:
 
 func _note_missing_craft_material(job: CraftJob) -> void:
 	job.block_briefly(2.0)
+	_mark_job_failed(job)
 	var item_name: String = Item.kind_name(job.material_kind)
 	_show_blocked_action("Lacks " + item_name)
 	_remember("lacks %s to craft %s" % [item_name, Item.kind_name(job.object_kind)])
@@ -2423,6 +2506,7 @@ func _note_missing_craft_material(job: CraftJob) -> void:
 
 func _note_missing_operation_material(job: OperateStructureJob) -> void:
 	job.block_briefly(2.0)
+	_mark_job_failed(job)
 	var item_name: String = Item.kind_name(job.material_kind)
 	_show_blocked_action("Lacks " + item_name)
 	_remember("lacks %s to operate %s" % [item_name, BuildBlueprint.display_name(job.structure_id)])
@@ -2864,6 +2948,8 @@ func command_charge(target: Vector2i, clear_queue: bool = true) -> bool:
 
 
 func _advance_path(delta: float) -> bool:
+	if _energy <= 0.0:
+		return false
 	if _path.is_empty():
 		return true
 	if _path_index >= _path.size():
@@ -3184,19 +3270,24 @@ func _should_seek_charge() -> bool:
 	return _state == State.IDLE and _energy <= ENERGY_LOW
 
 
-func _begin_auto_charge() -> void:
+func _begin_auto_charge() -> bool:
 	var outlet: Vector2i = _nearest_outlet_via_explored()
 	if outlet == Pathfinder.UNREACHABLE:
-		# No known route to any outlet. Fall back to walking toward a known
-		# teleporter so the bot doesn't sit and die; the teleport scatter
-		# might land it next to a known outlet on the next idle tick.
-		if _begin_charge_via_teleporter():
-			return
-		return
+		# _begin_charge_via_teleporter handles internal state and returns a bool
+		return _begin_charge_via_teleporter()
+	
+	# Verify reservation and path feasibility before committing and abandoning the job
+	if _chunk_manager.is_outlet_reserved_by_other(outlet, self):
+		return false
+		
+	var path: PackedVector2Array = _find_explored_path(current_grid(), outlet)
+	if path.is_empty() and current_grid() != outlet:
+		return false
+		
+	# Safely commit to charging now
 	_abandon_job()
 	_manual_charging = false
-	_begin_charge(outlet)
-
+	return _begin_charge(outlet)
 
 ## Picks the closest outlet reachable through fog-explored cells only. Bots
 ## must not magically know the path through undiscovered areas — if the

@@ -6,7 +6,7 @@ uniform sampler2D light_mask : filter_nearest, repeat_disable;
 uniform vec2 mask_origin_grid = vec2(0.0, 0.0);
 uniform vec2 mask_size_grid = vec2(1.0, 1.0);
 uniform float tile_pixels = 32.0;
-uniform float unlit_alpha = 0.66;
+uniform float unlit_alpha = 0.46;
 uniform float lit_alpha = 0.020;
 uniform float time_seconds = 0.0;
 uniform vec4 darkness_tint = vec4(0.010, 0.014, 0.018, 1.0);

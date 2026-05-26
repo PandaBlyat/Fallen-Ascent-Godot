@@ -5,15 +5,15 @@ extends Node2D
 ## sight around workers/lights is bright.
 ##
 
-const WORKER_SIGHT_RADIUS: int = 7
+const WORKER_SIGHT_RADIUS: int = 8
 const REFRESH_SECONDS: float = 0.18
 const FOG_Z_INDEX: int = 900
 ## Fully opaque so glowing tiles (acid, lights) under undiscovered fog
 ## don't leak through.
 const UNEXPLORED_COLOR := Color(0.0, 0.0, 0.0, 1.0)
-const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.55)
+const MEMORY_COLOR := Color(0.0, 0.0, 0.0, 0.10)
 const LIT_MEMORY_MIN_ALPHA: float = 0.10
-const VISIBLE_EDGE_ALPHA: float = 0.10
+const VISIBLE_EDGE_ALPHA: float = 0.05
 const LineOfSight: Script = preload("res://scripts/util/LineOfSight.gd")
 
 @export var camera_path: NodePath

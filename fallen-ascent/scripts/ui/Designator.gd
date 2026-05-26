@@ -195,13 +195,20 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index != MOUSE_BUTTON_RIGHT:
-			return
-		if mb.pressed:
-			_on_right_press()
-		else:
-			_on_right_release()
-		get_viewport().set_input_as_handled()
+		# Right click drives every mode. Left click also drives the place-down
+		# modes (workshops, objects) so the player can hold either button.
+		if mb.button_index == MOUSE_BUTTON_RIGHT:
+			if mb.pressed:
+				_on_right_press()
+			else:
+				_on_right_release()
+			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_LEFT and _is_place_mode():
+			if mb.pressed:
+				_on_right_press()
+			else:
+				_on_right_release()
+			get_viewport().set_input_as_handled()
 
 
 func _on_right_press() -> void:
@@ -410,11 +417,27 @@ func _is_build_mode() -> bool:
 		or _mode == Mode.BUILD_SENTIENCE_CRADLE \
 		or _mode == Mode.BUILD_FABRICATION_SPOT \
 		or _mode == Mode.BUILD_FABRICATOR_ADVANCED \
-		or _mode == Mode.PLACE_STORAGE_BIN \
+		or _is_place_mode()
+
+
+func _is_place_mode() -> bool:
+	return _mode == Mode.PLACE_STORAGE_BIN \
 		or _mode == Mode.PLACE_OUTLET_EXTENSION \
 		or _mode == Mode.PLACE_RUDIMENTARY_SENSOR \
 		or _mode == Mode.PLACE_SMALL_LIGHT_DEVICE \
-		or _mode == Mode.PLACE_LARGE_LIGHT_DEVICE
+		or _mode == Mode.PLACE_LARGE_LIGHT_DEVICE \
+		or _mode == Mode.BUILD_EXTRACTOR \
+		or _mode == Mode.BUILD_SENSOR \
+		or _mode == Mode.BUILD_CHARGE_PAD \
+		or _mode == Mode.BUILD_FABRICATOR \
+		or _mode == Mode.BUILD_DOCK \
+		or _mode == Mode.BUILD_REPAIR_BENCH \
+		or _mode == Mode.BUILD_PARTS_LOOM \
+		or _mode == Mode.BUILD_MAINTENANCE_DOCK \
+		or _mode == Mode.BUILD_MEDITATION_PAD \
+		or _mode == Mode.BUILD_SENTIENCE_CRADLE \
+		or _mode == Mode.BUILD_FABRICATION_SPOT \
+		or _mode == Mode.BUILD_FABRICATOR_ADVANCED
 
 
 func _world_to_grid(world_pos: Vector2) -> Vector2i:

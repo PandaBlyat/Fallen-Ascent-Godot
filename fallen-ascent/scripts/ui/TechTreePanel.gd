@@ -4,8 +4,8 @@ extends CanvasLayer
 ## the colony HUD; layout is driven by TechData.grid_position.
 ##
 
-const CELL_SIZE := Vector2(170.0, 110.0)
-const NODE_SIZE := Vector2(150.0, 90.0)
+const CELL_SIZE := Vector2(260.0, 170.0)
+const NODE_SIZE := Vector2(220.0, 140.0)
 const COLOR_BG_DARK := Color(0.045, 0.052, 0.06, 0.96)
 const COLOR_BG_PANEL := Color(0.07, 0.085, 0.10, 0.98)
 const COLOR_TEXT_LIGHT := Color(0.92, 0.96, 0.97, 1.0)
@@ -42,10 +42,10 @@ func _ready() -> void:
 	panel.anchor_top = 0.5
 	panel.anchor_right = 0.5
 	panel.anchor_bottom = 0.5
-	panel.offset_left = -460.0
-	panel.offset_top = -300.0
-	panel.offset_right = 460.0
-	panel.offset_bottom = 300.0
+	panel.offset_left = -680.0
+	panel.offset_top = -420.0
+	panel.offset_right = 680.0
+	panel.offset_bottom = 420.0
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	panel.add_theme_stylebox_override("panel", _textured_panel_style("tech_tree", COLOR_BG_PANEL))
@@ -102,7 +102,7 @@ func _ready() -> void:
 	vbox.add_child(scroll)
 
 	_graph = Control.new()
-	_graph.custom_minimum_size = Vector2(CELL_SIZE.x * 6.0 + 40.0, CELL_SIZE.y * 5.0 + 40.0)
+	_graph.custom_minimum_size = Vector2(CELL_SIZE.x * 5.0 + 60.0, CELL_SIZE.y * 5.0 + 60.0)
 	_graph.draw.connect(_on_graph_draw)
 	scroll.add_child(_graph)
 

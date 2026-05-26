@@ -97,7 +97,7 @@ const CONDITION_WORK_DECAY_PER_SEC: float = 0.09
 const MENTAL_IDLE_RISE_PER_SEC: float = 0.04
 const MENTAL_WORK_RISE_PER_SEC: float = 0.16
 const REST_RECOVERY_PER_SEC: float = 8.0
-const REPAIR_RECOVERY_PER_SEC: float = 12.0
+const REPAIR_RECOVERY_PER_SEC: float = 4.0
 const SOCIAL_MAX: float = 100.0
 const SOCIAL_GAIN_PER_SEC: float = 12.0          ## per-second gain while chatting
 const SOCIAL_DECAY_PER_SEC: float = 0.18         ## passive decay when not chatting
@@ -194,6 +194,8 @@ var _entity_grid_timer: float = 0.0
 var _acid_damage_accum: float = 0.0
 var _last_action_state: int = -1
 var _last_action_job: Job = null
+var _no_repair_bench_complaint_timer: float = 0.0
+var _research_urge_cooldown: float = 0.0
 
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
@@ -673,6 +675,10 @@ func _process(delta: float) -> void:
 		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
 	if _blocked_action_timer > 0.0:
 		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
+	if _no_repair_bench_complaint_timer > 0.0:
+		_no_repair_bench_complaint_timer = maxf(0.0, _no_repair_bench_complaint_timer - delta)
+	if _research_urge_cooldown > 0.0:
+		_research_urge_cooldown = maxf(0.0, _research_urge_cooldown - delta)
 	_update_energy(delta)
 	_update_body_stats(delta)
 	_tick_acid_damage(delta)
@@ -690,6 +696,18 @@ func _process(delta: float) -> void:
 			_idle_cooldown -= delta
 			if _idle_cooldown <= 0.0:
 				_idle_cooldown = IDLE_RETRY_SECONDS
+				# Heavily damaged workers cut the line: try a repair bench
+				# before the regular job board. If none is reachable, complain
+				# (throttled) and fall through to the normal idle flow.
+				if _condition <= 45.0:
+					if _begin_structure_activity(
+							[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
+							State.MOVING_TO_REPAIR):
+						_no_repair_bench_complaint_timer = 0.0
+						return
+					if _no_repair_bench_complaint_timer <= 0.0:
+						_remember("Can't repair myself, no repair bench")
+						_no_repair_bench_complaint_timer = 18.0
 				if not _try_claim_job():
 					_choose_idle_behavior()
 		State.MOVING_TO_WORK:
@@ -790,7 +808,7 @@ func _process(delta: float) -> void:
 				if _structure_manager != null and _structure_manager.has_method("consume_repair_materials"):
 					_structure_manager.call("consume_repair_materials")
 				_state = State.REPAIRING
-				_activity_timer = randf_range(2.0, 4.0)
+				_activity_timer = randf_range(6.0, 12.0)
 		State.REPAIRING:
 			_activity_timer -= delta
 			_condition = minf(CONDITION_MAX, _condition + REPAIR_RECOVERY_PER_SEC * delta)
@@ -830,8 +848,9 @@ func _process(delta: float) -> void:
 			if TechManager != null and TechManager.is_unlocked(TechDatabase.FOCUSED_MIND):
 				rate *= WISDOM_FOCUSED_MULTIPLIER
 			_wisdom_carry += rate * delta
-			# Small mood lift while meditating.
-			_mood = clampf(_mood + 0.4 * delta, 0.0, MOOD_MAX)
+			# Research is mentally taxing — chips away at mood while the bot
+			# is hunched over a research bench.
+			_mood = clampf(_mood - 0.6 * delta, 0.0, MOOD_MAX)
 			if _activity_timer <= 0.0:
 				if TechManager != null and _wisdom_carry > 0.0:
 					TechManager.add_wisdom(_wisdom_carry)
@@ -982,12 +1001,27 @@ func _is_scrape_job(job: Job) -> bool:
 
 
 func _choose_idle_behavior() -> void:
-	if _condition <= 68.0 and _begin_structure_activity(
-			[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
-			State.MOVING_TO_REPAIR):
-		return
+	if _condition <= 68.0:
+		if _begin_structure_activity(
+				[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
+				State.MOVING_TO_REPAIR):
+			_no_repair_bench_complaint_timer = 0.0
+			return
+		# No reachable repair bench — complain occasionally so the player sees
+		# the thought without it spamming every idle tick.
+		if _no_repair_bench_complaint_timer <= 0.0:
+			_remember("Can't repair myself, no repair bench")
+			_no_repair_bench_complaint_timer = 18.0
 	if _mental_tiredness >= 55.0 and _begin_assigned_dock_rest():
 		return
+	# Random research urge: occasionally jump to a research bench instead of
+	# cycling through the usual idle chores, so research drips in even when
+	# the player hasn't queued anything.
+	if _research_urge_cooldown <= 0.0 and randf() < 0.15:
+		if _begin_structure_activity([BuildBlueprint.Id.MEDITATION_PAD], State.MOVING_TO_MEDITATE):
+			_research_urge_cooldown = randf_range(45.0, 90.0)
+			_remember("decided to research")
+			return
 	# Idle bots cycle through low-priority chores so they look alive even when
 	# the job board is empty. We try the rolled behavior, then fall through to
 	# alternative chores so a single failure (no rust nearby, no chat partner

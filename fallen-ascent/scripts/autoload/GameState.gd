@@ -7,6 +7,10 @@ extends Node
 var world_seed: int = 0
 var selected_site: Resource = null
 var game_speed: float = 1.0
+## Player-picked map size override (in chunks). When non-zero, ColonySite
+## hands it to ChunkManager before the first chunk load. Set on the
+## new-game seed/size prompt; otherwise the ChunkManager default applies.
+var requested_map_size_chunks: Vector2i = Vector2i.ZERO
 
 
 func set_world_seed(value: int) -> void:

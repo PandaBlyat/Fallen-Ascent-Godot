@@ -38,6 +38,8 @@ func _ready() -> void:
 		site = SiteData.new()
 		site.site_seed = 1234567
 	_site_seed = site.site_seed
+	if GameState.requested_map_size_chunks.x > 0 and GameState.requested_map_size_chunks.y > 0:
+		chunk_manager.map_size_chunks = GameState.requested_map_size_chunks
 	chunk_manager.setup(site.site_seed)
 	structure_manager.setup(site.site_seed)
 	static_prop_manager.setup(site.site_seed)

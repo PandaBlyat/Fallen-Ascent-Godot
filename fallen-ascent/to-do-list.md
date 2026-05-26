@@ -175,3 +175,29 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
 - [ ] **Wisdom decay / mood gate.** Currently meditating is free and
       always positive. Consider a fatigue mechanic (consecutive sessions
       yield less) once players are exploiting it.
+
+## Recent quick-fix session notes
+
+- [ ] **World-gen lights now reuse the explored-cells visibility gate** in
+      `StructureManager._is_structure_draw_visible` (same path as player-placed
+      structures). If draw-call cost on huge maps becomes a concern, swap the
+      explored check for a chunk-level visible bucket instead of per-structure.
+- [ ] **Build / repair durations were rescaled ~2.5x.** See
+      `BuildBlueprint.build_duration` and `Worker.REPAIR_RECOVERY_PER_SEC`.
+      Re-tune once a real economy/playthrough is on the floor.
+- [ ] **New-game flow skips the world map.** `scripts/Main.gd` now pops a
+      seed/size dialog directly and writes a synthetic SiteData to GameState.
+      WorldMap.tscn is unreferenced from the main menu but still works if
+      `change_scene_to_file` is called externally — delete the world-map
+      scene/script once we're sure we don't want it back.
+- [ ] **Speed control buttons and ColonyTooltip now read `selection_panel.png`**
+      via local StyleBoxTexture builders (the buttons modulate the shared
+      art to keep pause/active/hover distinguishable). Pull these into a
+      shared helper alongside `ColonyHud._panel_textured_style` once we have
+      another caller.
+- [ ] **Damaged workers self-direct to a repair bench at ≤45% condition**,
+      otherwise complain with a `_remember("Can't repair myself, no repair bench")`
+      thought (throttled to every 18s). Researching now drains mood at 0.6/s
+      and idle workers roll a 15% chance per idle tick to break for research
+      (with a 45–90s cooldown). All of these are eyeballed — tune once the
+      colony loop is balanced.

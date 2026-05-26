@@ -226,25 +226,25 @@ static func ingredients(id: int) -> Dictionary:
 static func build_duration(id: int) -> float:
 	match id:
 		Id.EXTRACTOR:
-			return 12.0
+			return 30.0
 		Id.MAINTENANCE_DOCK:
-			return 13.5
+			return 34.0
 		Id.FABRICATOR:
-			return 10.5
+			return 26.0
 		Id.FABRICATOR_ADVANCED:
-			return 13.5
+			return 34.0
 		Id.DOCK, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.MEDITATION_PAD:
-			return 9.0
+			return 22.0
 		Id.SENTIENCE_CRADLE:
-			return 24.0
+			return 60.0
 		Id.FABRICATION_SPOT:
-			return 4.5
+			return 11.0
 		Id.STORAGE_BIN, Id.OUTLET_EXTENSION, Id.RUDIMENTARY_SENSOR, Id.SMALL_LIGHT_DEVICE, Id.LARGE_LIGHT_DEVICE:
-			return 2.4
-		Id.DOOR:
-			return 7.5
-		_:
 			return 6.0
+		Id.DOOR:
+			return 18.0
+		_:
+			return 15.0
 
 
 static func ghost_color(id: int) -> Color:

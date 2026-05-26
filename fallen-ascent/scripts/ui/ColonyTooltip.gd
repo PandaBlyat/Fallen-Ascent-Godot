@@ -79,6 +79,10 @@ func _process(_delta: float) -> void:
 		return
 	_last_grid = grid
 	_refresh(grid)
+	# Snap the panel to its current text content so the 9-sliced border
+	# doesn't outpace short tooltips or clip long ones.
+	size = Vector2.ZERO
+	size = get_minimum_size()
 
 
 func _on_visibility_changed(_bounds: Rect2i) -> void:
@@ -203,7 +207,24 @@ static func _join_lines(lines: Array[String]) -> String:
 	return out
 
 
-static func _tooltip_style() -> StyleBoxFlat:
+static func _tooltip_style() -> StyleBox:
+	const PANEL_PATH := "res://resources/ui/panels/selection_panel.png"
+	if ResourceLoader.exists(PANEL_PATH):
+		var tex: Texture2D = load(PANEL_PATH) as Texture2D
+		if tex != null:
+			var tex_style := StyleBoxTexture.new()
+			tex_style.texture = tex
+			tex_style.texture_margin_left = 16.0
+			tex_style.texture_margin_top = 16.0
+			tex_style.texture_margin_right = 16.0
+			tex_style.texture_margin_bottom = 16.0
+			# 9-slice corners are 16 px; pull content in to match so the text
+			# never overlaps the panel border art.
+			tex_style.content_margin_left = 12.0
+			tex_style.content_margin_top = 10.0
+			tex_style.content_margin_right = 12.0
+			tex_style.content_margin_bottom = 10.0
+			return tex_style
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.045, 0.052, 0.06, 0.92)
 	style.border_color = Color(0.48, 0.52, 0.56, 0.62)

@@ -79,7 +79,25 @@ func _on_speed_changed(speed: float) -> void:
 		_buttons[i].set_pressed_no_signal(is_equal_approx(speed, SPEEDS[i]))
 
 
-func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
+func _button_style(fill: Color, border: Color) -> StyleBox:
+	const PANEL_PATH := "res://resources/ui/panels/selection_panel.png"
+	if ResourceLoader.exists(PANEL_PATH):
+		var tex: Texture2D = load(PANEL_PATH) as Texture2D
+		if tex != null:
+			var tex_style := StyleBoxTexture.new()
+			tex_style.texture = tex
+			tex_style.texture_margin_left = 16.0
+			tex_style.texture_margin_top = 16.0
+			tex_style.texture_margin_right = 16.0
+			tex_style.texture_margin_bottom = 16.0
+			tex_style.content_margin_left = 14.0
+			tex_style.content_margin_top = 8.0
+			tex_style.content_margin_right = 14.0
+			tex_style.content_margin_bottom = 8.0
+			# Tint the shared panel art so the pause / active / hover states stay
+			# distinguishable without authoring three separate PNGs.
+			tex_style.modulate_color = fill.lerp(Color.WHITE, 0.35)
+			return tex_style
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.border_color = border

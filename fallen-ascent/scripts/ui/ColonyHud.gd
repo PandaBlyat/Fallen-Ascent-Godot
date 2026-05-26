@@ -1266,9 +1266,7 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	else:
 		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
 	_add_history_panel(right, worker)
-	# Limb condition lives below the two-column header so it's always visible
-	# without scrolling.
-	_add_limb_grid(card, worker)
+	_add_limb_grid(right, worker)
 
 
 func _add_worker_header(parent: Control, worker: Worker) -> void:

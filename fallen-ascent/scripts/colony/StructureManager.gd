@@ -730,10 +730,7 @@ func _is_structure_draw_visible(structure: Dictionary) -> bool:
 	var cells: Array = structure["cells"] as Array
 	for raw_cell in cells:
 		var cell: Vector2i = raw_cell as Vector2i
-		if bool(structure.get("generated", false)):
-			if _fog.is_cell_visible(cell):
-				return true
-		elif _fog.is_explored(cell):
+		if _fog.is_explored(cell):
 			return true
 	return false
 

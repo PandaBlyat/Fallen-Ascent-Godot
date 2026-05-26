@@ -107,6 +107,11 @@ func _ready() -> void:
 	if _chunk_manager != null:
 		_chunk_manager.set_structure_manager(self)
 	EventBus.chunk_loaded.connect(_on_chunk_loaded)
+	# World-generated lights (and any other structure whose draw is gated on
+	# `is_explored`) only had their atlas texture appear when something else
+	# in this node forced a redraw. Listen for fog updates so newly explored
+	# tiles repaint their structures immediately.
+	EventBus.visibility_changed.connect(_on_visibility_changed)
 
 
 func setup(site_seed: int) -> void:
@@ -527,6 +532,12 @@ func _process(delta: float) -> void:
 
 func _on_chunk_loaded(chunk_coord: Vector2i) -> void:
 	_generate_world_lights_for_chunk(chunk_coord)
+
+
+func _on_visibility_changed(_changed_bounds: Rect2i) -> void:
+	# Cheap repaint: the per-structure visibility check already filters by
+	# explored cells, so the only cost is one queue_redraw per fog update.
+	queue_redraw()
 
 
 func _generate_world_lights_for_chunk(chunk_coord: Vector2i) -> void:

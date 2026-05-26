@@ -337,6 +337,70 @@ func pending_count() -> int:
 	return pending.size()
 
 
+## Cancel an arbitrary job reference, cleaning up per-type indexes the same
+## way `complete` does. Returns true if the job was removed. For HaulJobs
+## the stockpile reservation is released via the StockpileZone API so the
+## reserved cell becomes available again.
+func cancel_job(job: Job) -> bool:
+	if job == null or not pending.has(job):
+		return false
+	if job is MineJob:
+		_mine_targets.erase((job as MineJob).target)
+	elif job is BuildJob:
+		for cell in (job as BuildJob).footprint:
+			_build_targets.erase(cell)
+	elif job is OperateStructureJob:
+		_operation_targets.erase((job as OperateStructureJob).anchor)
+	elif job is HaulJob:
+		var haul := job as HaulJob
+		if haul.dropoff_zone != null and is_instance_valid(haul.dropoff_zone) \
+				and haul.dropoff_zone.has_method("unreserve"):
+			haul.dropoff_zone.call("unreserve", haul.dropoff)
+		if haul.item != null and is_instance_valid(haul.item) \
+				and "reserved_by" in haul.item:
+			haul.item.set("reserved_by", null)
+	elif job.kind == Job.Kind.SCRAPE_RUST:
+		_scrape_targets.erase(job.get("target") as Vector2i)
+	elif job.kind == Job.Kind.SCRAPE_BIOMASS:
+		_scrape_biomass_targets.erase(job.get("target") as Vector2i)
+	pending.erase(job)
+	_unindex_job(job)
+	job_cancelled.emit(job)
+	return true
+
+
+## Human-readable label for a job, used by the jobs dropdown UI.
+static func describe_job(job: Job) -> String:
+	if job == null:
+		return ""
+	if job is MineJob:
+		var m := job as MineJob
+		return "Mine (%d,%d)" % [m.target.x, m.target.y]
+	if job is BuildJob:
+		var b := job as BuildJob
+		return "Build %s (%d,%d)" % [BuildBlueprint.display_name(b.blueprint_id), b.anchor.x, b.anchor.y]
+	if job is HaulJob:
+		var h := job as HaulJob
+		var item_name: String = "item"
+		if h.item != null and is_instance_valid(h.item) and h.item is Item:
+			var it := h.item as Item
+			item_name = Item.stack_label(it.kind, it.count)
+		return "Haul %s -> (%d,%d)" % [item_name, h.dropoff.x, h.dropoff.y]
+	if job is CraftJob:
+		var c := job as CraftJob
+		return "Craft %s @ (%d,%d)" % [Item.kind_name(c.object_kind), c.station_anchor.x, c.station_anchor.y]
+	if job is OperateStructureJob:
+		var o := job as OperateStructureJob
+		return "Operate %s (%d,%d)" % [BuildBlueprint.display_name(o.structure_id), o.anchor.x, o.anchor.y]
+	if job.kind == Job.Kind.SCRAPE_RUST:
+		var t: Vector2i = job.get("target") as Vector2i
+		return "Scrape rust (%d,%d)" % [t.x, t.y]
+	if job.kind == Job.Kind.SCRAPE_BIOMASS:
+		var tg: Vector2i = job.get("target") as Vector2i
+		return "Scrape biomass (%d,%d)" % [tg.x, tg.y]
+	return "Job"
+
+
 func _index_job(job: Job) -> void:
 	var chunk: Vector2i = Chunk.grid_to_chunk(_target_grid_of(job))
 	if not _pending_by_chunk.has(chunk):

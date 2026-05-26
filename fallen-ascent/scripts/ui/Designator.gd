@@ -195,15 +195,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		# Right click drives every mode. Left click also drives the place-down
-		# modes (workshops, objects) so the player can hold either button.
+		# Right click drives every mode (paint, designate, place). Left click
+		# is reserved for the SelectionController which uses it to cancel
+		# the active designation mode.
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
-			if mb.pressed:
-				_on_right_press()
-			else:
-				_on_right_release()
-			get_viewport().set_input_as_handled()
-		elif mb.button_index == MOUSE_BUTTON_LEFT and _is_place_mode():
 			if mb.pressed:
 				_on_right_press()
 			else:

@@ -491,6 +491,16 @@ func limb_status_lines() -> Array[String]:
 	return lines
 
 
+## Per-limb condition as a 0..1 ratio in LIMB_NAMES order. Used by the worker
+## stat panel to render a small bar per limb.
+func limb_condition_ratios() -> Array[float]:
+	var out: Array[float] = []
+	for limb_name in LIMB_NAMES:
+		var value: float = float(_limbs.get(limb_name, CONDITION_MAX))
+		out.append(clampf(value / CONDITION_MAX, 0.0, 1.0))
+	return out
+
+
 func carried_label() -> String:
 	if _carried == null:
 		return "none"

@@ -4,6 +4,13 @@ uniform float wind_speed = 1.15;
 uniform float wind_amplitude = 0.9;
 uniform vec2 walker_positions[8];
 uniform int walker_count = 0;
+// Lower than 1.0 = less saturated grass. The placeholder atlas reads as
+// neon green at full saturation, which clashes with the muted floor; pulling
+// this down gives the grass a more mossy, lived-in look.
+uniform float saturation : hint_range(0.0, 1.0) = 0.55;
+// Tints the grass slightly cooler/dustier so it sits between the warm floor
+// and the dark walls. Subtle on purpose — too much and it looks dead.
+uniform vec3 mood_tint : source_color = vec3(0.78, 0.86, 0.72);
 
 varying vec2 world_pos;
 
@@ -24,5 +31,11 @@ void vertex() {
 }
 
 void fragment() {
-	COLOR = texture(TEXTURE, UV) * COLOR;
+	vec4 tex = texture(TEXTURE, UV) * COLOR;
+	// Desaturate by mixing toward luminance. Keeps the alpha (blades vs
+	// transparent) untouched so the silhouette stays crisp.
+	float luma = dot(tex.rgb, vec3(0.299, 0.587, 0.114));
+	vec3 desat = mix(vec3(luma), tex.rgb, saturation);
+	desat *= mood_tint;
+	COLOR = vec4(desat, tex.a);
 }

@@ -114,7 +114,9 @@ var _current_tab: StringName = TAB_ORDERS
 var _command_grid: GridContainer
 var _active_label: Label
 var _workers_label: Label
-var _jobs_label: Label
+var _jobs_button: Button
+var _jobs_popup: PanelContainer
+var _jobs_popup_box: VBoxContainer
 var _wisdom_label: Label
 var _resource_labels: Dictionary = {}            ## int -> Label
 var _resource_category_buttons: Dictionary = {}  ## int -> Button
@@ -235,8 +237,9 @@ func _build_layout() -> void:
 	_workers_label = _status_label("workers 0")
 	status_row.add_child(_badge_container(_workers_label))
 
-	_jobs_label = _status_label("jobs 0")
-	status_row.add_child(_badge_container(_jobs_label))
+	_jobs_button = _jobs_badge_button("jobs 0")
+	status_row.add_child(_jobs_button)
+	_build_jobs_popup()
 
 	_active_label = _status_label("tool -")
 	_active_label.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
@@ -931,7 +934,10 @@ func _refresh_status() -> void:
 	var worker_count: int = _workers_root.get_child_count() if _workers_root != null else 0
 	var job_count: int = _job_board.pending_count() if _job_board != null else 0
 	_workers_label.text = "workers %d" % worker_count
-	_jobs_label.text = "jobs %d" % job_count
+	if _jobs_button != null:
+		_jobs_button.text = "jobs %d" % job_count
+	if _jobs_popup != null and _jobs_popup.visible:
+		_refresh_jobs_popup()
 	_active_label.text = "tool %s" % (_designator.mode_label().to_lower() if _designator != null else "-")
 
 	var counts: Dictionary = _resource_counts()
@@ -959,17 +965,32 @@ func _resource_counts() -> Dictionary:
 	}
 	if _items_root != null:
 		for child in _items_root.get_children():
+			if not is_instance_valid(child):
+				continue
 			var item := child as Item
 			if item != null:
 				counts[item.kind] = int(counts.get(item.kind, 0)) + item.count
 	if _stockpile_manager != null:
 		for zone in _stockpile_manager.zones:
+			if zone == null or not is_instance_valid(zone):
+				continue
 			for value in zone.occupant.values():
+				# `value` may reference an Item that's been queue_freed but not
+				# yet cleared from the stockpile bookkeeping. `value is Item`
+				# would throw "left operand of `is` is a previously freed
+				# instance" on a stale ref, so route through typeof + is_instance_valid
+				# (Variant-level checks that don't dereference the Object).
+				if value == null:
+					continue
+				if typeof(value) == TYPE_OBJECT and not is_instance_valid(value as Object):
+					continue
 				var item: Item = null
 				if value is Item:
 					item = value as Item
 				elif value is Dictionary:
-					item = (value as Dictionary).get(StockpileZone.R_EXISTING) as Item
+					var existing: Variant = (value as Dictionary).get(StockpileZone.R_EXISTING)
+					if existing != null and typeof(existing) == TYPE_OBJECT and is_instance_valid(existing as Object):
+						item = existing as Item
 				if item != null and is_instance_valid(item):
 					counts[item.kind] = int(counts.get(item.kind, 0)) + item.count
 	return counts
@@ -1356,28 +1377,75 @@ func _add_status_banner(parent: Control, text_value: String, color: Color) -> vo
 func _add_limb_grid(parent: Control, worker: Worker) -> void:
 	_add_section_label(parent, "limbs")
 	var grid := GridContainer.new()
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 8)
-	grid.add_theme_constant_override("v_separation", 3)
+	# Two columns of {name, %, bar} stacks. Bars make damaged limbs read at a
+	# glance instead of forcing the player to scan percent text.
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 4)
 	parent.add_child(grid)
-	for limb_line in worker.limb_status_lines():
-		var label := Label.new()
-		label.text = limb_line
-		label.add_theme_font_size_override("font_size", 11)
-		# Tint the limb label red when condition drops; helps the player spot
-		# damaged parts at a glance instead of reading every percent.
-		var color: Color = COLOR_TEXT_LIGHT
-		var pct_start: int = limb_line.rfind(" ")
-		if pct_start >= 0:
-			var pct_str: String = limb_line.substr(pct_start + 1).rstrip("%")
-			var pct: int = pct_str.to_int()
-			if pct < 30:
-				color = Color(1.0, 0.42, 0.32)
-			elif pct < 70:
-				color = Color(0.98, 0.78, 0.32)
-		label.add_theme_color_override("font_color", color)
-		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		grid.add_child(label)
+	var limb_lines: Array[String] = worker.limb_status_lines()
+	var limb_ratios: Array[float] = worker.limb_condition_ratios()
+	for i in limb_lines.size():
+		var limb_line: String = limb_lines[i]
+		var ratio: float = limb_ratios[i] if i < limb_ratios.size() else 1.0
+		var limb_name: String = limb_line
+		var pct: int = int(roundf(ratio * 100.0))
+		var split: int = limb_line.rfind(" ")
+		if split >= 0:
+			limb_name = limb_line.substr(0, split)
+		var color: Color = COLOR_METER_GOOD
+		if pct < 30:
+			color = Color(1.0, 0.42, 0.32)
+		elif pct < 70:
+			color = Color(0.98, 0.78, 0.32)
+		_add_limb_cell(grid, limb_name, pct, ratio, color)
+
+
+func _add_limb_cell(parent: Control, limb_name: String, pct: int, ratio: float, color: Color) -> void:
+	var cell := VBoxContainer.new()
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.add_theme_constant_override("separation", 1)
+	parent.add_child(cell)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	cell.add_child(row)
+
+	var name_label := Label.new()
+	name_label.text = limb_name
+	name_label.add_theme_font_size_override("font_size", 11)
+	name_label.add_theme_color_override("font_color", color)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(name_label)
+
+	var value_label := Label.new()
+	value_label.text = "%d%%" % pct
+	value_label.add_theme_font_size_override("font_size", 10)
+	value_label.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	row.add_child(value_label)
+
+	var bar := ProgressBar.new()
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = clampf(ratio, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 4)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.09, 0.10, 0.95)
+	bg.corner_radius_top_left = 2
+	bg.corner_radius_top_right = 2
+	bg.corner_radius_bottom_left = 2
+	bg.corner_radius_bottom_right = 2
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = color
+	fg.corner_radius_top_left = 2
+	fg.corner_radius_top_right = 2
+	fg.corner_radius_bottom_left = 2
+	fg.corner_radius_bottom_right = 2
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fg)
+	cell.add_child(bar)
 
 
 func _build_structure_card() -> void:
@@ -1794,6 +1862,132 @@ func _status_label(label_text: String) -> Label:
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
 	return label
+
+
+# Same look as `_badge_container` but built on a Button so the badge becomes
+# clickable. Used by the jobs badge to open a dropdown listing pending jobs.
+func _jobs_badge_button(initial_text: String) -> Button:
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.text = initial_text
+	btn.add_theme_font_size_override("font_size", 11)
+	btn.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	btn.add_theme_color_override("font_hover_color", Color.WHITE)
+	btn.add_theme_stylebox_override("normal", _panel_textured_style("wisdom_badge", COLOR_BG_RAISED, Color(0.29, 0.32, 0.35, 0.46), 3.0, false))
+	btn.add_theme_stylebox_override("hover", _panel_textured_style("wisdom_badge", Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED, 3.0, false))
+	btn.add_theme_stylebox_override("pressed", _panel_textured_style("wisdom_badge", Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER, 3.0, false))
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	btn.pressed.connect(_toggle_jobs_popup)
+	return btn
+
+
+func _build_jobs_popup() -> void:
+	var popup := PanelContainer.new()
+	popup.name = "JobsPopup"
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup.visible = false
+	popup.z_index = 150
+	popup.custom_minimum_size = Vector2(260, 0)
+	popup.add_theme_stylebox_override("panel", _panel_textured_style("jobs_popup", COLOR_BG_DARK, COLOR_BORDER_DEFAULT, 4.0, true))
+	add_child(popup)
+	_jobs_popup = popup
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 8)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	popup.add_child(margin)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(244, 240)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	margin.add_child(scroll)
+
+	_jobs_popup_box = VBoxContainer.new()
+	_jobs_popup_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_jobs_popup_box.add_theme_constant_override("separation", 3)
+	scroll.add_child(_jobs_popup_box)
+
+
+func _toggle_jobs_popup() -> void:
+	if _jobs_popup == null or _jobs_button == null:
+		return
+	if _jobs_popup.visible:
+		_jobs_popup.visible = false
+		return
+	# Close any other popups so the screen doesn't stack overlapping dropdowns.
+	for other_popup in _resource_popups.values():
+		var p := other_popup as PanelContainer
+		if p != null:
+			p.visible = false
+	_refresh_jobs_popup()
+	var pos: Vector2 = _jobs_button.global_position + Vector2(0.0, _jobs_button.size.y + 3.0)
+	_jobs_popup.position = pos
+	_jobs_popup.visible = true
+
+
+func _refresh_jobs_popup() -> void:
+	if _jobs_popup_box == null:
+		return
+	for child in _jobs_popup_box.get_children():
+		_jobs_popup_box.remove_child(child)
+		child.queue_free()
+	if _job_board == null or _job_board.pending.is_empty():
+		var empty := Label.new()
+		empty.text = "No pending jobs."
+		empty.add_theme_font_size_override("font_size", 11)
+		empty.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+		_jobs_popup_box.add_child(empty)
+		return
+	# Snapshot the list — cancelling mutates pending mid-iteration.
+	var jobs: Array[Job] = []
+	for job in _job_board.pending:
+		jobs.append(job)
+	for job in jobs:
+		_add_jobs_popup_row(job)
+
+
+func _add_jobs_popup_row(job: Job) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	_jobs_popup_box.add_child(row)
+
+	var label := Label.new()
+	label.text = JobBoard.describe_job(job)
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	row.add_child(label)
+
+	if job.claimed_by != null:
+		var claimed := Label.new()
+		claimed.text = "active"
+		claimed.add_theme_font_size_override("font_size", 9)
+		claimed.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
+		row.add_child(claimed)
+
+	var cancel_btn := Button.new()
+	cancel_btn.text = "x"
+	cancel_btn.focus_mode = Control.FOCUS_NONE
+	cancel_btn.custom_minimum_size = Vector2(22, 20)
+	cancel_btn.add_theme_font_size_override("font_size", 11)
+	cancel_btn.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, Color(0.55, 0.20, 0.20, 0.8)))
+	cancel_btn.add_theme_stylebox_override("hover", _button_style(Color(0.28, 0.10, 0.10, 0.95), Color(0.95, 0.32, 0.28, 1.0)))
+	cancel_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.40, 0.15, 0.15, 1.0), Color(1.0, 0.5, 0.4, 1.0)))
+	cancel_btn.add_theme_color_override("font_color", Color(1.0, 0.55, 0.50))
+	cancel_btn.tooltip_text = "Cancel this job order"
+	cancel_btn.pressed.connect(_on_cancel_job.bind(job))
+	row.add_child(cancel_btn)
+
+
+func _on_cancel_job(job: Job) -> void:
+	if _job_board == null or job == null:
+		return
+	_job_board.cancel_job(job)
+	# Repopulate to reflect the new pending list.
+	_refresh_jobs_popup()
 
 
 # Wraps a label in a neat panel "badge" for consistent visual separation

@@ -15,9 +15,16 @@ const ACID_AVOID_FACTOR: float = 3.0
 @export var chunk_manager_path: NodePath
 
 var _chunk_manager: ChunkManager
+## Default grid for normal pathing. Teleporters are marked solid here so
+## jobs never route through them — a worker stepping on a teleporter mid-job
+## would get warped to a random destination and break their plan. Players /
+## explicit teleporter-charge logic uses _astar_with_teleport instead.
 var _astar: AStarGrid2D
-## Parallel grid where water and acid cells are marked solid. Used as a
-## "would there be a reasonable dry route?" query — see find_path().
+## Same as `_astar` but with teleporters walkable. Used by callers that
+## intentionally want to reach a teleporter cell (e.g. seek-charge fallback).
+var _astar_with_teleport: AStarGrid2D
+## Parallel grid where water and acid cells are marked solid (and teleporters
+## too). Used as a "would there be a reasonable dry route?" query — see find_path().
 var _astar_dry: AStarGrid2D
 var _region: Rect2i = Rect2i()
 var _rebuild_pending: bool = false
@@ -31,12 +38,17 @@ var _solid_cache: Dictionary = {}
 ## Cells that are water/acid family. Used to fast-check whether a returned
 ## path crosses fluid (so we only run the second A* when it might matter).
 var _fluid_cache: Dictionary = {}
+## Cells that are teleporter tiles (any teleporter, blocked or not). Used to
+## mark solidness on the default grid without re-querying tile types.
+var _teleporter_cache: Dictionary = {}
 
 
 func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_astar = AStarGrid2D.new()
 	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	_astar_with_teleport = AStarGrid2D.new()
+	_astar_with_teleport.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	_astar_dry = AStarGrid2D.new()
 	_astar_dry.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	EventBus.chunk_loaded.connect(_on_chunk_loaded)
@@ -86,13 +98,19 @@ func _on_tile_changed(grid: Vector2i, new_tile: int) -> void:
 		return
 	var solid: bool = not _chunk_manager.is_walkable(grid)
 	_solid_cache[grid] = solid
-	_astar.set_point_solid(grid, solid)
+	var teleporter: bool = new_tile == TerrainGenerator.TILE_TELEPORTER
+	if teleporter:
+		_teleporter_cache[grid] = true
+	else:
+		_teleporter_cache.erase(grid)
+	_astar.set_point_solid(grid, solid or teleporter)
+	_astar_with_teleport.set_point_solid(grid, solid)
 	var fluid: bool = TileVisuals.is_water_or_acid_family(new_tile)
 	if fluid:
 		_fluid_cache[grid] = true
 	else:
 		_fluid_cache.erase(grid)
-	_astar_dry.set_point_solid(grid, solid or fluid)
+	_astar_dry.set_point_solid(grid, solid or fluid or teleporter)
 
 
 func _rebuild() -> void:
@@ -120,6 +138,9 @@ func _rebuild() -> void:
 		_astar.region = _region
 		_astar.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
 		_astar.update()
+		_astar_with_teleport.region = _region
+		_astar_with_teleport.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
+		_astar_with_teleport.update()
 		_astar_dry.region = _region
 		_astar_dry.cell_size = Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS)
 		_astar_dry.update()
@@ -127,8 +148,10 @@ func _rebuild() -> void:
 		# Bounded by total cells loaded over the session, not the region area.
 		for g in _solid_cache.keys():
 			var s: bool = bool(_solid_cache[g])
-			_astar.set_point_solid(g, s)
-			_astar_dry.set_point_solid(g, s or _fluid_cache.has(g))
+			var teleport_here: bool = _teleporter_cache.has(g)
+			_astar.set_point_solid(g, s or teleport_here)
+			_astar_with_teleport.set_point_solid(g, s)
+			_astar_dry.set_point_solid(g, s or _fluid_cache.has(g) or teleport_here)
 	# Refill cells in newly-loaded or just-unloaded chunks. Whether or not
 	# the region grew, this also primes/refreshes the solid_cache.
 	for coord in _dirty_chunks.keys():
@@ -141,13 +164,20 @@ func _rebuild() -> void:
 					continue
 				var solid: bool = not _chunk_manager.is_walkable(g)
 				_solid_cache[g] = solid
-				_astar.set_point_solid(g, solid)
-				var fluid: bool = TileVisuals.is_water_or_acid_family(_chunk_manager.get_tile_at(g))
+				var tile: int = _chunk_manager.get_tile_at(g)
+				var teleporter: bool = tile == TerrainGenerator.TILE_TELEPORTER
+				if teleporter:
+					_teleporter_cache[g] = true
+				else:
+					_teleporter_cache.erase(g)
+				_astar.set_point_solid(g, solid or teleporter)
+				_astar_with_teleport.set_point_solid(g, solid)
+				var fluid: bool = TileVisuals.is_water_or_acid_family(tile)
 				if fluid:
 					_fluid_cache[g] = true
 				else:
 					_fluid_cache.erase(g)
-				_astar_dry.set_point_solid(g, solid or fluid)
+				_astar_dry.set_point_solid(g, solid or fluid or teleporter)
 	_dirty_chunks.clear()
 
 
@@ -157,15 +187,50 @@ func _rebuild() -> void:
 ## alternative; we accept it if it's not absurdly longer (WATER_AVOID_FACTOR
 ## / ACID_AVOID_FACTOR) so bots keep responsive movement when a sane detour
 ## exists but still wade through fluid when there's no real alternative.
+## Teleporters are excluded from the default path — workers should never
+## stumble through one mid-job and get warped off-task.
 func find_path(from: Vector2i, to: Vector2i) -> PackedVector2Array:
 	if not _region.has_point(from) or not _region.has_point(to):
 		return PackedVector2Array()
-	if _astar.is_point_solid(to):
-		return PackedVector2Array()
-	var grid_path: Array[Vector2i] = _astar.get_id_path(from, to)
+	# Allow `from` on a teleporter cell (worker may have just teleported in)
+	# by temporarily unsolidifying it for the query.
+	var unmark_from: bool = _teleporter_cache.has(from) and _astar.is_point_solid(from)
+	if unmark_from:
+		_astar.set_point_solid(from, false)
+	# A teleporter destination also has to be temporarily walkable so the
+	# pathfinder can reach it — needed when player commands a teleporter step.
+	var unmark_to: bool = from != to and _teleporter_cache.has(to) and _astar.is_point_solid(to)
+	if unmark_to:
+		_astar.set_point_solid(to, false)
+	var grid_path: Array[Vector2i] = []
+	if not _astar.is_point_solid(to):
+		grid_path = _astar.get_id_path(from, to)
+	if unmark_from:
+		_astar.set_point_solid(from, true)
+	if unmark_to:
+		_astar.set_point_solid(to, true)
 	if grid_path.is_empty():
 		return PackedVector2Array()
 	grid_path = _prefer_dry_path(grid_path, from, to)
+	var pts := PackedVector2Array()
+	pts.resize(grid_path.size() - 1)
+	for i in range(1, grid_path.size()):
+		pts[i - 1] = Chunk.grid_to_pixel_center(grid_path[i])
+	return pts
+
+
+## Same as `find_path` but allows the route to step on teleporter tiles.
+## Used by callers that intentionally want to walk to / through a teleporter
+## (e.g. seek-charge fallback that hops to a random destination hoping to
+## land near a known outlet).
+func find_path_via_teleporter(from: Vector2i, to: Vector2i) -> PackedVector2Array:
+	if not _region.has_point(from) or not _region.has_point(to):
+		return PackedVector2Array()
+	if _astar_with_teleport.is_point_solid(to):
+		return PackedVector2Array()
+	var grid_path: Array[Vector2i] = _astar_with_teleport.get_id_path(from, to)
+	if grid_path.is_empty():
+		return PackedVector2Array()
 	var pts := PackedVector2Array()
 	pts.resize(grid_path.size() - 1)
 	for i in range(1, grid_path.size()):
@@ -221,6 +286,16 @@ func walkable_neighbor_of(grid: Vector2i) -> Vector2i:
 func has_path(from: Vector2i, to: Vector2i) -> bool:
 	if not _region.has_point(from) or not _region.has_point(to):
 		return false
-	if _astar.is_point_solid(to):
-		return false
-	return not _astar.get_id_path(from, to).is_empty()
+	# Mirror find_path: allow teleporter endpoints by temporarily un-marking.
+	var unmark_from: bool = _teleporter_cache.has(from) and _astar.is_point_solid(from)
+	if unmark_from:
+		_astar.set_point_solid(from, false)
+	var unmark_to: bool = from != to and _teleporter_cache.has(to) and _astar.is_point_solid(to)
+	if unmark_to:
+		_astar.set_point_solid(to, false)
+	var ok: bool = not _astar.is_point_solid(to) and not _astar.get_id_path(from, to).is_empty()
+	if unmark_from:
+		_astar.set_point_solid(from, true)
+	if unmark_to:
+		_astar.set_point_solid(to, true)
+	return ok

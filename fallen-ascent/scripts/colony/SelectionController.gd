@@ -124,11 +124,9 @@ func clear_selection() -> bool:
 
 func _unhandled_input(event: InputEvent) -> void:
 	# When a designator mode is active, a plain left-click anywhere cancels
-	# it — except for placement-style modes (workshops/objects), where left
-	# click *places* via Designator and we must not steal the event.
+	# it. Right-click drives every mode (place, paint, designate), so we
+	# never steal RMB events from the Designator.
 	if _designator != null and _designator.current_mode() != Designator.Mode.NONE:
-		if _designator.has_method("_is_place_mode") and bool(_designator.call("_is_place_mode")):
-			return
 		if event is InputEventMouseButton:
 			var mb_d := event as InputEventMouseButton
 			if mb_d.pressed and mb_d.button_index == MOUSE_BUTTON_LEFT:

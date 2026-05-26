@@ -176,6 +176,48 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       always positive. Consider a fatigue mechanic (consecutive sessions
       yield less) once players are exploiting it.
 
+## Quick-fix session 2026-05-26
+
+- [ ] **Teleporter pathfinding shortcut.** Pathfinder now treats teleporters
+      as solid in the default A* grid so workers never wander through one
+      mid-job and get warped off-task. A new `_astar_with_teleport` and
+      `find_path_via_teleporter` cover the explicit "walk to a teleporter"
+      use cases (charge-via-teleporter, socialize repath). Future work: use
+      teleporters as actual shortcuts in long paths — would need a
+      hierarchical pathfinder or a precomputed pair-link graph since
+      destinations are currently random.
+- [ ] **World-light texture refresh.** StructureManager now hooks
+      `EventBus.visibility_changed` and calls `queue_redraw`, so generated
+      lights paint their atlas cell the moment the player explores their
+      tile. Previously the redraw only happened on door animations or new
+      structures being placed, leaving big patches of "invisible" lights.
+- [ ] **Jobs dropdown.** "jobs N" in the top strip is now a button. Click
+      to see every pending job with a cancel (`x`) button. Uses
+      `JobBoard.cancel_job(job)` + `JobBoard.describe_job(job)`. Active
+      jobs (claimed by a worker) are tagged "active" so the player knows
+      a cancel will yank the worker off-task. HaulJob cancel releases the
+      stockpile reservation; if any new job type adds external bookkeeping
+      it must be added to `cancel_job` too.
+- [ ] **Worker limb panel.** The worker detail card now renders each limb
+      as a name + percent + condition bar (color-coded green / amber / red).
+      Added `Worker.limb_condition_ratios()` so the HUD doesn't have to
+      re-parse the status lines.
+- [ ] **Designation place modes are RMB-only.** Left-click in any active
+      designation mode (paint, designate, place) now cancels — including the
+      workshop / object placement modes that previously also placed on LMB.
+      RMB drives every mode uniformly.
+- [ ] **Floor variation shader pass 2.** `floor_variation.gdshader` now
+      layers patch-scale brightness bands, coarse grime stipple, soft tile-
+      edge shading, and occasional 1px chips on top of the existing wear /
+      tint hash. Still pixel-art friendly (all hashes quantized, pixel-grid
+      sampling). Tunable via `patch_scale`, `grime_*`, `crack_chance`,
+      `edge_shade`. Visual identity will need another pass once real floor
+      art lands.
+- [ ] **Grass desaturated.** `grass_overlay.gdshader` mixes toward
+      luminance via a `saturation` uniform (default 0.55) and applies a
+      muted `mood_tint` so the placeholder grass reads as moss instead of
+      neon. Tune both once real grass art lands.
+
 ## Recent quick-fix session notes
 
 - [ ] **World-gen lights now reuse the explored-cells visibility gate** in

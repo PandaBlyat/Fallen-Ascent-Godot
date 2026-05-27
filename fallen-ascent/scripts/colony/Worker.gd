@@ -46,6 +46,19 @@ enum State {
 	DEAD,
 }
 
+enum Personality {
+	DUTIFUL,
+	GRUMPY,
+	CHEERFUL,
+	PHILOSOPHICAL,
+	PARANOID,
+	STOIC,
+}
+
+const PERSONALITY_LABELS: Array[String] = [
+	"Dutiful", "Grumpy", "Cheerful", "Philosophical", "Paranoid", "Stoic",
+]
+
 const CombatStatsScript: Script = preload("res://scripts/combat/CombatStats.gd")
 const CombatService: Script = preload("res://scripts/combat/CombatService.gd")
 const MINING_SFX: AudioStream = preload("res://mining_sound.mp3")
@@ -171,6 +184,7 @@ const ROUTE_CACHE_MSEC: int = 450
 const STUCK_WATCHDOG_SECONDS: float = 3.0
 const STUCK_PROGRESS_EPSILON_PX: float = 0.5
 
+var _personality: int = Personality.DUTIFUL
 var _state: int = State.IDLE
 var _job: Job = null
 var _path: PackedVector2Array = PackedVector2Array()
@@ -299,6 +313,7 @@ func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 	_highlighter_atlas = load(HIGHLIGHTER_ATLAS_PATH) as Texture2D
 	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
+	_personality = randi() % (Personality.STOIC + 1)
 	_init_limbs()
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
@@ -635,6 +650,14 @@ func is_selected() -> bool:
 
 func display_name() -> String:
 	return str(name) if not str(name).is_empty() else "bot"
+
+
+func personality() -> int:
+	return _personality
+
+
+func personality_label() -> String:
+	return PERSONALITY_LABELS[_personality]
 
 
 func action_history() -> Array[String]:

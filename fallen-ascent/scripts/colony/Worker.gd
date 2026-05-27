@@ -48,6 +48,10 @@ enum State {
 
 const CombatStatsScript: Script = preload("res://scripts/combat/CombatStats.gd")
 const CombatService: Script = preload("res://scripts/combat/CombatService.gd")
+const MINING_SFX: AudioStream = preload("res://mining_sound.mp3")
+const MOVING_SFX: AudioStream = preload("res://bot_moving_sound.mp3")
+## Positional sound max_distance (px) at camera zoom 1.0. Scaled by zoom updates.
+const SOUND_BASE_MAX_DIST: float = 400.0
 const COMBAT_HP_MAX: float = 100.0
 const COMBAT_REPATH_INTERVAL: float = 0.5
 const COMBAT_LOST_TIMEOUT: float = 3.0
@@ -216,6 +220,10 @@ var _ai_decision_timer: float = 0.0
 var _acid_damage_accum: float = 0.0
 var _last_action_state: int = -1
 var _last_action_job: Job = null
+var _last_sound_state: int = -1
+var _last_sound_job: Job = null
+var _mining_player: AudioStreamPlayer2D
+var _moving_player: AudioStreamPlayer2D
 var _last_energy_for_draw: float = ENERGY_MAX
 var _route_cache: Dictionary = {}
 var _stuck_watchdog_timer: float = 0.0
@@ -297,11 +305,81 @@ func _ready() -> void:
 	EventBus.tile_changed.connect(_on_tile_changed)
 	EntityGrid.register(self, FACTION_COLONY, current_grid())
 	tree_exiting.connect(_on_tree_exiting)
+	_setup_audio_players()
 	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
 
 
 func _on_tree_exiting() -> void:
 	EntityGrid.unregister(self)
+
+
+func _setup_audio_players() -> void:
+	_mining_player = AudioStreamPlayer2D.new()
+	_mining_player.stream = MINING_SFX
+	_mining_player.volume_db = -6.0
+	_mining_player.bus = &"SFX"
+	_mining_player.max_distance = AudioManager.current_max_dist
+	add_child(_mining_player)
+	_mining_player.finished.connect(func() -> void:
+		if _state == State.WORKING and _job is MineJob:
+			_mining_player.play()
+	)
+
+	_moving_player = AudioStreamPlayer2D.new()
+	_moving_player.stream = MOVING_SFX
+	_moving_player.volume_db = -10.0
+	_moving_player.bus = &"SFX"
+	_moving_player.max_distance = AudioManager.current_max_dist
+	add_child(_moving_player)
+	_moving_player.finished.connect(func() -> void:
+		if _is_moving_sound_state(_state):
+			_moving_player.play()
+	)
+
+	EventBus.camera_moved.connect(_on_worker_camera_moved)
+
+
+func _on_worker_camera_moved(_world_pos: Vector2, zoom: Vector2) -> void:
+	var zoom_factor: float = (zoom.x + zoom.y) * 0.5
+	var dist: float = SOUND_BASE_MAX_DIST / maxf(zoom_factor, 0.001)
+	_mining_player.max_distance = dist
+	_moving_player.max_distance = dist
+
+
+func _update_sounds() -> void:
+	var should_mine: bool = _state == State.WORKING and _job is MineJob
+	if should_mine:
+		if not _mining_player.playing:
+			_mining_player.play()
+	elif _mining_player.playing:
+		_mining_player.stop()
+
+	var should_move: bool = _is_moving_sound_state(_state)
+	if should_move:
+		if not _moving_player.playing:
+			_moving_player.play()
+	elif _moving_player.playing:
+		_moving_player.stop()
+
+
+func _is_moving_sound_state(s: int) -> bool:
+	return s == State.MOVING_TO_WORK \
+		or s == State.MOVING_TO_PICKUP \
+		or s == State.CARRYING \
+		or s == State.MOVING_TO_DROP \
+		or s == State.MOVING_TO_BUILD_SITE \
+		or s == State.MOVING_TO_CRAFT_SITE \
+		or s == State.MOVING_FREEFORM \
+		or s == State.MOVING_TO_CHARGE \
+		or s == State.ROAMING \
+		or s == State.WANDERING \
+		or s == State.MOVING_TO_REST \
+		or s == State.MOVING_TO_REPAIR \
+		or s == State.MOVING_TO_SOCIALIZE \
+		or s == State.MOVING_TO_MEDITATE \
+		or s == State.MOVING_TO_SAVE \
+		or s == State.CARRYING_WORKER \
+		or s == State.MOVING_TO_DELIVER
 
 
 func is_alive() -> bool:
@@ -425,6 +503,12 @@ func _die() -> void:
 	_state = State.DEAD
 	_path = PackedVector2Array()
 	_path_index = 0
+	if _mining_player != null:
+		_mining_player.stop()
+	if _moving_player != null:
+		_moving_player.stop()
+	# If we were mid-rescue, drop the rescued worker here (still downed) so
+	# another teammate can pick the save back up where the carrier fell.
 	if _carried_worker != null and is_instance_valid(_carried_worker):
 		_carried_worker.carried_by = null # Drop safely if dead
 		_carried_worker.position = position
@@ -1042,6 +1126,10 @@ func _process(delta: float) -> void:
 		_last_action_state = _state
 		_last_action_job = _job
 		_refresh_action_text()
+	if _state != _last_sound_state or _job != _last_sound_job:
+		_last_sound_state = _state
+		_last_sound_job = _job
+		_update_sounds()
 
 
 ## True when this worker is in the rebooting (downed) state — condition has
@@ -2575,6 +2663,7 @@ func _complete_mine(mine: MineJob) -> void:
 		elif randf() < 0.04:
 			_colony_site.call("spawn_item_at", mine.target, Item.Kind.MECHANISM)
 	_remember("mined %d,%d" % [mine.target.x, mine.target.y])
+	AudioManager.play_mine_complete(position)
 	_finish_job()
 
 

@@ -1,8 +1,9 @@
 # Workshops Atlas
 
-`workshops_atlas.png` uses 64 px cells. Workshop sprites are drawn once from
-their anchor cell and cover a 2x2 tile visual footprint. Doors, walls, lights,
-and crafted placeable objects do not live in this atlas.
+`workshops_atlas.png` uses 64 px source slots. Workshop sprites are drawn once
+from their anchor cell, but visual size can be 32x32, 64x32, or 64x64 via
+`BuildBlueprint.visual_size_tiles`. Doors, walls, lights, and crafted
+placeable objects do not live in this atlas.
 
 Columns:
 
@@ -20,3 +21,10 @@ Columns:
 - `(704,0)`: replication cradle
 
 Column order matches `BuildBlueprint.workshop_atlas_index`.
+
+Visual draw sizes:
+
+- dock bed: 64x32
+- research bench, crafting spot, extractor, sensor, charge: 32x32
+- repair bench, crafting bench, assembler press, mechanic dock, fabricator,
+  replication cradle: 64x64

@@ -387,13 +387,12 @@ func _apply_delete_click(grid: Vector2i) -> void:
 			_stockpile_manager.remove_zone(zone)
 			return
 	if _room_manager != null and _room_manager.has_method("remove_room_at"):
-		_room_manager.call("remove_room_at", grid)
-		return
-	if _job_board != null and _job_board.has_mine_at(grid):
-		_job_board.cancel_mine_at(grid)
-		return
-	if _job_board != null and _job_board.has_scrape_biomass_at(grid):
-		_job_board.cancel_scrape_biomass_at(grid)
+		var removed_room: bool = bool(_room_manager.call("remove_room_at", grid))
+		if removed_room:
+			return
+	if _job_board != null and _job_board.has_method("cancel_order_at"):
+		if bool(_job_board.call("cancel_order_at", grid)):
+			return
 		return
 
 

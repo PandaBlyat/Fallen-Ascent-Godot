@@ -1,10 +1,5 @@
 class_name FloatingText
 extends Node2D
-##
-## World-space floating text. Listens to combat hits and dodges, spawns a short
-## upward-rising label. Lightweight: one Node2D per active label, freed on
-## fade-out. No per-frame allocations after spawn.
-##
 
 const LIFETIME_SECONDS: float = 0.85
 const RISE_DISTANCE_PX: float = 14.0
@@ -36,12 +31,20 @@ func _on_combat_dodged(_attacker: Node, target: Node) -> void:
 
 
 func _spawn(world_pos: Vector2, text: String, color: Color) -> void:
+	if _font == null:
+		return
+		
+	var local_origin = to_local(world_pos) + Vector2(randf_range(-HORIZONTAL_JITTER_PX, HORIZONTAL_JITTER_PX), -8.0)
+	var size = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE)
+	
 	_entries.append({
 		"text": text,
 		"color": color,
-		"origin": world_pos + Vector2(randf_range(-HORIZONTAL_JITTER_PX, HORIZONTAL_JITTER_PX), -8.0),
+		"origin": local_origin,
+		"size": size,
 		"age": 0.0,
 	})
+	
 	if _entries.size() > 64:
 		_entries.pop_front()
 	queue_redraw()
@@ -50,6 +53,7 @@ func _spawn(world_pos: Vector2, text: String, color: Color) -> void:
 func _process(delta: float) -> void:
 	if _entries.is_empty():
 		return
+		
 	var i: int = _entries.size() - 1
 	while i >= 0:
 		_entries[i]["age"] = float(_entries[i]["age"]) + delta
@@ -69,9 +73,15 @@ func _draw() -> void:
 		var pos := origin + Vector2(0.0, -RISE_DISTANCE_PX * t)
 		var color: Color = entry["color"] as Color
 		color.a = 1.0 - t
+		
 		var text: String = entry["text"] as String
-		var size := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE)
-		draw_string(_font, pos + Vector2(-size.x * 0.5, 0.0) + Vector2(1, 1), text,
+		var size: Vector2 = entry["size"] as Vector2
+		
+		var text_offset := Vector2(-size.x * 0.5, 0.0)
+		
+		# Shadow
+		draw_string(_font, pos + text_offset + Vector2(1, 1), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, Color(0, 0, 0, color.a * 0.7))
-		draw_string(_font, pos + Vector2(-size.x * 0.5, 0.0), text,
+		# Main Text
+		draw_string(_font, pos + text_offset, text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, color)

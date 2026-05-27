@@ -26,10 +26,6 @@ TechManager="*res://scripts/autoload/TechManager.gd"
 EntityGrid="*res://scripts/autoload/EntityGrid.gd"
 AIScheduler="*res://scripts/autoload/AIScheduler.gd"
 
-[audio]
-
-buses/default_bus_layout="res://default_bus_layout.tres"
-
 [display]
 
 window/size/viewport_width=3440

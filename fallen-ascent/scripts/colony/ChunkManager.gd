@@ -487,8 +487,11 @@ func nearest_outlet(from: Vector2i, pathfinder: Pathfinder = null, fog: FogOfWar
 		var d: int = maxi(absi(outlet.x - from.x), absi(outlet.y - from.y))
 		if d >= best_d:
 			continue
-		if pathfinder != null and not pathfinder.has_path(from, outlet):
-			continue
+		if pathfinder != null:
+			var route: Dictionary = pathfinder.find_path_with_teleporters(from, outlet, fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty() and from != outlet:
+				continue
 		best = outlet
 		best_d = d
 	return best
@@ -557,6 +560,47 @@ func force_outlet_on_spawn(spawn_cells: Array[Vector2i], fallback: Vector2i) -> 
 		set_tile_at(fallback, TerrainGenerator.TILE_OUTLET)
 		return fallback
 	return Pathfinder.UNREACHABLE
+
+
+func ensure_spawn_outlet(spawn_cells: Array[Vector2i], fallback: Vector2i) -> Vector2i:
+	var seed: Vector2i = Pathfinder.UNREACHABLE
+	for cell in spawn_cells:
+		if _is_floor_family_for_outlet(get_tile_at(cell)):
+			seed = cell
+			break
+	if seed == Pathfinder.UNREACHABLE and _is_floor_family_for_outlet(get_tile_at(fallback)):
+		seed = fallback
+	if seed == Pathfinder.UNREACHABLE:
+		seed = _nearest_floor_family_for_outlet(fallback)
+	if seed == Pathfinder.UNREACHABLE:
+		return force_outlet_on_spawn(spawn_cells, fallback)
+
+	var region: Array[Vector2i] = _floor_family_region(seed, 1024)
+	var outlets: Array[Vector2i] = []
+	for cell in region:
+		if get_tile_at(cell) == TerrainGenerator.TILE_OUTLET:
+			outlets.append(cell)
+	if not outlets.is_empty():
+		var keeper: Vector2i = _nearest_cell(seed, outlets)
+		for outlet in outlets:
+			if outlet != keeper:
+				set_tile_at(outlet, TerrainGenerator.TILE_FLOOR)
+		return keeper
+
+	var target: Vector2i = Pathfinder.UNREACHABLE
+	for cell in spawn_cells:
+		if _can_force_outlet_on(get_tile_at(cell)):
+			target = cell
+			break
+	if target == Pathfinder.UNREACHABLE and _can_force_outlet_on(get_tile_at(fallback)):
+		target = fallback
+	if target == Pathfinder.UNREACHABLE:
+		target = ensure_outlet_near(seed)
+	if target == Pathfinder.UNREACHABLE:
+		target = force_outlet_on_spawn(spawn_cells, seed)
+	else:
+		set_tile_at(target, TerrainGenerator.TILE_OUTLET)
+	return target
 
 
 func _nearest_floor_family_for_outlet(origin: Vector2i) -> Vector2i:
@@ -637,6 +681,42 @@ func _floor_family_reachable(from: Vector2i, to: Vector2i) -> bool:
 	return false
 
 
+func _floor_family_region(seed: Vector2i, limit: int) -> Array[Vector2i]:
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var out: Array[Vector2i] = []
+	var queue: Array[Vector2i] = [seed]
+	var seen: Dictionary = {seed: true}
+	var head: int = 0
+	while head < queue.size() and seen.size() <= limit:
+		var cell: Vector2i = queue[head]
+		head += 1
+		if not _is_floor_family_for_outlet(get_tile_at(cell)):
+			continue
+		out.append(cell)
+		for off in OFFSETS:
+			var next: Vector2i = cell + off
+			if seen.has(next) or not is_grid_in_map(next):
+				continue
+			if not _is_floor_family_for_outlet(get_tile_at(next)):
+				continue
+			seen[next] = true
+			queue.append(next)
+	return out
+
+
+func _nearest_cell(origin: Vector2i, cells: Array[Vector2i]) -> Vector2i:
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for cell in cells:
+		var d: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
+		if d < best_d:
+			best = cell
+			best_d = d
+	return best
+
+
 func _fallback_outlet_next_to(seed: Vector2i) -> Vector2i:
 	const OFFSETS: Array[Vector2i] = [
 		Vector2i.ZERO, Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
@@ -663,8 +743,11 @@ func random_nearby_rust(from: Vector2i, radius: int, pathfinder: Pathfinder = nu
 			continue
 		if get_tile_at(candidate) != TerrainGenerator.TILE_RUST:
 			continue
-		if pathfinder != null and not pathfinder.has_path(from, candidate):
-			continue
+		if pathfinder != null:
+			var route: Dictionary = pathfinder.find_path_with_teleporters(from, candidate, fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty() and from != candidate:
+				continue
 		best = candidate
 		best_d = d
 	return best
@@ -1002,8 +1085,11 @@ func random_nearby_grass(from: Vector2i, radius: int, pathfinder: Pathfinder = n
 			continue
 		if not has_grass(candidate):
 			continue
-		if pathfinder != null and not pathfinder.has_path(from, candidate):
-			continue
+		if pathfinder != null:
+			var route: Dictionary = pathfinder.find_path_with_teleporters(from, candidate, fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty() and from != candidate:
+				continue
 		best = candidate
 		best_d = d
 	return best

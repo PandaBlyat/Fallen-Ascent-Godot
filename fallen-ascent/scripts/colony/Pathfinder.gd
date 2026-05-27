@@ -240,6 +240,119 @@ func find_path_via_teleporter(from: Vector2i, to: Vector2i) -> PackedVector2Arra
 	return pts
 
 
+## Returns a route dictionary:
+##   path: PackedVector2Array, entry: Vector2i, exit: Vector2i,
+##   uses_teleporter: bool.
+## Direct A* remains preferred when it is shortest. Teleporter routes are
+## explicit: the returned path contains entry teleporter then chosen exit
+## teleporter, so Worker can warp deterministically instead of random-hopping.
+func find_path_with_teleporters(from: Vector2i, to: Vector2i, fog: Object = null) -> Dictionary:
+	var empty_route: Dictionary = {
+		"path": PackedVector2Array(),
+		"entry": UNREACHABLE,
+		"exit": UNREACHABLE,
+		"uses_teleporter": false,
+	}
+	if from == to:
+		return empty_route
+	if not _region.has_point(from) or not _region.has_point(to):
+		return empty_route
+
+	var best_path: PackedVector2Array = find_path(from, to)
+	var best_entry: Vector2i = UNREACHABLE
+	var best_exit: Vector2i = UNREACHABLE
+	var best_uses_teleporter: bool = false
+	if not _path_allowed_by_fog(best_path, fog):
+		best_path = PackedVector2Array()
+	var best_cost: int = best_path.size() if not best_path.is_empty() else 0x7fffffff
+
+	if _chunk_manager == null or not _chunk_manager.has_method("teleporter_cells"):
+		return {
+			"path": best_path,
+			"entry": best_entry,
+			"exit": best_exit,
+			"uses_teleporter": best_uses_teleporter,
+		} if not best_path.is_empty() else empty_route
+
+	var teleporters: Array[Vector2i] = _chunk_manager.call("teleporter_cells") as Array[Vector2i]
+	if teleporters.size() < 2:
+		return {
+			"path": best_path,
+			"entry": best_entry,
+			"exit": best_exit,
+			"uses_teleporter": best_uses_teleporter,
+		} if not best_path.is_empty() else empty_route
+
+	for entry in teleporters:
+		if fog != null and fog.has_method("is_explored") and not bool(fog.call("is_explored", entry)):
+			continue
+		var path_to_entry: PackedVector2Array = find_path(from, entry)
+		if path_to_entry.is_empty() and from != entry:
+			continue
+		if not _path_allowed_by_fog(path_to_entry, fog):
+			continue
+		for exit in teleporters:
+			if exit == entry:
+				continue
+			if fog != null and fog.has_method("is_explored") and not bool(fog.call("is_explored", exit)):
+				continue
+			var path_from_exit: PackedVector2Array = find_path(exit, to)
+			if path_from_exit.is_empty() and exit != to:
+				continue
+			if not _path_allowed_by_fog(path_from_exit, fog):
+				continue
+			var combined: PackedVector2Array = _combine_teleporter_path(path_to_entry, exit, path_from_exit)
+			var cost: int = combined.size()
+			if cost <= 0 or cost >= best_cost:
+				continue
+			best_path = combined
+			best_entry = entry
+			best_exit = exit
+			best_uses_teleporter = true
+			best_cost = cost
+
+	if best_path.is_empty():
+		return empty_route
+	return {
+		"path": best_path,
+		"entry": best_entry,
+		"exit": best_exit,
+		"uses_teleporter": best_uses_teleporter,
+	}
+
+
+func _combine_teleporter_path(
+	path_to_entry: PackedVector2Array,
+	exit: Vector2i,
+	path_from_exit: PackedVector2Array
+) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	out.resize(path_to_entry.size() + 1 + path_from_exit.size())
+	var write: int = 0
+	for point in path_to_entry:
+		out[write] = point
+		write += 1
+	out[write] = Chunk.grid_to_pixel_center(exit)
+	write += 1
+	for point in path_from_exit:
+		out[write] = point
+		write += 1
+	return out
+
+
+func _path_allowed_by_fog(path: PackedVector2Array, fog: Object) -> bool:
+	if fog == null or not fog.has_method("is_explored"):
+		return true
+	for waypoint in path:
+		var grid := Vector2i(
+			int(floor(waypoint.x / Chunk.TILE_PIXELS)),
+			int(floor(waypoint.y / Chunk.TILE_PIXELS)),
+		)
+		if not bool(fog.call("is_explored", grid)):
+			return false
+	return true
+
+
 ## If the path crosses any fluid cell and a near-equivalent dry path exists,
 ## swap to the dry one. Cheap-out paths (worker starts on or ends on a fluid
 ## cell — e.g. already standing in a puddle) are left alone since the dry

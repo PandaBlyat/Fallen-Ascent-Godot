@@ -403,8 +403,11 @@ func mine_stand_for(grid: Vector2i, from: Vector2i, pathfinder: Pathfinder) -> V
 				continue
 			if not _chunk_manager.is_walkable(candidate):
 				continue
-			if pathfinder != null and candidate != from and not pathfinder.has_path(from, candidate):
-				continue
+			if pathfinder != null and candidate != from:
+				var route: Dictionary = pathfinder.find_path_with_teleporters(from, candidate)
+				var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+				if path.is_empty():
+					continue
 			var d: int = maxi(absi(candidate.x - from.x), absi(candidate.y - from.y))
 			if d < best_d:
 				best = candidate

@@ -43,18 +43,21 @@ const _RUST_NOISE_THRESHOLD: float = -0.25
 const _WATER_NOISE_THRESHOLD: float = -0.72
 const _SERVICE_CORE_NOISE_THRESHOLD: float = 0.80
 const _RICH_WALL_NOISE_THRESHOLD: float = 0.76
-const _TELEPORTER_NOISE_THRESHOLD: float = 0.78
+const _TELEPORTER_NOISE_THRESHOLD: float = 1.01
 const _VOID_NEIGHBOUR_THRESHOLD: int = 6
 const _ROOM_MIN: int = 4
-const _ROOM_MAX: int = 14
+const _ROOM_MAX: int = 20
 const _ROOM_TARGET_MIN: int = 2
 const _ROOM_TARGET_MAX: int = 5
 const _ROOM_PLACEMENT_ATTEMPTS: int = 36
 const _EDGE_MARGIN: int = 2
-const _VOID_CLUSTER_MIN: int = 2
-const _VOID_CLUSTER_MAX: int = 5
-const _VOID_CLUSTER_RADIUS_MIN: int = 2
-const _VOID_CLUSTER_RADIUS_MAX: int = 6
+const _VOID_CLUSTER_MIN: int = 1
+const _VOID_CLUSTER_MAX: int = 4
+const _VOID_CLUSTER_RADIUS_MIN: int = 3
+const _VOID_CLUSTER_RADIUS_MAX: int = 7
+
+# Macro-Structure Probability (Concept 5)
+const _MACRO_STRUCTURE_PROBABILITY: float = 0.15
 
 
 static func make_noise(site_seed: int) -> FastNoiseLite:
@@ -182,37 +185,45 @@ static func populate(
 	# Note: door placement relies on raw constants to guarantee alignment on chunk edges.
 	var doors: Array[Vector2i] = _edge_doors(site_seed, chunk_coord, chunk_size)
 
-	# 4. Carve rooms.
-	var rooms: Array[Rect2i] = _place_rooms(
-		rng, chunk_size, room_target_min, room_target_max, room_min_size, room_max_size, room_attempts
-	)
-	for room in rooms:
-		_carve_room(out, chunk_size, room, rng, zone)
+	# 4. Carve layout (Standard rooms OR Single Macro-Structure)
+	var is_macro_chunk: bool = (rng.randf() < _MACRO_STRUCTURE_PROBABILITY) and (zone != 2)
+	var rooms: Array[Rect2i] = []
 
-	# 5. Generate voids inside walls early.
-	_void_pass(out, chunk_size, rng, void_min, void_max, void_rad_min, void_rad_max)
+	if is_macro_chunk:
+		# CONCEPT 5: Generates a monolithic structure spanning the chunk
+		_carve_macro_structure(out, chunk_size, doors, rng, zone)
+	else:
+		# Standard Room layout
+		rooms = _place_rooms(
+			rng, chunk_size, room_target_min, room_target_max, room_min_size, room_max_size, room_attempts
+		)
+		for room in rooms:
+			_carve_room(out, chunk_size, room, rng, zone)
 
-	# 6. Corridors: doorway -> nearest room, plus room-to-room spine.
-	for door in doors:
-		out[door.y * chunk_size + door.x] = TILE_FLOOR
-		var target: Vector2i = _nearest_room_center(door, rooms)
-		if target.x < 0:
-			target = Vector2i(chunk_size / 2, chunk_size / 2)
-		_carve_corridor(out, chunk_size, door, target, rng, max_corridor_width)
-	for i in range(1, rooms.size()):
-		_carve_corridor(out, chunk_size, _rect_center(rooms[i - 1]), _rect_center(rooms[i]), rng, max_corridor_width)
+		# 5. Generate voids inside walls early.
+		_void_pass(out, chunk_size, rng, void_min, void_max, void_rad_min, void_rad_max)
 
-	# 7. Shortcut loop (corridors intersecting voids create catwalk networks).
-	if rooms.size() >= 3 and rng.randf() < shortcut_prob:
-		var a_idx: int = rng.randi_range(0, rooms.size() - 1)
-		var b_idx: int = rng.randi_range(0, rooms.size() - 1)
-		if a_idx != b_idx:
-			_carve_corridor(out, chunk_size, _rect_center(rooms[a_idx]), _rect_center(rooms[b_idx]), rng, max_corridor_width)
+		# 6. Corridors: doorway -> nearest room, plus room-to-room spine.
+		for door in doors:
+			out[door.y * chunk_size + door.x] = TILE_FLOOR
+			var target: Vector2i = _nearest_room_center(door, rooms)
+			if target.x < 0:
+				target = Vector2i(chunk_size / 2, chunk_size / 2)
+			_carve_corridor(out, chunk_size, door, target, rng, max_corridor_width)
+		for i in range(1, rooms.size()):
+			_carve_corridor(out, chunk_size, _rect_center(rooms[i - 1]), _rect_center(rooms[i]), rng, max_corridor_width)
 
-	# 7.5. Dead-end stubs: short corridors that branch off main paths into walls
-	# and terminate. Makes the layout feel mazey without breaking connectivity.
-	if rng.randf() < _DEAD_END_PROBABILITY:
-		_carve_dead_ends(out, chunk_size, rng, rooms)
+		# 7. Shortcut loop (corridors intersecting voids create catwalk networks).
+		if rooms.size() >= 3 and rng.randf() < shortcut_prob:
+			var a_idx: int = rng.randi_range(0, rooms.size() - 1)
+			var b_idx: int = rng.randi_range(0, rooms.size() - 1)
+			if a_idx != b_idx:
+				_carve_corridor(out, chunk_size, _rect_center(rooms[a_idx]), _rect_center(rooms[b_idx]), rng, max_corridor_width)
+
+		# 7.5. Dead-end stubs: short corridors that branch off main paths into walls
+		# and terminate. Makes the layout feel mazey without breaking connectivity.
+		if rng.randf() < _DEAD_END_PROBABILITY:
+			_carve_dead_ends(out, chunk_size, rng, rooms)
 
 	# 8. Continuous global utility lines spanning boundaries.
 	_draw_global_conduits(out, chunk_size, chunk_coord, site_seed)
@@ -284,7 +295,7 @@ static func populate(
 			elif floor_noise > debris_threshold:
 				out[idx] = TILE_DEBRIS
 
-	# 10. Room utility taps.
+	# 10. Room utility taps (Only applicable to room arrays)
 	for room in rooms:
 		_place_room_outlets(out, chunk_size, room, rng)
 
@@ -438,6 +449,10 @@ static func _carve_room(
 		_:
 			_carve_jagged_room(out, chunk_size, room, rng)
 
+	# CONCEPT 2: Incorporate brutalist buttresses along the interior walls of large rooms
+	if style in [0, 1, 3, 4, 5]:
+		_add_buttresses_to_room(out, chunk_size, room, rng)
+
 	# Add support columns in sufficiently large rooms
 	if style != 5:
 		_add_pillars(out, chunk_size, room, rng, zone)
@@ -513,7 +528,7 @@ static func _carve_cross_room(
 ) -> void:
 	var bar_w_min: int = maxi(2, int(float(room.size.x) / 3.0))
 	var bar_h_min: int = maxi(2, int(float(room.size.y) / 3.0))
-	var bar_w_max: int = maxi(2, int(float(room.size.x) / 2.0) + 1)
+	var bar_w_max: int = maxi(2, int(float(room.size.y) / 2.0) + 1)
 	var bar_h_max: int = maxi(2, int(float(room.size.y) / 2.0) + 1)
 	var bar_w: int = rng.randi_range(bar_w_min, bar_w_max)
 	var bar_h: int = rng.randi_range(bar_h_min, bar_h_max)
@@ -720,6 +735,40 @@ static func _add_pillars(
 			var idx: int = y * chunk_size + x
 			if out[idx] == TILE_FLOOR:
 				out[idx] = TILE_WALL
+
+
+## CONCEPT 2: Projects heavy load-bearing wall supports inward along rectangular margins.
+static func _add_buttresses_to_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	if room.size.x < 6 or room.size.y < 6:
+		return
+
+	# Protrude inward on North and South walls
+	for lx in range(room.position.x + 2, room.position.x + room.size.x - 2, 3):
+		if rng.randf() < 0.8:
+			var n_idx: int = (room.position.y) * chunk_size + lx
+			var s_idx: int = (room.position.y + room.size.y - 1) * chunk_size + lx
+			
+			# Check immediate inner neighbors to safely place wall protrusion
+			if out[n_idx + chunk_size] == TILE_FLOOR:
+				out[n_idx + chunk_size] = TILE_WALL
+			if out[s_idx - chunk_size] == TILE_FLOOR:
+				out[s_idx - chunk_size] = TILE_WALL
+
+	# Protrude inward on West and East walls
+	for ly in range(room.position.y + 2, room.position.y + room.size.y - 2, 3):
+		if rng.randf() < 0.8:
+			var w_idx: int = ly * chunk_size + room.position.x
+			var e_idx: int = ly * chunk_size + (room.position.x + room.size.x - 1)
+			
+			if out[w_idx + 1] == TILE_FLOOR:
+				out[w_idx + 1] = TILE_WALL
+			if out[e_idx - 1] == TILE_FLOOR:
+				out[e_idx - 1] = TILE_WALL
 
 
 static func _place_room_outlets(
@@ -949,6 +998,11 @@ static func _void_pass(
 	if void_max <= 0:
 		return # Skip void generation (e.g., inside Habitation Zones)
 
+	# CONCEPT 4: Chance to generate continuous linear sine-wave chasms instead of simple blobs
+	if rng.randf() < 0.35:
+		_carve_linear_chasm(out, chunk_size, rng)
+		return
+
 	var snapshot: PackedInt32Array = out.duplicate()
 	var cluster_count: int = rng.randi_range(void_min, void_max)
 	for _cluster in cluster_count:
@@ -958,6 +1012,100 @@ static func _void_pass(
 		var rx: int = rng.randi_range(void_rad_min, void_rad_max)
 		var ry: int = rng.randi_range(void_rad_min, void_rad_max)
 		_carve_void_blob(out, snapshot, chunk_size, seed, rx, ry, rng)
+
+
+## CONCEPT 4: Carves a wide, winding linear canyon across the chunk boundaries
+static func _carve_linear_chasm(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+) -> void:
+	var horizontal: bool = rng.randi() % 2 == 0
+	var start_pos: int = rng.randi_range(_EDGE_MARGIN + 4, chunk_size - _EDGE_MARGIN - 5)
+	var amplitude: float = rng.randf_range(2.0, 5.0)
+	var frequency: float = rng.randf_range(0.12, 0.26)
+	var width: int = rng.randi_range(3, 5)
+
+	if horizontal:
+		for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+			var center_y: int = int(float(start_pos) + amplitude * sin(float(x) * frequency))
+			for dy in range(-width / 2, width / 2 + 1):
+				var y: int = center_y + dy
+				if y >= _EDGE_MARGIN and y < chunk_size - _EDGE_MARGIN:
+					out[y * chunk_size + x] = TILE_VOID
+	else:
+		for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+			var center_x: int = int(float(start_pos) + amplitude * sin(float(y) * frequency))
+			for dx in range(-width / 2, width / 2 + 1):
+				var x: int = center_x + dx
+				if x >= _EDGE_MARGIN and x < chunk_size - _EDGE_MARGIN:
+					out[y * chunk_size + x] = TILE_VOID
+
+
+## CONCEPT 5: Overwrites typical layout to carve a monolithic, structured geometric facility
+static func _carve_macro_structure(
+	out: PackedInt32Array,
+	chunk_size: int,
+	doors: Array[Vector2i],
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	var style: int = rng.randi_range(0, 2)
+	var center := Vector2i(chunk_size / 2, chunk_size / 2)
+
+	match style:
+		0: # The Central Monolith (Corridor loop surrounding massive core block)
+			var size: int = rng.randi_range(8, chunk_size - 10)
+			var half: int = size / 2
+			var rect := Rect2i(center.x - half, center.y - half, size, size)
+
+			# Lay a continuous walk path loop surrounding the monolith bounds
+			var ring := Rect2i(rect.position - Vector2i(2, 2), rect.size + Vector2i(4, 4))
+			for y in range(ring.position.y, ring.position.y + ring.size.y):
+				for x in range(ring.position.x, ring.position.x + ring.size.x):
+					if x >= _EDGE_MARGIN and x < chunk_size - _EDGE_MARGIN and y >= _EDGE_MARGIN and y < chunk_size - _EDGE_MARGIN:
+						out[y * chunk_size + x] = TILE_FLOOR
+
+			# Restore the solid central core monolith
+			for y in range(rect.position.y, rect.position.y + rect.size.y):
+				for x in range(rect.position.x, rect.position.x + rect.size.x):
+					if x >= 0 and x < chunk_size and y >= 0 and y < chunk_size:
+						out[y * chunk_size + x] = TILE_WALL
+
+		1: # The Core Cylinder (Outer walkway ring, hollow deep core void)
+			var outer_r: float = float(chunk_size) * 0.38
+			var inner_r: float = float(chunk_size) * 0.22
+			var void_r: float = float(chunk_size) * 0.12
+
+			for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+					var dist: float = center.distance_to(Vector2i(x, y))
+					if dist <= outer_r and dist > inner_r:
+						out[y * chunk_size + x] = TILE_FLOOR
+					elif dist <= void_r:
+						out[y * chunk_size + x] = TILE_VOID
+
+		2: # Massive Grid Matrix (Rigidly spaced monolithic support pillars)
+			var spacing: int = rng.randi_range(4, 6)
+			
+			# Carve open area first
+			for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+					out[y * chunk_size + x] = TILE_FLOOR
+
+			# Set down heavy columns in mathematical increments
+			for y in range(_EDGE_MARGIN + 2, chunk_size - _EDGE_MARGIN - 2, spacing):
+				for x in range(_EDGE_MARGIN + 2, chunk_size - _EDGE_MARGIN - 2, spacing):
+					for dy in range(2):
+						for dx in range(2):
+							var idx: int = (y + dy) * chunk_size + (x + dx)
+							if idx < out.size():
+								out[idx] = TILE_WALL
+
+	# Draw explicit corridors from each outer doorway to the center to secure traversability
+	for door in doors:
+		out[door.y * chunk_size + door.x] = TILE_FLOOR
+		_carve_corridor(out, chunk_size, door, center, rng, 2)
 
 
 static func _pick_deep_wall(
@@ -1157,25 +1305,25 @@ static func _water_kind_at(
 	var puddle_bias: float = 0.0
 	match zone:
 		0:  # The Abyss — flooded chasms, ground-water seeps
-			lake_bias = 0.10
-			river_bias = 0.04
-			puddle_bias = 0.06
+			lake_bias = 0.02
+			river_bias = -0.04
+			puddle_bias = 0.01
 		1:  # The Industrial Core — coolant puddles only, no open lakes
 			lake_enabled = false
-			river_bias = -0.04
-			puddle_bias = 0.04
-		2:  # Habitation Blocks — mostly dry, occasional puddle
-			lake_bias = -0.10
-			river_bias = -0.06
+			river_bias = -0.12
 			puddle_bias = -0.02
+		2:  # Habitation Blocks — mostly dry, occasional puddle
+			lake_bias = -0.18
+			river_bias = -0.14
+			puddle_bias = -0.08
 		3:  # Lithic Vault — underground aquifers and runoff streams
-			lake_bias = 0.04
-			river_bias = 0.08
-			puddle_bias = 0.02
+			lake_bias = -0.02
+			river_bias = 0.02
+			puddle_bias = -0.02
 		4:  # Structural Grid — broad shallow lakes between pillars
-			lake_bias = 0.08
-			river_bias = -0.04
-			puddle_bias = 0.0
+			lake_bias = 0.02
+			river_bias = -0.10
+			puddle_bias = -0.04
 
 	# Threshold scaling so per-zone water_threshold tuning still nudges all
 	# bands together (-0.72 → wetter, -0.82 → drier).
@@ -1191,11 +1339,11 @@ static func _water_kind_at(
 		# are "below water-line".
 		var lake_n: float = noise.get_noise_2d(float(wx) * 0.18, float(wy) * 0.18)
 		var lake_score: float = -lake_n + lake_bias
-		if lake_score > 0.42:
+		if lake_score > 0.55:
 			depth = maxi(depth, 2)
-		elif lake_score > 0.26:
+		elif lake_score > 0.45:
 			depth = maxi(depth, 1)
-		elif lake_score > 0.12:
+		elif lake_score > 0.35:
 			depth = maxi(depth, 0)
 
 	if river_enabled:
@@ -1204,18 +1352,18 @@ static func _water_kind_at(
 		# shallow + puddle, so rivers feel like they actually have shores.
 		var river_n: float = noise.get_noise_2d(float(wx) * 0.11 + 941.0, float(wy) * 0.11 - 533.0)
 		var river_raw: float = absf(river_n) - river_bias
-		if river_raw < 0.025:
+		if river_raw < 0.01:
 			depth = maxi(depth, 2)
-		elif river_raw < 0.06:
+		elif river_raw < 0.03:
 			depth = maxi(depth, 1)
-		elif river_raw < 0.11:
+		elif river_raw < 0.06:
 			depth = maxi(depth, 0)
 
 	if puddle_enabled:
 		# Higher-frequency speckle for isolated puddles in otherwise dry
 		# corridors. Only ever puddle depth, never deep.
 		var puddle_n: float = noise.get_noise_2d(float(wx) * 0.55 + 2137.0, float(wy) * 0.55 + 3719.0)
-		if puddle_n + puddle_bias > 0.66:
+		if puddle_n + puddle_bias > 0.78:
 			depth = maxi(depth, 0)
 
 	if depth < 0:
@@ -1256,25 +1404,25 @@ static func _acid_kind_at(
 	var splash_bias: float = 0.0
 	match zone:
 		0:  # The Abyss — corrosive seep from above
-			pool_bias = 0.02
-			seep_bias = 0.04
-			splash_bias = 0.04
+			pool_bias = -0.04
+			seep_bias = -0.02
+			splash_bias = -0.02
 		1:  # The Industrial Core — coolant breaches, leaking reactors
-			pool_bias = 0.08
-			seep_bias = 0.02
-			splash_bias = 0.06
+			pool_bias = 0.01
+			seep_bias = -0.04
+			splash_bias = 0.01
 		2:  # Habitation Blocks — rare, mostly leaky pipes
 			pool_enabled = false
-			seep_bias = -0.04
-			splash_bias = -0.02
+			seep_bias = -0.15
+			splash_bias = -0.10
 		3:  # Lithic Vault — natural acid aquifers
-			pool_bias = 0.04
-			seep_bias = 0.02
-			splash_bias = 0.0
+			pool_bias = -0.04
+			seep_bias = -0.02
+			splash_bias = -0.06
 		4:  # Structural Grid — sparse industrial residue
 			pool_enabled = false
 			seep_enabled = false
-			splash_bias = -0.02
+			splash_bias = -0.15
 
 	var depth: int = -1  # -1 dry, 0 puddle, 1 shallow, 2 deep
 
@@ -1282,28 +1430,28 @@ static func _acid_kind_at(
 		var pool_n: float = noise.get_noise_2d(float(wx) * 0.21 + 5021.0, float(wy) * 0.21 - 1873.0)
 		var pool_score: float = -pool_n + pool_bias
 		# Rarer than water lakes: tighter thresholds.
-		if pool_score > 0.58:
+		if pool_score > 0.65:
 			depth = maxi(depth, 2)
-		elif pool_score > 0.46:
+		elif pool_score > 0.55:
 			depth = maxi(depth, 1)
-		elif pool_score > 0.34:
+		elif pool_score > 0.45:
 			depth = maxi(depth, 0)
 
 	if seep_enabled:
 		var seep_n: float = noise.get_noise_2d(float(wx) * 0.14 - 2273.0, float(wy) * 0.14 + 1607.0)
 		var seep_raw: float = absf(seep_n) - seep_bias
 		# Acid runs follow ridged noise like rivers, but much thinner.
-		if seep_raw < 0.012:
+		if seep_raw < 0.005:
 			depth = maxi(depth, 2)
 			# Trim to shallow if it might dilute too quickly; we want hazard not pools.
-		elif seep_raw < 0.035:
+		elif seep_raw < 0.015:
 			depth = maxi(depth, 1)
-		elif seep_raw < 0.07:
+		elif seep_raw < 0.03:
 			depth = maxi(depth, 0)
 
 	if splash_enabled:
 		var splash_n: float = noise.get_noise_2d(float(wx) * 0.62 - 4093.0, float(wy) * 0.62 + 6173.0)
-		if splash_n + splash_bias > 0.78:
+		if splash_n + splash_bias > 0.85:
 			depth = maxi(depth, 0)
 
 	if depth < 0:

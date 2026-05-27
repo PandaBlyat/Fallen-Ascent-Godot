@@ -245,9 +245,11 @@ func _on_right_release() -> void:
 				explored_cells.append(cell)
 		cells = explored_cells
 	if not cells.is_empty():
+		var _did_place: bool = false
 		match _mode:
 			Mode.STOCKPILE:
 				_stockpile_manager.create_zone(cells)
+				_did_place = true
 			Mode.MINE:
 				for cell in cells:
 					_apply_mine_click(cell)
@@ -259,12 +261,16 @@ func _on_right_release() -> void:
 					_apply_remove_stockpile_click(cell)
 			Mode.DESIGNATE_DOCK_ROOM:
 				_apply_dock_room(cells)
+				_did_place = true
 			Mode.DESIGNATE_RESEARCH_ROOM:
 				_apply_research_room(cells)
+				_did_place = true
 			Mode.DESIGNATE_MECHANIC_ROOM:
 				_apply_mechanic_room(cells)
+				_did_place = true
 			Mode.DESIGNATE_WORKSHOP_ROOM:
 				_apply_workshop_room(cells)
+				_did_place = true
 			Mode.REMOVE_ROOM:
 				for cell in cells:
 					_apply_remove_room(cell)
@@ -280,6 +286,9 @@ func _on_right_release() -> void:
 						anchors.append(_drag_start)
 					for cell in anchors:
 						_apply_build_click(cell, blueprint_id)
+					_did_place = true
+		if _did_place:
+			AudioManager.play_placing()
 	queue_redraw()
 
 

@@ -298,6 +298,7 @@ func _build_layout() -> void:
 	tech_button.add_theme_color_override("font_color", Color(0.82, 0.78, 1.0))
 	tech_button.add_theme_color_override("font_hover_color", Color.WHITE)
 	tech_button.pressed.connect(_open_tech_tree)
+	tech_button.pressed.connect(AudioManager.play_button_press)
 	status_row.add_child(tech_button)
 
 	var npc_panel := PanelContainer.new()
@@ -638,6 +639,7 @@ func _add_delete_button(parent: HBoxContainer) -> void:
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 	button.pressed.connect(_on_delete_button_pressed)
+	button.pressed.connect(AudioManager.play_button_press)
 	parent.add_child(button)
 	_delete_button = button
 
@@ -668,6 +670,7 @@ func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 
 	button.pressed.connect(_set_tab.bind(tab))
+	button.pressed.connect(AudioManager.play_button_press)
 	parent.add_child(button)
 
 
@@ -689,6 +692,7 @@ func _add_building_subtab_button(parent: HBoxContainer, subtab: StringName, labe
 	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 	button.pressed.connect(_on_building_subtab_pressed.bind(subtab))
+	button.pressed.connect(AudioManager.play_button_press)
 	parent.add_child(button)
 	_building_subtab_buttons[subtab] = button
 
@@ -855,6 +859,7 @@ func _add_command_button(
 		button.add_theme_color_override("font_pressed_color", Color.WHITE)
 
 	button.pressed.connect(_on_command_pressed.bind(mode))
+	button.pressed.connect(AudioManager.play_button_press)
 	_command_grid.add_child(button)
 	_command_buttons[mode] = button
 
@@ -1180,6 +1185,7 @@ func _resource_category_button(category: int) -> Button:
 	button.add_theme_color_override("font_color", Item.category_color(category).lerp(Color.WHITE, 0.35))
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 	button.pressed.connect(_toggle_resource_popup.bind(category))
+	button.pressed.connect(AudioManager.play_button_press)
 	button.gui_input.connect(_on_drag_panel_input.bind(_top_strip))
 	return button
 
@@ -2061,6 +2067,7 @@ func _jobs_badge_button(initial_text: String) -> Button:
 	btn.add_theme_stylebox_override("pressed", _panel_textured_style("wisdom_badge", Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER, 3.0, false))
 	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	btn.pressed.connect(_toggle_jobs_popup)
+	btn.pressed.connect(AudioManager.play_button_press)
 	return btn
 
 

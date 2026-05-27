@@ -1503,6 +1503,13 @@ func _add_worker_header(parent: Control, worker: Worker) -> void:
 	state_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_box.add_child(state_label)
 
+	var personality_label := Label.new()
+	personality_label.text = worker.personality_label()
+	personality_label.add_theme_font_size_override("font_size", 10)
+	personality_label.add_theme_color_override("font_color", Color(0.72, 0.62, 0.42, 0.85))
+	personality_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	name_box.add_child(personality_label)
+
 
 func _add_worker_summary(parent: Control, worker: Worker) -> void:
 	var grid := GridContainer.new()
@@ -1903,7 +1910,7 @@ func _refresh_npc_strip() -> void:
 			button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
 			button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
 			button.pressed.connect(_focus_worker.bind(worker))
-				button.pressed.connect(AudioManager.play_button_press)
+			button.pressed.connect(AudioManager.play_button_press)
 			_npc_strip.add_child(button)
 			_npc_buttons_by_worker[worker] = button
 			if worker.state_label() == "fighting":

@@ -70,6 +70,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _on_pressed(idx: int) -> void:
 	GameState.set_game_speed(SPEEDS[idx])
+	AudioManager.play_button_press()
 
 
 func _on_speed_changed(speed: float) -> void:

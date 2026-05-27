@@ -63,6 +63,18 @@ extends Node
 ##   fabricator_needs_inputs(anchor,missing_kinds)
 ##                                    - emitted when automatic production stalls
 ##                                      because required inputs are absent.
+##   outlet_count_changed(count)      - emitted by ChunkManager when the number
+##                                      of outlet tiles changes. Payload: int.
+##   worker_low_energy(worker,ratio)  - emitted by Worker when energy crosses
+##                                      25% or 10% thresholds. Payload: Worker,
+##                                      float ratio (0..1).
+##   worker_low_condition(worker,ratio)
+##                                    - emitted by Worker when condition crosses
+##                                      25% or 10% thresholds. Payload: Worker,
+##                                      float ratio (0..1).
+##   hostile_spotted(hostile,spotter) - emitted when a hostile/neutral enters a
+##                                      worker's sight radius for the first time.
+##                                      Payload: Node (hostile), Node (worker).
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -94,4 +106,8 @@ signal wisdom_changed(new_total: float)
 signal tech_unlocked(tech_id: StringName)
 signal worker_spawned_from_cradle(worker: Node)
 signal fabricator_needs_inputs(anchor: Vector2i, missing_kinds: Array)
+signal outlet_count_changed(count: int)
+signal worker_low_energy(worker: Node, ratio: float)
+signal worker_low_condition(worker: Node, ratio: float)
+signal hostile_spotted(hostile: Node, spotter: Node)
 @warning_ignore_restore("unused_signal")

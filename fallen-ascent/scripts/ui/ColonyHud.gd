@@ -1385,6 +1385,7 @@ func _add_worker_roster(workers: Array[Worker]) -> void:
 		b.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
 		b.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
 		b.pressed.connect(_focus_worker.bind(worker))
+		b.pressed.connect(AudioManager.play_button_press)
 		box.add_child(b)
 
 
@@ -1682,6 +1683,7 @@ func _add_fabrication_controls(parent: Control) -> void:
 		button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 		button.add_theme_color_override("font_color", Item.kind_color(object_kind).lerp(Color.WHITE, 0.35))
 		button.pressed.connect(_on_craft_order_pressed.bind(object_kind))
+		button.pressed.connect(AudioManager.play_button_press)
 		parent.add_child(button)
 	var clear := Button.new()
 	clear.text = "Clear orders"
@@ -1694,6 +1696,7 @@ func _add_fabrication_controls(parent: Control) -> void:
 	clear.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	clear.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
 	clear.pressed.connect(_on_clear_craft_orders_pressed)
+	clear.pressed.connect(AudioManager.play_button_press)
 	parent.add_child(clear)
 
 
@@ -1771,6 +1774,7 @@ func _build_construction_card() -> void:
 	remove.add_theme_stylebox_override("pressed", _button_style(Color(0.34, 0.12, 0.10, 1.0), Color(1.0, 0.38, 0.28, 1.0)))
 	remove.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	remove.pressed.connect(_on_remove_build_pressed.bind(build.anchor))
+	remove.pressed.connect(AudioManager.play_button_press)
 	card.add_child(remove)
 
 
@@ -1899,6 +1903,7 @@ func _refresh_npc_strip() -> void:
 			button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
 			button.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
 			button.pressed.connect(_focus_worker.bind(worker))
+				button.pressed.connect(AudioManager.play_button_press)
 			_npc_strip.add_child(button)
 			_npc_buttons_by_worker[worker] = button
 			if worker.state_label() == "fighting":
@@ -2170,6 +2175,7 @@ func _add_jobs_popup_row(job: Job) -> void:
 	cancel_btn.add_theme_color_override("font_color", Color(1.0, 0.55, 0.50))
 	cancel_btn.tooltip_text = "Cancel this job order"
 	cancel_btn.pressed.connect(_on_cancel_job.bind(job))
+	cancel_btn.pressed.connect(AudioManager.play_button_press)
 	row.add_child(cancel_btn)
 
 

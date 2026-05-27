@@ -27,9 +27,11 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 @onready var _master_slider: HSlider = %MasterSlider
 @onready var _music_slider: HSlider = %MusicSlider
 @onready var _sfx_slider: HSlider = %SfxSlider
+@onready var _ambient_slider: HSlider = %AmbientSlider
 @onready var _master_value: Label = %MasterValue
 @onready var _music_value: Label = %MusicValue
 @onready var _sfx_value: Label = %SfxValue
+@onready var _ambient_value: Label = %AmbientValue
 @onready var _controls_list: VBoxContainer = %ControlsList
 @onready var _capture_label: Label = %CaptureLabel
 @onready var _close_button: Button = %CloseButton
@@ -60,8 +62,11 @@ func _ready() -> void:
 	_rebuild_controls()
 
 	_close_button.pressed.connect(_close)
+	_close_button.pressed.connect(AudioManager.play_button_press)
 	_main_menu_button.pressed.connect(_on_main_menu_pressed)
+	_main_menu_button.pressed.connect(AudioManager.play_button_press)
 	_quit_button.pressed.connect(_on_quit_pressed)
+	_quit_button.pressed.connect(AudioManager.play_button_press)
 	_main_menu_button.visible = _is_in_game()
 
 	# Grab focus on the first element to support controller and keyboard navigation
@@ -166,12 +171,15 @@ func _initialize_audio() -> void:
 	_master_slider.value = SettingsManager.master_volume
 	_music_slider.value = SettingsManager.music_volume
 	_sfx_slider.value = SettingsManager.sfx_volume
+	_ambient_slider.value = SettingsManager.ambient_volume
 	_update_volume_label(_master_value, SettingsManager.master_volume)
 	_update_volume_label(_music_value, SettingsManager.music_volume)
 	_update_volume_label(_sfx_value, SettingsManager.sfx_volume)
+	_update_volume_label(_ambient_value, SettingsManager.ambient_volume)
 	_master_slider.value_changed.connect(_on_master_volume_changed)
 	_music_slider.value_changed.connect(_on_music_volume_changed)
 	_sfx_slider.value_changed.connect(_on_sfx_volume_changed)
+	_ambient_slider.value_changed.connect(_on_ambient_volume_changed)
 
 
 func _rebuild_controls() -> void:
@@ -232,6 +240,11 @@ func _on_music_volume_changed(value: float) -> void:
 func _on_sfx_volume_changed(value: float) -> void:
 	SettingsManager.set_sfx_volume(value)
 	_update_volume_label(_sfx_value, value)
+
+
+func _on_ambient_volume_changed(value: float) -> void:
+	SettingsManager.set_ambient_volume(value)
+	_update_volume_label(_ambient_value, value)
 
 
 func _update_volume_label(label: Label, value: float) -> void:

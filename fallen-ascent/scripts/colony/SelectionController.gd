@@ -324,10 +324,38 @@ func _handle_right_click(shift_held: bool) -> void:
 	elif _is_walkable_order_tile(tile):
 		if _command_group_move(grid, shift_held):
 			_show_order_highlight(grid)
+			AudioManager.play_move_here()
 		else:
 			_show_order_failed(grid, "No path")
+	elif _try_command_repair_bench(grid, shift_held):
+		pass
 	else:
 		_show_order_failed(grid, "Blocked tile")
+
+
+func _try_command_repair_bench(grid: Vector2i, _append: bool) -> bool:
+	if _structure_manager == null:
+		return false
+	var structure: Dictionary = _structure_manager.structure_at(grid)
+	if structure.is_empty():
+		return false
+	var id: int = int(structure.get("id", -1))
+	if id != BuildBlueprint.Id.REPAIR_BENCH and id != BuildBlueprint.Id.MAINTENANCE_DOCK:
+		return false
+	var anchor: Vector2i = structure.get("anchor", grid) as Vector2i
+	var sent: bool = false
+	for worker in _selected_by_distance(anchor):
+		if not worker.has_method("command_repair_at"):
+			continue
+		var ok: bool = worker.call("command_repair_at", anchor, true)
+		if ok:
+			sent = true
+			break
+	if sent:
+		_show_order_highlight(grid)
+	else:
+		_show_order_failed(grid, "Can't reach")
+	return true
 
 
 func _take_or_queue_build_job(worker: Worker, build: BuildJob, append: bool) -> bool:

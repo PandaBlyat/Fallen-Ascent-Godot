@@ -7,7 +7,10 @@ extends Node2D
 
 const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
 const NEUTRAL_BOT_SCRIPT: Script = preload("res://scripts/colony/NeutralBot.gd")
+const ALERT_SYSTEM_SCRIPT: Script = preload("res://scripts/ui/AlertSystem.gd")
 const INITIAL_NEUTRALS: int = 30
+## How often (seconds) to check if a hostile has entered any worker's FOV.
+const HOSTILE_FOV_CHECK_SEC: float = 1.5
 
 @onready var chunk_manager: ChunkManager = $ChunkManager
 @onready var camera: CameraController = $Camera
@@ -29,9 +32,13 @@ var _loading_overlay: Control = null
 var _loading_bar: ProgressBar = null
 var _loading_label: Label = null
 var _spawned_initial_workers: bool = false
+var _alert_system: Node = null
+## Tracks which hostile nodes have already triggered a "spotted" alert.
+var _spotted_hostiles: Dictionary = {}
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	var site: SiteData = GameState.selected_site as SiteData
 	# Fallback for running ColonySite.tscn directly from the editor.
 	if site == null:
@@ -48,6 +55,12 @@ func _ready() -> void:
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.game_speed_changed.connect(_on_speed_changed)
 	EventBus.colony_load_progress.connect(_on_colony_load_progress)
+
+	_alert_system = ALERT_SYSTEM_SCRIPT.new() as Node
+	_alert_system.name = "AlertSystem"
+	$HUD.add_child(_alert_system)
+	if _alert_system.has_method("set_camera"):
+		_alert_system.call("set_camera", camera)
 
 	if chunk_manager.preload_entire_map:
 		_show_loading_overlay()
@@ -93,6 +106,8 @@ func _spawn_initial_workers() -> void:
 	if placed_outlet == Pathfinder.UNREACHABLE:
 		placed_outlet = chunk_manager.force_outlet_on_spawn(spawn_cells, outlet_seed)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
+	# Notify alert system of the initial outlet count.
+	EventBus.outlet_count_changed.emit(chunk_manager.outlet_count())
 
 
 func _show_loading_overlay() -> void:
@@ -275,6 +290,58 @@ func _refund_spawn_cell(anchor: Vector2i) -> Vector2i:
 		if chunk_manager.is_walkable(candidate):
 			return candidate
 	return anchor
+
+
+## Wall-clock timer for hostile FOV check — runs even when paused.
+var _hostile_fov_real_msec: int = 0
+
+
+func _process(_delta: float) -> void:
+	var now: int = Time.get_ticks_msec()
+	if now - _hostile_fov_real_msec >= int(HOSTILE_FOV_CHECK_SEC * 1000.0):
+		_hostile_fov_real_msec = now
+		_check_hostile_fov()
+
+
+func _check_hostile_fov() -> void:
+	if workers_root == null or hostiles_root == null:
+		return
+	var workers: Array = workers_root.get_children()
+	var all_hostiles: Array = hostiles_root.get_children()
+	if neutrals_root != null:
+		all_hostiles.append_array(neutrals_root.get_children())
+	for hostile in all_hostiles:
+		if not is_instance_valid(hostile):
+			continue
+		if hostile.has_method("is_alive") and not bool(hostile.call("is_alive")):
+			continue
+		if not (hostile is Node2D):
+			continue
+		var h_grid: Vector2i = Vector2i(
+			int(floor((hostile as Node2D).global_position.x / Chunk.TILE_PIXELS)),
+			int(floor((hostile as Node2D).global_position.y / Chunk.TILE_PIXELS)),
+		)
+		for worker_node in workers:
+			var worker := worker_node as Worker
+			if worker == null or not is_instance_valid(worker) or worker.is_downed():
+				continue
+			var sight: int = worker.sight_radius()
+			var w_grid: Vector2i = worker.current_grid()
+			var dist: int = maxi(absi(h_grid.x - w_grid.x), absi(h_grid.y - w_grid.y))
+			if dist <= sight:
+				if not _spotted_hostiles.has(hostile):
+					_spotted_hostiles[hostile] = true
+					EventBus.hostile_spotted.emit(hostile, worker)
+				break
+	# Clean up dead hostiles from the spotted set.
+	var to_remove: Array = []
+	for hostile in _spotted_hostiles.keys():
+		if not is_instance_valid(hostile):
+			to_remove.append(hostile)
+		elif hostile.has_method("is_alive") and not bool(hostile.call("is_alive")):
+			to_remove.append(hostile)
+	for h in to_remove:
+		_spotted_hostiles.erase(h)
 
 
 func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:

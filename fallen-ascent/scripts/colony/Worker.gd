@@ -54,7 +54,7 @@ const COMBAT_LOST_TIMEOUT: float = 3.0
 const KNOCKBACK_DURATION: float = 0.12
 const FACTION_COLONY: int = 0
 
-const MOVE_SPEED_PX_PER_SEC: float = 48.0
+const MOVE_SPEED_PX_PER_SEC: float = 68.0
 const WATER_SHALLOW_SPEED_MULT: float = 0.5
 const WATER_PUDDLE_SPEED_MULT: float = 0.85
 const ACID_SHALLOW_SPEED_MULT: float = 0.4

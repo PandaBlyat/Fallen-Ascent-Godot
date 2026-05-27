@@ -378,3 +378,25 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       session length, tech costs, and this rate together once a real
       colony loop is on the floor — the existing "Tune the wisdom curve"
       to-do above still applies.
+
+## Personality system follow-ups
+
+- [ ] **Wire WorkerLines into action bubbles / `_remember()`.** `WorkerLines.gd`
+      has 6 personalities × 14 actions × 3 lines each. Currently only the
+      personality label is visible in the UI; the next step is to call
+      `WorkerLines.get_line(personality(), WorkerLines.ACTION_MINE)` (etc.)
+      inside `Worker._remember()` or the action-bubble draw path so the
+      flavour text actually surfaces in-game.
+- [ ] **Personality effects on stats / behaviour.** Right now personalities are
+      cosmetic only. Future hooks: Grumpy → small mood baseline penalty;
+      Cheerful → bonus mood recovery; Stoic → reduced social decay; Paranoid →
+      higher combat alert sensitivity; Philosophical → faster wisdom gain;
+      Dutiful → slight job-priority bias toward ordered tasks.
+- [ ] **Persist personality across save/load.** When the save system lands,
+      `Worker._personality` must be written to the diff so workers don't
+      re-roll their personality on reload. Suggested shape: add a `personality`
+      key to the worker's save dict alongside name and position.
+- [ ] **Personality name in worker list strip.** The NPC strip buttons only
+      show `display_name()`. A small personality tag or colour-coded icon
+      beside the name would let the player identify worker temperaments at
+      a glance without opening the detail card.

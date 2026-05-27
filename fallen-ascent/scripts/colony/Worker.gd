@@ -99,8 +99,13 @@ const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
 const NAME_FONT_SIZE: int = 11
 const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
+const HIGHLIGHTER_ATLAS_PATH := "res://resources/entities/Highlighters.png"
 const ACTION_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
 const ENTITY_REGION_SIZE := Vector2(32, 32)
+## Highlight cell indices in Highlighters.png (96x32, 3 cells of 32x32).
+const HIGHLIGHT_CELL_GREY: int = 0   ## move order
+const HIGHLIGHT_CELL_GREEN: int = 1  ## charge / repair order
+const HIGHLIGHT_CELL_RED: int = 2    ## attack order
 const FACING_SOUTH: int = 0
 const FACING_SOUTH_EAST: int = 1
 const FACING_EAST: int = 2
@@ -225,6 +230,12 @@ var _last_sound_job: Job = null
 var _mining_player: AudioStreamPlayer2D
 var _moving_player: AudioStreamPlayer2D
 var _last_energy_for_draw: float = ENERGY_MAX
+var _highlighter_atlas: Texture2D
+## Alert threshold tracking — reset when stat recovers above the threshold band.
+var _energy_alert_25_sent: bool = false
+var _energy_alert_10_sent: bool = false
+var _condition_alert_25_sent: bool = false
+var _condition_alert_10_sent: bool = false
 var _route_cache: Dictionary = {}
 var _stuck_watchdog_timer: float = 0.0
 var _stuck_last_position: Vector2 = Vector2.INF
@@ -286,6 +297,7 @@ func setup(
 
 func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
+	_highlighter_atlas = load(HIGHLIGHTER_ATLAS_PATH) as Texture2D
 	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
 	_init_limbs()
 	stats = CombatStatsScript.new() as CombatStats
@@ -337,16 +349,29 @@ func _setup_audio_players() -> void:
 	)
 
 	EventBus.camera_moved.connect(_on_worker_camera_moved)
+	EventBus.game_speed_changed.connect(_on_game_speed_changed)
+
+
+func _on_game_speed_changed(_speed: float) -> void:
+	_update_sounds()
 
 
 func _on_worker_camera_moved(_world_pos: Vector2, zoom: Vector2) -> void:
 	var zoom_factor: float = (zoom.x + zoom.y) * 0.5
-	var dist: float = SOUND_BASE_MAX_DIST / maxf(zoom_factor, 0.001)
+	# Scale WITH zoom so zoomed-out view silences individual worker sounds.
+	var dist: float = SOUND_BASE_MAX_DIST * clampf(zoom_factor, 0.1, 2.0)
 	_mining_player.max_distance = dist
 	_moving_player.max_distance = dist
 
 
 func _update_sounds() -> void:
+	if GameState.is_paused():
+		if _mining_player.playing:
+			_mining_player.stop()
+		if _moving_player.playing:
+			_moving_player.stop()
+		return
+
 	var should_mine: bool = _state == State.WORKING and _job is MineJob
 	if should_mine:
 		if not _mining_player.playing:
@@ -360,6 +385,39 @@ func _update_sounds() -> void:
 			_moving_player.play()
 	elif _moving_player.playing:
 		_moving_player.stop()
+
+
+func _check_energy_alerts() -> void:
+	if _dead:
+		return
+	var ratio: float = _energy / ENERGY_MAX
+	# Reset flags when energy recovers above threshold bands.
+	if ratio > 0.3:
+		_energy_alert_25_sent = false
+	if ratio > 0.15:
+		_energy_alert_10_sent = false
+	if ratio <= 0.25 and not _energy_alert_25_sent:
+		_energy_alert_25_sent = true
+		EventBus.worker_low_energy.emit(self, ratio)
+	elif ratio <= 0.10 and not _energy_alert_10_sent:
+		_energy_alert_10_sent = true
+		EventBus.worker_low_energy.emit(self, ratio)
+
+
+func _check_condition_alerts() -> void:
+	if _dead:
+		return
+	var ratio: float = _condition / CONDITION_MAX
+	if ratio > 0.3:
+		_condition_alert_25_sent = false
+	if ratio > 0.15:
+		_condition_alert_10_sent = false
+	if ratio <= 0.25 and not _condition_alert_25_sent:
+		_condition_alert_25_sent = true
+		EventBus.worker_low_condition.emit(self, ratio)
+	elif ratio <= 0.10 and not _condition_alert_10_sent:
+		_condition_alert_10_sent = true
+		EventBus.worker_low_condition.emit(self, ratio)
 
 
 func _is_moving_sound_state(s: int) -> bool:
@@ -3278,6 +3336,35 @@ func command_charge(target: Vector2i, clear_queue: bool = true) -> bool:
 	return _begin_charge(target)
 
 
+## Player-issued order to go to a specific repair bench or maintenance dock.
+func command_repair_at(anchor: Vector2i, clear_queue: bool = true) -> bool:
+	if _structure_manager == null:
+		return false
+	var structure: Dictionary = _structure_manager.structure_at(anchor)
+	if structure.is_empty():
+		return false
+	var id: int = int(structure.get("id", -1))
+	if id != BuildBlueprint.Id.REPAIR_BENCH and id != BuildBlueprint.Id.MAINTENANCE_DOCK:
+		return false
+	var target: Vector2i = _structure_manager.interaction_cell_for(anchor)
+	if target == Pathfinder.UNREACHABLE:
+		return false
+	if _fog != null and not _fog.is_explored(target):
+		return false
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
+	if path.is_empty() and current_grid() != target:
+		return false
+	if clear_queue:
+		_direct_order_queue.clear()
+	_abandon_job()
+	_path = path
+	_path_index = 0
+	_activity_target = anchor
+	_state = State.MOVING_TO_REPAIR
+	_remember("ordered to repair at %d,%d" % [anchor.x, anchor.y])
+	return true
+
+
 func _advance_path(delta: float) -> bool:
 	if _energy <= 0.0:
 		return false
@@ -3490,6 +3577,7 @@ func _update_energy(delta: float) -> void:
 	if crossed_threshold or absf(_energy - _last_energy_for_draw) >= 0.25:
 		_last_energy_for_draw = _energy
 		queue_redraw()
+	_check_energy_alerts()
 
 
 func _update_body_stats(delta: float) -> void:
@@ -3522,6 +3610,7 @@ func _update_body_stats(delta: float) -> void:
 		condition_decay *= RUST_CONDITION_DECAY_MULTIPLIER
 	_condition = maxf(0.0, _condition - condition_decay)
 	_damage_limb(condition_decay)
+	_check_condition_alerts()
 
 
 func _update_mood(delta: float) -> void:
@@ -3855,8 +3944,28 @@ func _refresh_action_text() -> void:
 	queue_redraw()
 
 
+func _highlight_cell() -> int:
+	if _state == State.FIGHTING:
+		return HIGHLIGHT_CELL_RED
+	if _state == State.MOVING_TO_CHARGE or _state == State.MOVING_TO_REPAIR:
+		return HIGHLIGHT_CELL_GREEN
+	if _state == State.MOVING_FREEFORM:
+		return HIGHLIGHT_CELL_GREY
+	return -1
+
+
 func _draw() -> void:
 	_draw_action_bubble()
+	# Draw order highlight beneath the worker sprite.
+	if _highlighter_atlas != null:
+		var cell: int = _highlight_cell()
+		if cell >= 0:
+			var src := Rect2(Vector2(cell * 32.0, 0.0), Vector2(32.0, 32.0))
+			draw_texture_rect_region(
+				_highlighter_atlas,
+				Rect2(-Vector2(16.0, 16.0), Vector2(32.0, 32.0)),
+				src,
+			)
 	if _selected:
 		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.0)

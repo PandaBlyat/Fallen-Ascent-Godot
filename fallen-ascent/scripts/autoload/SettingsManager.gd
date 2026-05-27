@@ -45,6 +45,7 @@ const REBINDABLE_ACTIONS: Array[StringName] = [
 const BUS_MASTER := &"Master"
 const BUS_MUSIC := &"Music"
 const BUS_SFX := &"SFX"
+const BUS_AMBIENT := &"Ambient"
 
 var display_mode: int = DisplayMode.WINDOWED
 var vsync_mode: int = VSyncMode.ENABLED
@@ -56,6 +57,7 @@ var ui_scale: float = 1.0
 var master_volume: float = 1.0
 var music_volume: float = 0.5
 var sfx_volume: float = 1.0
+var ambient_volume: float = 0.8
 ## Gameplay options.
 ## When true, left-click drives designation/place/cancel and right-click
 ## drives camera-world selection. When false (default), left-click selects
@@ -147,6 +149,13 @@ func set_sfx_volume(value: float) -> void:
 	settings_changed.emit()
 
 
+func set_ambient_volume(value: float) -> void:
+	ambient_volume = clampf(value, 0.0, 1.0)
+	_apply_bus_volume(BUS_AMBIENT, ambient_volume)
+	save_to_disk()
+	settings_changed.emit()
+
+
 func set_swap_mouse_buttons(value: bool) -> void:
 	if swap_mouse_buttons == value:
 		return
@@ -199,6 +208,7 @@ func apply() -> void:
 	_apply_bus_volume(BUS_MASTER, master_volume)
 	_apply_bus_volume(BUS_MUSIC, music_volume)
 	_apply_bus_volume(BUS_SFX, sfx_volume)
+	_apply_bus_volume(BUS_AMBIENT, ambient_volume)
 
 
 func set_action_key(action: StringName, event: InputEventKey) -> void:
@@ -270,6 +280,7 @@ func load_from_disk() -> void:
 	master_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "master_volume", master_volume)), 0.0, 1.0)
 	music_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "music_volume", music_volume)), 0.0, 1.0)
 	sfx_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "sfx_volume", sfx_volume)), 0.0, 1.0)
+	ambient_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "ambient_volume", ambient_volume)), 0.0, 1.0)
 	swap_mouse_buttons = bool(cfg.get_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons))
 	overall_darkness = clampf(float(cfg.get_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)), 0.0, 2.0)
 	_load_keybindings(cfg)
@@ -285,6 +296,7 @@ func save_to_disk() -> void:
 	cfg.set_value(SECTION_AUDIO, "master_volume", master_volume)
 	cfg.set_value(SECTION_AUDIO, "music_volume", music_volume)
 	cfg.set_value(SECTION_AUDIO, "sfx_volume", sfx_volume)
+	cfg.set_value(SECTION_AUDIO, "ambient_volume", ambient_volume)
 	cfg.set_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons)
 	cfg.set_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)
 	_save_keybindings(cfg)

@@ -270,6 +270,7 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 	if old_tile == TerrainGenerator.TILE_OUTLET:
 		_outlets.erase(grid)
 		_outlet_reservations.erase(grid)
+		EventBus.outlet_count_changed.emit(_outlets.size())
 	elif old_tile == TerrainGenerator.TILE_RUST:
 		_rust_cells.erase(grid)
 		if _job_board != null:
@@ -278,6 +279,7 @@ func set_tile_at(grid: Vector2i, t: int) -> void:
 		_remove_teleporter(grid)
 	if t == TerrainGenerator.TILE_OUTLET:
 		_outlets[grid] = true
+		EventBus.outlet_count_changed.emit(_outlets.size())
 	elif t == TerrainGenerator.TILE_RUST:
 		_rust_cells[grid] = true
 	elif t == TerrainGenerator.TILE_TELEPORTER:

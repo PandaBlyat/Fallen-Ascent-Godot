@@ -84,6 +84,7 @@ func _ready() -> void:
 	close.custom_minimum_size = Vector2(80, 28)
 	close.add_theme_font_size_override("font_size", 12)
 	close.pressed.connect(_close)
+	close.pressed.connect(AudioManager.play_button_press)
 	header.add_child(close)
 
 	var subtitle := Label.new()

@@ -102,6 +102,25 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       `AStarGrid2D.update()` instead of refilling the full region from
       `is_walkable`.
 
+## Audio follow-ups
+
+- [ ] **New audio import files need Godot editor re-import.** The `.import`
+      stubs for `zoom_in_sound.mp3`, `zoom_out_sound.mp3`, `move_here_sound.mp3`,
+      and `Highlighters.png` were created with placeholder UIDs/paths. The
+      Godot editor must re-import these files once on first open to generate
+      the actual `.ctex` / `.mp3str` in `.godot/imported/`. Until then the
+      preloads will fail at runtime if the editor hasn't been run.
+- [ ] **Alert system camera-jump for non-Node2D targets.** Currently
+      `AlertSystem._on_card_input` calls `camera.follow_node(target)` only
+      when the target is a valid Node2D. If the target is freed before the
+      player clicks, the click silently does nothing. Add a graceful "target
+      gone" fallback.
+- [ ] **Alert card lifetime / auto-dismiss.** Cards currently stay until
+      right-clicked. Consider auto-dismissing INFO-level alerts after
+      ~30 seconds so the panel doesn't fill up on long runs.
+- [ ] **SpeedControls pause sound.** Currently all speed buttons play the same
+      button_press_sound. A distinct "pause click" sound would be cleaner.
+
 ## UI follow-ups
 
 - [ ] **Persist user-dragged HUD panel positions.** ColonyHud now lets the

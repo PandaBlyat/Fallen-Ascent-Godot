@@ -103,13 +103,13 @@ func _handle_mouse_button(event: InputEventMouseButton) -> void:
 		_dragging = event.pressed
 	elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 		clear_follow()
-		_zoom_at(get_global_mouse_position(), zoom_step)
+		_zoom_at(get_global_mouse_position(), zoom_step, true)
 	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 		clear_follow()
-		_zoom_at(get_global_mouse_position(), 1.0 / zoom_step)
+		_zoom_at(get_global_mouse_position(), 1.0 / zoom_step, false)
 
 
-func _zoom_at(world_target: Vector2, factor: float) -> void:
+func _zoom_at(world_target: Vector2, factor: float, zoom_in: bool = true) -> void:
 	var old_z: float = zoom.x
 	var new_z: float = clampf(old_z * factor, zoom_min, zoom_max)
 	if is_equal_approx(new_z, old_z):
@@ -121,6 +121,10 @@ func _zoom_at(world_target: Vector2, factor: float) -> void:
 	position += (world_target - position) * (1.0 - old_z / new_z)
 	_clamp_to_world()
 	_emit_if_changed()
+	if zoom_in:
+		AudioManager.play_zoom_in()
+	else:
+		AudioManager.play_zoom_out()
 
 
 func _edge_scroll_dir() -> Vector2:

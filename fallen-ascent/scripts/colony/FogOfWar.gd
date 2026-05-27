@@ -52,7 +52,6 @@ func _ready() -> void:
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_workers_root = get_node(workers_root_path) as Node2D
 	_structure_manager = get_node(structure_manager_path) as StructureManager
-	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.structure_built.connect(_on_structure_built)
 	EventBus.tile_changed.connect(_on_tile_changed)
 	if SettingsManager != null:
@@ -117,9 +116,6 @@ func is_frontier(grid: Vector2i) -> bool:
 			return true
 	return false
 
-
-func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:
-	queue_redraw()
 
 
 func _on_structure_built(_manager: Node) -> void:

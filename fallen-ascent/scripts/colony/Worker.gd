@@ -79,10 +79,10 @@ const MAX_CARRY_STACK: int = 4
 const ENERGY_MAX: float = 100.0
 const ENERGY_LOW: float = 28.0
 const ENERGY_CRITICAL: float = 10.0
-const ENERGY_IDLE_DRAIN_PER_SEC: float = 0.25
-const ENERGY_MOVE_DRAIN_PER_SEC: float = 0.7
-const ENERGY_WORK_DRAIN_PER_SEC: float = 1.1
-const ENERGY_CHARGE_PER_SEC: float = 4.0
+const ENERGY_IDLE_DRAIN_PER_SEC: float = 0.05
+const ENERGY_MOVE_DRAIN_PER_SEC: float = 0.1
+const ENERGY_WORK_DRAIN_PER_SEC: float = 0.3
+const ENERGY_CHARGE_PER_SEC: float = 2.0
 const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
@@ -131,7 +131,7 @@ const BLOCKED_ACTION_SECONDS: float = 2.0
 const CROWD_FRAME_META: StringName = &"fa_crowd_frame"
 const CROWD_CELLS_META: StringName = &"fa_crowd_cells"
 const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
-const WISDOM_PER_SEC: float = 0.18
+const WISDOM_PER_SEC: float = 0.28
 const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
 const ASSIGNED_DOCK_REST_MULTIPLIER: float = 1.6
 const ASSIGNED_DOCK_MOOD_PER_SEC: float = 0.35
@@ -217,10 +217,10 @@ var _save_destination_kind: int = -1   ## BuildBlueprint.Id of the destination s
 const REBOOT_CONDITION_THRESHOLD: float = 0.5
 const SAVE_REVIVE_CONDITION: float = 30.0
 const SAVE_REVIVE_ENERGY: float = 35.0
-
+var _teleport_charge_cooldown: float = 0.0
 # Fix for Rescue carry state tracking
 var carried_by: Worker = null
-
+var _door_stuck_timer: float = 0.0
 var _job_board: JobBoard
 var _pathfinder: Pathfinder
 var _chunk_manager: ChunkManager
@@ -374,6 +374,8 @@ func _repath_to_combat_target() -> void:
 		return
 	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
 	if path.is_empty():
+		_path = PackedVector2Array()
+		_path_index = 0
 		return
 	_path = path
 	_path_index = 0
@@ -736,6 +738,9 @@ func _process(delta: float) -> void:
 		visible = false
 		queue_redraw()
 		return
+		
+	if _teleport_charge_cooldown > 0.0:
+		_teleport_charge_cooldown = maxf(0.0, _teleport_charge_cooldown - delta)
 
 	# Update reboot state from condition. Workers entering REBOOTING release
 	# any in-flight job so the rest of the colony can claim it; workers
@@ -963,18 +968,27 @@ func _process(delta: float) -> void:
 			if _advance_path(delta):
 				_pickup_downed_worker()
 		State.CARRYING_WORKER:
-			# Brief transition; _pickup_downed_worker sets MOVING_TO_DELIVER
-			# directly. If we land here without a target, abort cleanly.
 			if _carried_worker == null or not is_instance_valid(_carried_worker):
 				_abort_save()
-			else:
-				_state = State.MOVING_TO_DELIVER
+				return
+			
+			var path: PackedVector2Array = _pathfinder.find_path(current_grid(), _save_destination)
+			if path.is_empty() and current_grid() != _save_destination:
+				_abort_save()
+				_show_blocked_action("No path to deliver")
+				return
+				
+			_path = path
+			_path_index = 0
+			_state = State.MOVING_TO_DELIVER
 		State.MOVING_TO_DELIVER:
-			# Keep the downed body visually stuck to the carrier each tick.
-			if _carried_worker != null and is_instance_valid(_carried_worker):
+			# Verify the target downed worker remains active and valid
+			if _carried_worker == null or not is_instance_valid(_carried_worker) or _carried_worker._dead:
+				_abort_save()
+			else:
 				_carried_worker.position = position
-			if _advance_path(delta):
-				_drop_off_carried_worker()
+				if _advance_path(delta):
+					_drop_off_carried_worker()
 	_check_teleporter()
 	# Action text only depends on state/job/blocked timer — skip the match
 	# statement allocation entirely when nothing relevant changed.
@@ -995,23 +1009,23 @@ func is_downed() -> bool:
 func _update_reboot_state() -> void:
 	if _dead:
 		return
-	if _state == State.MOVING_TO_SAVE or _state == State.CARRYING_WORKER or _state == State.MOVING_TO_DELIVER:
-		# Carriers don't drop into REBOOT mid-rescue; they have to deliver
-		# their charge first.
-		return
-	var should_be_rebooting: bool = _condition <= REBOOT_CONDITION_THRESHOLD
+		
+	var should_be_rebooting: bool = _condition <= REBOOT_CONDITION_THRESHOLD or _energy <= 0.0
+	
+	if should_be_rebooting:
+		# Force-abort the rescue state to drop the downed worker safely onto the grid
+		if _state == State.MOVING_TO_SAVE or _state == State.CARRYING_WORKER or _state == State.MOVING_TO_DELIVER:
+			_abort_save()
+			
 	if should_be_rebooting and _state != State.REBOOTING:
-		# Snap into REBOOT. Drop any in-flight work so the rest of the colony
-		# can claim it instead of waiting for a body that can't show up.
 		_abandon_job()
 		_path = PackedVector2Array()
 		_path_index = 0
 		_direct_order_queue.clear()
 		_release_charge_reservation()
 		_state = State.REBOOTING
-		_remember("rebooting (condition 0)")
+		_remember("rebooting (depleted)")
 	elif not should_be_rebooting and _state == State.REBOOTING:
-		# A successful save restored condition above the threshold — wake up.
 		_state = State.IDLE
 		_idle_cooldown = 0.0
 		_remember("recovered from reboot")
@@ -1089,17 +1103,10 @@ func _pickup_downed_worker() -> void:
 		_abort_save()
 		return
 	_carried_worker = _save_target
-	_carried_worker.carried_by = self # Register carrying
+	_carried_worker.carried_by = self
 	_carried_worker.visible = false
 	_carried_worker.position = position
-	
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), _save_destination)
-	if path.is_empty() and current_grid() != _save_destination:
-		_abort_save()
-		return
-	_path = path
-	_path_index = 0
-	_state = State.MOVING_TO_DELIVER
+	_state = State.CARRYING_WORKER # Set carrying state. Let _process coordinate delivering path next frame.
 
 
 func _drop_off_carried_worker() -> void:
@@ -1142,6 +1149,7 @@ func _abort_save() -> void:
 	_remember("save aborted")
 
 
+
 ## Restore condition / energy after being rescued. Called by the carrier.
 func _revive(condition_bonus: float, energy_bonus: float) -> void:
 	_condition = clampf(_condition + condition_bonus, 0.0, CONDITION_MAX)
@@ -1149,7 +1157,9 @@ func _revive(condition_bonus: float, energy_bonus: float) -> void:
 	# Repair limbs proportionally to the condition bonus so a rescued bot
 	# isn't immediately downed again from limb damage.
 	_repair_limbs(condition_bonus)
-	if _condition > REBOOT_CONDITION_THRESHOLD and _state == State.REBOOTING:
+	
+	# Wake up only if both condition and energy are restored above minimums
+	if _condition > REBOOT_CONDITION_THRESHOLD and _energy > 0.0 and _state == State.REBOOTING:
 		_state = State.IDLE
 		_idle_cooldown = 0.0
 		_remember("woken up after save")
@@ -1253,11 +1263,19 @@ func _try_claim_job() -> bool:
 
 
 func _try_start_next_direct_order() -> bool:
-	while not _direct_order_queue.is_empty():
-		var order: Dictionary = _direct_order_queue.pop_front()
-		if _start_direct_order(order):
-			return true
-	return false
+	if _direct_order_queue.is_empty():
+		return false
+		
+	# Peek at the command instead of popping it immediately
+	var order: Dictionary = _direct_order_queue[0]
+	if _start_direct_order(order):
+		_direct_order_queue.pop_front() # Remove only when successfully initiated
+		return true
+	else:
+		# The step failed. Clear queue to prevent out-of-order execution and notify player.
+		_direct_order_queue.clear()
+		show_order_failed("Queue blocked")
+		return false
 
 
 func _start_direct_order(order: Dictionary) -> bool:
@@ -1340,6 +1358,13 @@ func _choose_idle_behavior() -> void:
 		if _no_repair_bench_complaint_timer <= 0.0:
 			_remember("Can't repair myself, no repair bench")
 			_no_repair_bench_complaint_timer = 18.0
+
+	# Prioritize recharging if energy is low, rather than letting it compete 
+	# with other low-priority idle behaviors in the shuffled array.
+	if _energy <= ENERGY_LOW:
+		if _idle_try_top_off_charge():
+			return
+
 	if _mental_tiredness >= 55.0 and _begin_assigned_dock_rest():
 		return
 	# Random research urge: occasionally jump to a research bench instead of
@@ -1661,6 +1686,12 @@ func _suspend_for_chat() -> void:
 	_resume_path = _path
 	_resume_path_index = _path_index
 	_resume_carried = _carried
+	
+	# Cleanly clear active variables so the worker has a fresh state during the chat
+	_job = null
+	_path = PackedVector2Array()
+	_path_index = 0
+	_carried = null
 	_release_charge_reservation()
 
 
@@ -1669,17 +1700,21 @@ func _resume_after_chat() -> void:
 	var resume_state: int = _resume_state
 	var resume_path: PackedVector2Array = _resume_path
 	var resume_path_index: int = _resume_path_index
+	var resume_carried: Item = _resume_carried
+	
 	_clear_activity()
 	_resume_job = null
 	_resume_state = State.IDLE
 	_resume_path = PackedVector2Array()
 	_resume_path_index = 0
 	_resume_carried = null
+	
 	if resume_job != null and _job_board != null and _job_board.is_active(resume_job):
 		_job = resume_job
 		_state = resume_state
 		_path = resume_path
 		_path_index = mini(resume_path_index, resume_path.size())
+		_carried = resume_carried
 		_replan()
 		_idle_cooldown = 0.0
 	else:
@@ -1688,6 +1723,36 @@ func _resume_after_chat() -> void:
 		_path_index = 0
 		_state = State.IDLE
 		_idle_cooldown = randf_range(0.8, 2.0)
+		
+		if resume_carried != null and is_instance_valid(resume_carried):
+			resume_carried.visible = true
+			resume_carried.reserved_by = null
+			if resume_carried.get_parent() == self:
+				remove_child(resume_carried)
+			if _items_root != null:
+				_items_root.add_child(resume_carried)
+			resume_carried.set_grid(current_grid())
+			if _stockpile_manager != null:
+				_stockpile_manager.on_item_spawned(resume_carried)
+		
+		if resume_job is HaulJob:
+			var haul := resume_job as HaulJob
+			if haul.dropoff_zone is StockpileZone:
+				(haul.dropoff_zone as StockpileZone).unreserve(haul.dropoff)
+			if haul.item != null and is_instance_valid(haul.item):
+				(haul.item as Item).reserved_by = null
+		elif resume_job is BuildJob:
+			var build := resume_job as BuildJob
+			if build.source_item != null and is_instance_valid(build.source_item):
+				(build.source_item as Item).reserved_by = null
+		elif resume_job is CraftJob:
+			var craft := resume_job as CraftJob
+			if craft.source_item != null and is_instance_valid(craft.source_item):
+				(craft.source_item as Item).reserved_by = null
+		elif resume_job is OperateStructureJob:
+			var op := resume_job as OperateStructureJob
+			if op.source_item != null and is_instance_valid(op.source_item):
+				(op.source_item as Item).reserved_by = null
 
 
 func _nearest_partner() -> Worker:
@@ -2340,15 +2405,18 @@ func _drop_in_place() -> void:
 	if haul != null and haul.dropoff_zone is StockpileZone:
 		(haul.dropoff_zone as StockpileZone).unreserve(haul.dropoff)
 	var dropped: Item = null
-	if _carried != null:
+	if _carried != null and is_instance_valid(_carried):
 		var here := current_grid()
-		remove_child(_carried)
-		_items_root.add_child(_carried)
+		if _carried.get_parent() == self:
+			remove_child(_carried)
+		if _items_root != null:
+			_items_root.add_child(_carried)
 		_carried.visible = true
 		_carried.set_grid(here)
 		_carried.reserved_by = null
 		dropped = _carried
-		_carried = null
+	_carried = null
+	
 	if (_job is BuildJob) or (_job is CraftJob) or (_job is OperateStructureJob):
 		_release_and_idle()
 	else:
@@ -2518,15 +2586,17 @@ func _abandon_job(release_claim: bool = true) -> void:
 	_release_charge_reservation()
 	_clear_job_reservations()
 	var dropped: Item = null
-	if _carried != null:
+	if _carried != null and is_instance_valid(_carried):
 		var here := current_grid()
-		remove_child(_carried)
+		if _carried.get_parent() == self:
+			remove_child(_carried)
 		_items_root.add_child(_carried)
 		_carried.visible = true
 		_carried.set_grid(here)
 		_carried.reserved_by = null
 		dropped = _carried
-		_carried = null
+	_carried = null # Explicitly clear the reference
+	
 	var rematch_item: Item = null
 	if release_claim and _job != null and _job_board != null and _job_board.is_active(_job):
 		if _job is HaulJob:
@@ -2971,10 +3041,13 @@ func _advance_path(delta: float) -> bool:
 			if not structure.is_empty() and int(structure["id"]) == BuildBlueprint.Id.DOOR:
 				_structure_manager.request_door_open(target_grid)
 				if not _structure_manager.is_door_open(target_grid):
+					_door_stuck_timer += delta
+					if _door_stuck_timer >= 4.0:
+						_door_stuck_timer = 0.0
+						_show_blocked_action("Door blocked")
+						_replan()
 					return false
-				if _last_door_slow_cell != target_grid:
-					_last_door_slow_cell = target_grid
-					_door_slow_remaining = DOOR_SLOW_SECONDS
+		_door_stuck_timer = 0.0
 		var to_target: Vector2 = target - position
 		var dist: float = to_target.length()
 		if dist > ARRIVE_EPSILON_PX:
@@ -3227,6 +3300,12 @@ func _check_teleporter() -> void:
 	var target: Vector2i = _chunk_manager.random_linked_teleporter(here)
 	if target == Pathfinder.UNREACHABLE:
 		return
+		
+	# If we are currently traveling to find charge, set the cooldown to 
+	# prevent instant bounce-backs through the network.
+	if _state == State.MOVING_TO_CHARGE:
+		_teleport_charge_cooldown = 12.0
+
 	position = Chunk.grid_to_pixel_center(target)
 	_path = PackedVector2Array()
 	_path_index = 0
@@ -3265,29 +3344,36 @@ func _should_seek_charge() -> bool:
 		return false
 	if _manual_charging:
 		return false
+	# If teleporter cooldown is active, only allow seeking charge if a 
+	# physical local charger is nearby.
+	if _teleport_charge_cooldown > 0.0:
+		return _nearest_outlet_via_explored() != Pathfinder.UNREACHABLE
 	if _energy <= ENERGY_CRITICAL:
 		return true
-	return _state == State.IDLE and _energy <= ENERGY_LOW
+	# Seek charge if energy drops below the low threshold, unless the worker 
+	# is currently engaged in combat.
+	if _energy <= ENERGY_LOW:
+		return _state != State.FIGHTING
+	return false
 
 
 func _begin_auto_charge() -> bool:
 	var outlet: Vector2i = _nearest_outlet_via_explored()
-	if outlet == Pathfinder.UNREACHABLE:
-		# _begin_charge_via_teleporter handles internal state and returns a bool
-		return _begin_charge_via_teleporter()
+	if outlet != Pathfinder.UNREACHABLE:
+		if _chunk_manager.is_outlet_reserved_by_other(outlet, self):
+			return false
+		var path: PackedVector2Array = _find_explored_path(current_grid(), outlet)
+		if path.is_empty() and current_grid() != outlet:
+			return false
+		_abandon_job()
+		_manual_charging = false
+		return _begin_charge(outlet)
 	
-	# Verify reservation and path feasibility before committing and abandoning the job
-	if _chunk_manager.is_outlet_reserved_by_other(outlet, self):
-		return false
+	# Only execute blind teleport charges if we aren't cooling down from a recent jump
+	if _teleport_charge_cooldown <= 0.0:
+		return _begin_charge_via_teleporter()
 		
-	var path: PackedVector2Array = _find_explored_path(current_grid(), outlet)
-	if path.is_empty() and current_grid() != outlet:
-		return false
-		
-	# Safely commit to charging now
-	_abandon_job()
-	_manual_charging = false
-	return _begin_charge(outlet)
+	return false
 
 ## Picks the closest outlet reachable through fog-explored cells only. Bots
 ## must not magically know the path through undiscovered areas — if the
@@ -3467,6 +3553,8 @@ func _draw() -> void:
 	# Rebooting / downed bots get a dim red halo so the player can spot them
 	# from across the colony and right-click a save order.
 	var downed: bool = _state == State.REBOOTING and not _dead
+	
+	
 	if downed:
 		var pulse: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() * 0.004)
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 5.0, 0.0, TAU, 24, Color(0.95, 0.32, 0.30, pulse), 1.5)
@@ -3486,7 +3574,7 @@ func _draw() -> void:
 	else:
 		var body_color: Color = BODY_COLOR if not downed else Color(0.55, 0.25, 0.25)
 		draw_circle(Vector2.ZERO, BODY_RADIUS, body_color)
-	if _carried != null:
+	if _carried != null and is_instance_valid(_carried):
 		draw_circle(Vector2(0, -BODY_RADIUS - 2), 2.0, Item.kind_color(_carried.kind))
 	var bar_pos := Vector2(-BODY_RADIUS, BODY_RADIUS + 3.0)
 	var bar_size := Vector2(BODY_RADIUS * 2.0, 2.0)

@@ -139,7 +139,7 @@ static func all() -> Array[TechData]:
 		FOCUSED_MIND,
 		"Focused Mind",
 		"Meditating bots produce wisdom 25% faster.",
-		80,
+		35,
 		[AWAKENING],
 		[],
 		Vector2i(1, 3),

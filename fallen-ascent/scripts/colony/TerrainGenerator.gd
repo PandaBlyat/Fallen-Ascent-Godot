@@ -528,7 +528,7 @@ static func _carve_cross_room(
 ) -> void:
 	var bar_w_min: int = maxi(2, int(float(room.size.x) / 3.0))
 	var bar_h_min: int = maxi(2, int(float(room.size.y) / 3.0))
-	var bar_w_max: int = maxi(2, int(float(room.size.x) / 2.0) + 1)
+	var bar_w_max: int = maxi(2, int(float(room.size.y) / 2.0) + 1)
 	var bar_h_max: int = maxi(2, int(float(room.size.y) / 2.0) + 1)
 	var bar_w: int = rng.randi_range(bar_w_min, bar_w_max)
 	var bar_h: int = rng.randi_range(bar_h_min, bar_h_max)
@@ -1305,25 +1305,25 @@ static func _water_kind_at(
 	var puddle_bias: float = 0.0
 	match zone:
 		0:  # The Abyss — flooded chasms, ground-water seeps
-			lake_bias = 0.10
-			river_bias = 0.04
-			puddle_bias = 0.06
+			lake_bias = 0.02
+			river_bias = -0.04
+			puddle_bias = 0.01
 		1:  # The Industrial Core — coolant puddles only, no open lakes
 			lake_enabled = false
-			river_bias = -0.04
-			puddle_bias = 0.04
-		2:  # Habitation Blocks — mostly dry, occasional puddle
-			lake_bias = -0.10
-			river_bias = -0.06
+			river_bias = -0.12
 			puddle_bias = -0.02
+		2:  # Habitation Blocks — mostly dry, occasional puddle
+			lake_bias = -0.18
+			river_bias = -0.14
+			puddle_bias = -0.08
 		3:  # Lithic Vault — underground aquifers and runoff streams
-			lake_bias = 0.04
-			river_bias = 0.08
-			puddle_bias = 0.02
+			lake_bias = -0.02
+			river_bias = 0.02
+			puddle_bias = -0.02
 		4:  # Structural Grid — broad shallow lakes between pillars
-			lake_bias = 0.08
-			river_bias = -0.04
-			puddle_bias = 0.0
+			lake_bias = 0.02
+			river_bias = -0.10
+			puddle_bias = -0.04
 
 	# Threshold scaling so per-zone water_threshold tuning still nudges all
 	# bands together (-0.72 → wetter, -0.82 → drier).
@@ -1339,11 +1339,11 @@ static func _water_kind_at(
 		# are "below water-line".
 		var lake_n: float = noise.get_noise_2d(float(wx) * 0.18, float(wy) * 0.18)
 		var lake_score: float = -lake_n + lake_bias
-		if lake_score > 0.42:
+		if lake_score > 0.55:
 			depth = maxi(depth, 2)
-		elif lake_score > 0.26:
+		elif lake_score > 0.45:
 			depth = maxi(depth, 1)
-		elif lake_score > 0.12:
+		elif lake_score > 0.35:
 			depth = maxi(depth, 0)
 
 	if river_enabled:
@@ -1352,18 +1352,18 @@ static func _water_kind_at(
 		# shallow + puddle, so rivers feel like they actually have shores.
 		var river_n: float = noise.get_noise_2d(float(wx) * 0.11 + 941.0, float(wy) * 0.11 - 533.0)
 		var river_raw: float = absf(river_n) - river_bias
-		if river_raw < 0.025:
+		if river_raw < 0.01:
 			depth = maxi(depth, 2)
-		elif river_raw < 0.06:
+		elif river_raw < 0.03:
 			depth = maxi(depth, 1)
-		elif river_raw < 0.11:
+		elif river_raw < 0.06:
 			depth = maxi(depth, 0)
 
 	if puddle_enabled:
 		# Higher-frequency speckle for isolated puddles in otherwise dry
 		# corridors. Only ever puddle depth, never deep.
 		var puddle_n: float = noise.get_noise_2d(float(wx) * 0.55 + 2137.0, float(wy) * 0.55 + 3719.0)
-		if puddle_n + puddle_bias > 0.66:
+		if puddle_n + puddle_bias > 0.78:
 			depth = maxi(depth, 0)
 
 	if depth < 0:
@@ -1404,25 +1404,25 @@ static func _acid_kind_at(
 	var splash_bias: float = 0.0
 	match zone:
 		0:  # The Abyss — corrosive seep from above
-			pool_bias = 0.02
-			seep_bias = 0.04
-			splash_bias = 0.04
+			pool_bias = -0.04
+			seep_bias = -0.02
+			splash_bias = -0.02
 		1:  # The Industrial Core — coolant breaches, leaking reactors
-			pool_bias = 0.08
-			seep_bias = 0.02
-			splash_bias = 0.06
+			pool_bias = 0.01
+			seep_bias = -0.04
+			splash_bias = 0.01
 		2:  # Habitation Blocks — rare, mostly leaky pipes
 			pool_enabled = false
-			seep_bias = -0.04
-			splash_bias = -0.02
+			seep_bias = -0.15
+			splash_bias = -0.10
 		3:  # Lithic Vault — natural acid aquifers
-			pool_bias = 0.04
-			seep_bias = 0.02
-			splash_bias = 0.0
+			pool_bias = -0.04
+			seep_bias = -0.02
+			splash_bias = -0.06
 		4:  # Structural Grid — sparse industrial residue
 			pool_enabled = false
 			seep_enabled = false
-			splash_bias = -0.02
+			splash_bias = -0.15
 
 	var depth: int = -1  # -1 dry, 0 puddle, 1 shallow, 2 deep
 
@@ -1430,28 +1430,28 @@ static func _acid_kind_at(
 		var pool_n: float = noise.get_noise_2d(float(wx) * 0.21 + 5021.0, float(wy) * 0.21 - 1873.0)
 		var pool_score: float = -pool_n + pool_bias
 		# Rarer than water lakes: tighter thresholds.
-		if pool_score > 0.58:
+		if pool_score > 0.65:
 			depth = maxi(depth, 2)
-		elif pool_score > 0.46:
+		elif pool_score > 0.55:
 			depth = maxi(depth, 1)
-		elif pool_score > 0.34:
+		elif pool_score > 0.45:
 			depth = maxi(depth, 0)
 
 	if seep_enabled:
 		var seep_n: float = noise.get_noise_2d(float(wx) * 0.14 - 2273.0, float(wy) * 0.14 + 1607.0)
 		var seep_raw: float = absf(seep_n) - seep_bias
 		# Acid runs follow ridged noise like rivers, but much thinner.
-		if seep_raw < 0.012:
+		if seep_raw < 0.005:
 			depth = maxi(depth, 2)
 			# Trim to shallow if it might dilute too quickly; we want hazard not pools.
-		elif seep_raw < 0.035:
+		elif seep_raw < 0.015:
 			depth = maxi(depth, 1)
-		elif seep_raw < 0.07:
+		elif seep_raw < 0.03:
 			depth = maxi(depth, 0)
 
 	if splash_enabled:
 		var splash_n: float = noise.get_noise_2d(float(wx) * 0.62 - 4093.0, float(wy) * 0.62 + 6173.0)
-		if splash_n + splash_bias > 0.78:
+		if splash_n + splash_bias > 0.85:
 			depth = maxi(depth, 0)
 
 	if depth < 0:

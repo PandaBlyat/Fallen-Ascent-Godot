@@ -20,6 +20,8 @@ var _operation_targets: Dictionary = {} ## Vector2i -> OperateStructureJob
 ## Chunk-coord -> Array[Job]. Lets claim_next_for scan only nearby
 ## chunks first instead of the full pending list each poll.
 var _pending_by_chunk: Dictionary = {}
+## Prevents stale job references when item coordinates change dynamically.
+var _job_indexed_chunk: Dictionary = {}
 
 const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
 const SCRAPE_BIOMASS_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeBiomassJob.gd")
@@ -402,14 +404,20 @@ static func describe_job(job: Job) -> String:
 
 
 func _index_job(job: Job) -> void:
-	var chunk: Vector2i = Chunk.grid_to_chunk(_target_grid_of(job))
+	var target_grid: Vector2i = _target_grid_of(job)
+	var chunk: Vector2i = Chunk.grid_to_chunk(target_grid)
 	if not _pending_by_chunk.has(chunk):
 		_pending_by_chunk[chunk] = []
 	(_pending_by_chunk[chunk] as Array).append(job)
+	_job_indexed_chunk[job] = chunk
 
 
 func _unindex_job(job: Job) -> void:
-	var chunk: Vector2i = Chunk.grid_to_chunk(_target_grid_of(job))
+	if not _job_indexed_chunk.has(job):
+		return
+	var chunk: Vector2i = _job_indexed_chunk[job] as Vector2i
+	_job_indexed_chunk.erase(job)
+	
 	if not _pending_by_chunk.has(chunk):
 		return
 	var arr: Array = _pending_by_chunk[chunk] as Array

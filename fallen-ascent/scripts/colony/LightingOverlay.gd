@@ -30,6 +30,8 @@ func _ready() -> void:
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.visibility_changed.connect(_on_visibility_changed)
 	EventBus.structure_built.connect(_on_structure_built)
+	if SettingsManager != null:
+		SettingsManager.settings_changed.connect(_on_settings_changed)
 	_refresh_shader_inputs()
 
 
@@ -79,6 +81,11 @@ func _on_structure_built(_manager: Node) -> void:
 	queue_redraw()
 
 
+func _on_settings_changed() -> void:
+	_apply_darkness_settings()
+	queue_redraw()
+
+
 func _refresh_shader_inputs() -> void:
 	if _material == null or _fog == null:
 		return
@@ -87,6 +94,15 @@ func _refresh_shader_inputs() -> void:
 	_material.set_shader_parameter("mask_origin_grid", Vector2(_fog.visibility_mask_origin()))
 	_material.set_shader_parameter("mask_size_grid", Vector2(_fog.visibility_mask_size()))
 	_material.set_shader_parameter("tile_pixels", float(Chunk.TILE_PIXELS))
+	_apply_darkness_settings()
+
+
+func _apply_darkness_settings() -> void:
+	if _material == null:
+		return
+	var darkness: float = clampf(SettingsManager.overall_darkness if SettingsManager != null else 1.0, 0.0, 2.0)
+	_material.set_shader_parameter("unlit_alpha", clampf(0.46 * darkness, 0.0, 0.90))
+	_material.set_shader_parameter("lit_alpha", clampf(0.020 * darkness, 0.0, 0.25))
 
 
 func _visible_grid_bounds() -> Rect2i:

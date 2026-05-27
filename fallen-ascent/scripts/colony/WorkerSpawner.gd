@@ -5,13 +5,40 @@ extends Node
 ## ColonySite._ready after the first chunk load so the terrain query works.
 ##
 
-const INITIAL_WORKERS: int = 3
+const INITIAL_WORKERS: int = 10
 const MAX_SEARCH_RADIUS: int = 24
 const WORKER_SCRIPT: Script = preload("res://scripts/colony/Worker.gd")
 const BOT_NAMES: Array[String] = [
+	# Original Names
 	"Echo", "Rook", "Cipher", "Spark", "Null", "Tweak", "Scrap", "Clink",
 	"Bolt", "Quirk", "Shift", "Flick", "Sync", "Blink", "Glitch", "Vector",
 	"Patch", "Jolt", "Latch", "Knurl", "Relay", "Fuze", "Pip", "Socket",
+
+	# Hardware & Assembly
+	"Cog", "Gear", "Rivet", "Cam", "Valve", "Sprocket", "Rotor", "Spindle",
+	"Crank", "Gasket", "Shunt", "Clamp", "Shim", "Solder", "Bevel", "Spool",
+	"Weld", "Piston", "Anvil", "Sledge", "Dynamo", "Bracket", "Flange", "Grip",
+
+	# Software, Logic & Data
+	"Bit", "Byte", "Pixel", "Hex", "Bug", "Cache", "Ram", "Stack",
+	"Node", "Loop", "Trace", "Kernel", "Shell", "Daemon", "Ping", "Baud",
+	"Port", "Bus", "Gate", "Logic", "Array", "Index", "Hash", "Buffer",
+
+	# Electrical & Signals
+	"Flux", "Volt", "Ohm", "Watt", "Amp", "Surge", "Phase", "Core",
+	"Hertz", "Freq", "Sparkle", "Grid", "Coil", "Static", "Terminal", "Breaker",
+
+	# Acoustic & Mechanical Sounds
+	"Whir", "Buzz", "Chirp", "Click", "Tick", "Beep", "Boop", "Snap",
+	"Zip", "Zap", "Hum", "Clank", "Thrum", "Clatter", "Clonk", "Chime",
+
+	# Materials & Elements
+	"Rust", "Iron", "Brass", "Zinc", "Lead", "Tin", "Steel", "Chrome",
+	"Nickel", "Cobalt", "Slate", "Flint", "Ash", "Carbon", "Copper", "Bronze",
+
+	# Spatial & System States
+	"Nano", "Micro", "Ion", "Nova", "Apex", "Helix", "Zenith", "Drift",
+	"Tilt", "Warp", "Orbit", "Gauge", "Scale", "Range", "Scope", "Sector"
 ]
 
 

@@ -1430,6 +1430,11 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 		_add_status_banner(right, "satisfied", COLOR_METER_GOOD)
 	else:
 		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
+	var modifiers: Array[String] = worker.status_modifiers()
+	if not modifiers.is_empty():
+		_add_section_label(right, "modifiers")
+		for modifier in modifiers:
+			_add_status_banner(right, modifier, COLOR_ACCENT_CYAN)
 	_add_history_panel(right, worker)
 	_add_limb_grid(right, worker)
 
@@ -1920,13 +1925,6 @@ func _refresh_npc_strip_if_needed() -> void:
 func _focus_worker(worker: Worker) -> void:
 	if worker == null or not is_instance_valid(worker) or _camera == null:
 		return
-	if _selected_workers.size() == 1 and _selected_workers[0] == worker:
-		_selected_workers.clear()
-		if _selection_controller != null:
-			_selection_controller.clear_selection()
-		_refresh_selection_panel()
-		_refresh_inspect_card()
-		return
 	_selected_workers = [worker]
 	_selected_structure_id = -1
 	_selected_stockpile = null
@@ -1938,7 +1936,10 @@ func _focus_worker(worker: Worker) -> void:
 		_selection_controller.select_workers(picked)
 	_refresh_selection_panel()
 	_refresh_inspect_card()
-	_camera.center_on(worker.global_position)
+	if _camera.has_method("follow_node"):
+		_camera.call("follow_node", worker)
+	else:
+		_camera.center_on(worker.global_position)
 
 
 func _on_worker_entered_combat(worker: Node) -> void:

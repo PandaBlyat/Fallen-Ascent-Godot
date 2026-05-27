@@ -392,8 +392,11 @@ func _best_group_target_for(worker: Worker, center: Vector2i, assigned: Dictiona
 			continue
 		if not _chunk_manager.is_walkable(candidate):
 			continue
-		if candidate != worker.current_grid() and not _pathfinder.has_path(worker.current_grid(), candidate):
-			continue
+		if candidate != worker.current_grid():
+			var route: Dictionary = _pathfinder.find_path_with_teleporters(worker.current_grid(), candidate, _fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty():
+				continue
 		var worker_dist: int = maxi(
 			absi(candidate.x - worker.current_grid().x),
 			absi(candidate.y - worker.current_grid().y),
@@ -556,8 +559,11 @@ func _best_attack_stand(worker: Worker, target_grid: Vector2i, assigned: Diction
 			continue
 		if _occupied_by_unselected(candidate):
 			continue
-		if candidate != origin and not _pathfinder.has_path(origin, candidate):
-			continue
+		if candidate != origin:
+			var route: Dictionary = _pathfinder.find_path_with_teleporters(origin, candidate, _fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty():
+				continue
 		var d: int = maxi(absi(candidate.x - origin.x), absi(candidate.y - origin.y))
 		if d < best_d:
 			best = candidate

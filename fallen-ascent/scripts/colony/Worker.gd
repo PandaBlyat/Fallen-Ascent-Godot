@@ -83,10 +83,17 @@ const ENERGY_IDLE_DRAIN_PER_SEC: float = 0.05
 const ENERGY_MOVE_DRAIN_PER_SEC: float = 0.1
 const ENERGY_WORK_DRAIN_PER_SEC: float = 0.3
 const ENERGY_CHARGE_PER_SEC: float = 2.0
+const ENERGY_SLOW_THRESHOLD: float = 50.0
+const ENERGY_LOW_MODE_THRESHOLD: float = 15.0
+const ENERGY_LOW_MODE_DRAIN_MULT: float = 0.5
+const ENERGY_LOW_MODE_SPEED_MULT: float = 0.45
+const ENERGY_RECHARGE_MIN_THRESHOLD: float = 30.0
+const ENERGY_RECHARGE_MAX_THRESHOLD: float = 55.0
 const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
+const NAME_FONT_SIZE: int = 11
 const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
 const ACTION_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
 const ENTITY_REGION_SIZE := Vector2(32, 32)
@@ -105,7 +112,7 @@ const CONDITION_WORK_DECAY_PER_SEC: float = 0.05
 const MENTAL_IDLE_RISE_PER_SEC: float = 0.04
 const MENTAL_WORK_RISE_PER_SEC: float = 0.16
 const REST_RECOVERY_PER_SEC: float = 8.0
-const REPAIR_RECOVERY_PER_SEC: float = 4.0
+const REPAIR_RECOVERY_PER_SEC: float = 1.6
 const SOCIAL_MAX: float = 100.0
 const SOCIAL_GAIN_PER_SEC: float = 12.0          ## per-second gain while chatting
 const SOCIAL_DECAY_PER_SEC: float = 0.18         ## passive decay when not chatting
@@ -149,6 +156,11 @@ const ORDER_SAVE := &"save"
 const NEEDS_REFRESH_SECONDS: float = 0.5
 ## Throttle for EntityGrid bucket sync; cheap dict op but no point per-frame.
 const ENTITY_GRID_SYNC_SECONDS: float = 0.25
+const AI_DECISION_SECONDS: float = 0.22
+const AI_DECISION_JITTER_SECONDS: float = 0.08
+const ROUTE_CACHE_MSEC: int = 450
+const STUCK_WATCHDOG_SECONDS: float = 3.0
+const STUCK_PROGRESS_EPSILON_PX: float = 0.5
 
 var _state: int = State.IDLE
 var _job: Job = null
@@ -200,9 +212,14 @@ var _crowd_contacts: Dictionary = {}
 var _direct_order_queue: Array[Dictionary] = []
 var _needs_refresh_timer: float = 0.0
 var _entity_grid_timer: float = 0.0
+var _ai_decision_timer: float = 0.0
 var _acid_damage_accum: float = 0.0
 var _last_action_state: int = -1
 var _last_action_job: Job = null
+var _last_energy_for_draw: float = ENERGY_MAX
+var _route_cache: Dictionary = {}
+var _stuck_watchdog_timer: float = 0.0
+var _stuck_last_position: Vector2 = Vector2.INF
 var _no_repair_bench_complaint_timer: float = 0.0
 var _research_urge_cooldown: float = 0.0
 var _paused: bool = false
@@ -217,6 +234,11 @@ var _save_destination_kind: int = -1   ## BuildBlueprint.Id of the destination s
 const REBOOT_CONDITION_THRESHOLD: float = 0.5
 const SAVE_REVIVE_CONDITION: float = 30.0
 const SAVE_REVIVE_ENERGY: float = 35.0
+const DOWNED_NONE := &""
+const DOWNED_ENERGY := &"energy"
+const DOWNED_CONDITION := &"condition"
+const DOWNED_BOTH := &"both"
+var _downed_reason: StringName = DOWNED_NONE
 var _teleport_charge_cooldown: float = 0.0
 # Fix for Rescue carry state tracking
 var carried_by: Worker = null
@@ -256,6 +278,7 @@ func setup(
 
 func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
+	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
 	_init_limbs()
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
@@ -351,7 +374,7 @@ func _enter_fighting(target: Node2D, preferred_stand: Vector2i = Pathfinder.UNRE
 			_path = PackedVector2Array()
 			_path_index = 0
 		else:
-			var path: PackedVector2Array = _pathfinder.find_path(current_grid(), preferred_stand)
+			var path: PackedVector2Array = _find_explored_path(current_grid(), preferred_stand)
 			if not path.is_empty():
 				_path = path
 				_path_index = 0
@@ -372,7 +395,7 @@ func _repath_to_combat_target() -> void:
 		_path = PackedVector2Array()
 		_path_index = 0
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty():
 		_path = PackedVector2Array()
 		_path_index = 0
@@ -502,6 +525,23 @@ func mood_ratio() -> float:
 
 func mood_value() -> int:
 	return int(roundf(_mood))
+
+
+func sight_radius() -> int:
+	return 4 if _is_low_energy_mode() else FogOfWar.WORKER_SIGHT_RADIUS
+
+
+func status_modifiers() -> Array[String]:
+	var out: Array[String] = []
+	if _is_low_energy_mode():
+		out.append("Low energy mode: -50% energy drain, reduced vision")
+	if _energy < ENERGY_SLOW_THRESHOLD:
+		out.append("Low energy: reduced movement speed")
+	return out
+
+
+func downed_reason() -> StringName:
+	return _downed_reason
 
 
 func mood_label() -> String:
@@ -707,6 +747,7 @@ func _on_job_cancelled(job: Job) -> void:
 
 
 func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
+	_route_cache.clear()
 	if _path.is_empty():
 		return
 	# If the changed tile lies on the remaining path, re-plan.
@@ -773,6 +814,10 @@ func _process(delta: float) -> void:
 		_no_repair_bench_complaint_timer = maxf(0.0, _no_repair_bench_complaint_timer - delta)
 	if _research_urge_cooldown > 0.0:
 		_research_urge_cooldown = maxf(0.0, _research_urge_cooldown - delta)
+	_ai_decision_timer -= delta
+	var ai_due: bool = _ai_decision_timer <= 0.0
+	if ai_due:
+		_ai_decision_timer = AI_DECISION_SECONDS + randf_range(0.0, AI_DECISION_JITTER_SECONDS)
 	_update_energy(delta)
 	_update_body_stats(delta)
 	_tick_acid_damage(delta)
@@ -784,7 +829,7 @@ func _process(delta: float) -> void:
 	var rescuing: bool = _state == State.MOVING_TO_SAVE \
 		or _state == State.CARRYING_WORKER \
 		or _state == State.MOVING_TO_DELIVER
-	if _state != State.FIGHTING and not rescuing and _should_seek_charge():
+	if ai_due and _state != State.FIGHTING and not rescuing and _should_seek_charge():
 		if _begin_auto_charge():
 			return
 	match _state:
@@ -792,7 +837,7 @@ func _process(delta: float) -> void:
 			if _try_start_next_direct_order():
 				return
 			_idle_cooldown -= delta
-			if _idle_cooldown <= 0.0:
+			if ai_due and _idle_cooldown <= 0.0:
 				_idle_cooldown = IDLE_RETRY_SECONDS
 				# Heavily damaged workers cut the line: try a repair bench
 				# before the regular job board. If none is reachable, complain
@@ -972,7 +1017,7 @@ func _process(delta: float) -> void:
 				_abort_save()
 				return
 			
-			var path: PackedVector2Array = _pathfinder.find_path(current_grid(), _save_destination)
+			var path: PackedVector2Array = _find_explored_path(current_grid(), _save_destination)
 			if path.is_empty() and current_grid() != _save_destination:
 				_abort_save()
 				_show_blocked_action("No path to deliver")
@@ -990,6 +1035,7 @@ func _process(delta: float) -> void:
 				if _advance_path(delta):
 					_drop_off_carried_worker()
 	_check_teleporter()
+	_update_stuck_watchdog(delta)
 	# Action text only depends on state/job/blocked timer — skip the match
 	# statement allocation entirely when nothing relevant changed.
 	if _state != _last_action_state or _job != _last_action_job or _blocked_action_timer > 0.0:
@@ -1010,7 +1056,8 @@ func _update_reboot_state() -> void:
 	if _dead:
 		return
 		
-	var should_be_rebooting: bool = _condition <= REBOOT_CONDITION_THRESHOLD or _energy <= 0.0
+	var next_downed_reason: StringName = _compute_downed_reason()
+	var should_be_rebooting: bool = next_downed_reason != DOWNED_NONE
 	
 	if should_be_rebooting:
 		# Force-abort the rescue state to drop the downed worker safely onto the grid
@@ -1018,17 +1065,33 @@ func _update_reboot_state() -> void:
 			_abort_save()
 			
 	if should_be_rebooting and _state != State.REBOOTING:
+		_downed_reason = next_downed_reason
 		_abandon_job()
 		_path = PackedVector2Array()
 		_path_index = 0
 		_direct_order_queue.clear()
 		_release_charge_reservation()
 		_state = State.REBOOTING
-		_remember("rebooting (depleted)")
+		_remember("rebooting (%s)" % str(_downed_reason))
 	elif not should_be_rebooting and _state == State.REBOOTING:
+		_downed_reason = DOWNED_NONE
 		_state = State.IDLE
 		_idle_cooldown = 0.0
 		_remember("recovered from reboot")
+	elif should_be_rebooting:
+		_downed_reason = next_downed_reason
+
+
+func _compute_downed_reason() -> StringName:
+	var energy_down: bool = _energy <= 0.0
+	var condition_down: bool = _condition <= REBOOT_CONDITION_THRESHOLD
+	if energy_down and condition_down:
+		return DOWNED_BOTH
+	if energy_down:
+		return DOWNED_ENERGY
+	if condition_down:
+		return DOWNED_CONDITION
+	return DOWNED_NONE
 
 
 ## Player-issued rescue. The carrier walks to `target`, picks them up, then
@@ -1048,14 +1111,14 @@ func command_save(target: Worker, clear_queue: bool = true) -> bool:
 	if stand == Pathfinder.UNREACHABLE:
 		_remember("Can't save, no path")
 		return false
-	var dest_info: Dictionary = _find_save_destination(stand)
+	var dest_info: Dictionary = _find_save_destination(stand, target.downed_reason())
 	if dest_info.is_empty():
-		_remember("Can't save, no repair bench")
+		_remember("Can't save, no service point")
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
 	_abandon_job()
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
 		_remember("Can't save, no path")
 		return false
@@ -1073,7 +1136,11 @@ func command_save(target: Worker, clear_queue: bool = true) -> bool:
 ## Repair Bench / Mechanic Dock → Outlet (visible) → nearest stockpile zone.
 ## Each candidate is filtered through pathing from `stand` so we never start
 ## a rescue we can't finish.
-func _find_save_destination(stand: Vector2i) -> Dictionary:
+func _find_save_destination(stand: Vector2i, reason: StringName) -> Dictionary:
+	if reason == DOWNED_ENERGY:
+		var outlet_first: Vector2i = _nearest_outlet_via_explored(stand)
+		if outlet_first != Pathfinder.UNREACHABLE and _route_exists(stand, outlet_first, true):
+			return {"cell": outlet_first, "kind": -2}
 	if _structure_manager != null:
 		var bench: Vector2i = _structure_manager.nearest_structure_anchor(
 			[BuildBlueprint.Id.REPAIR_BENCH, BuildBlueprint.Id.MAINTENANCE_DOCK],
@@ -1083,17 +1150,19 @@ func _find_save_destination(stand: Vector2i) -> Dictionary:
 		)
 		if bench != Pathfinder.UNREACHABLE:
 			var interaction: Vector2i = _structure_manager.interaction_cell_for(bench)
-			if interaction != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, interaction):
-				return {"cell": interaction, "kind": BuildBlueprint.Id.REPAIR_BENCH}
+			if interaction != Pathfinder.UNREACHABLE and _route_exists(stand, interaction, true):
+				var structure: Dictionary = _structure_manager.structure_at(bench)
+				var destination_kind: int = int(structure.get("id", BuildBlueprint.Id.REPAIR_BENCH))
+				return {"cell": interaction, "kind": destination_kind}
 	# Outlets — workers ARE allowed to stand on outlet tiles, so deliver
 	# directly onto the outlet cell to start a passive charge.
-	var outlet: Vector2i = _nearest_outlet_via_explored()
-	if outlet != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, outlet):
+	var outlet: Vector2i = _nearest_outlet_via_explored(stand)
+	if outlet != Pathfinder.UNREACHABLE and _route_exists(stand, outlet, true):
 		return {"cell": outlet, "kind": -2}
 	# Stockpile fallback — dump the body somewhere the colony will notice.
 	if _stockpile_manager != null and _stockpile_manager.has_method("any_zone_cell"):
 		var stockpile_cell: Vector2i = _stockpile_manager.call("any_zone_cell") as Vector2i
-		if stockpile_cell != Pathfinder.UNREACHABLE and _pathfinder.has_path(stand, stockpile_cell):
+		if stockpile_cell != Pathfinder.UNREACHABLE and _route_exists(stand, stockpile_cell, true):
 			return {"cell": stockpile_cell, "kind": -3}
 	return {}
 
@@ -1160,6 +1229,7 @@ func _revive(condition_bonus: float, energy_bonus: float) -> void:
 	
 	# Wake up only if both condition and energy are restored above minimums
 	if _condition > REBOOT_CONDITION_THRESHOLD and _energy > 0.0 and _state == State.REBOOTING:
+		_downed_reason = DOWNED_NONE
 		_state = State.IDLE
 		_idle_cooldown = 0.0
 		_remember("woken up after save")
@@ -1209,7 +1279,6 @@ func _try_claim_job() -> bool:
 		return false
 	
 	var claimed_this_tick: Array[Job] = []
-	var selected_job: Job = null
 	var now := _now_seconds()
 	
 	# Clean up expired or invalid failed jobs
@@ -1218,9 +1287,10 @@ func _try_claim_job() -> bool:
 		if not is_instance_valid(f_job) or now >= _failed_jobs_cooldowns[f_job]:
 			_failed_jobs_cooldowns.erase(f_job)
 	
-	# Keep pulling jobs until we find one that hasn't recently failed.
+	# Keep pulling jobs until one starts successfully. Failed claims are held
+	# until this tick ends so the board can offer another candidate.
 	# Includes a safety limit to prevent infinite loops if the board contains duplicate entries.
-	var safety_limit := 128
+	var safety_limit := 32
 	while safety_limit > 0:
 		safety_limit -= 1
 		var job: Job = _job_board.claim_next_for(self, current_grid())
@@ -1233,32 +1303,35 @@ func _try_claim_job() -> bool:
 			claimed_this_tick.append(job)
 			continue
 		
-		selected_job = job
-		break
-	
-	# Release any temporarily held failed jobs back to the board
+		_job = job
+		if job is MineJob:
+			_begin_mine(job as MineJob)
+		elif job is HaulJob:
+			_begin_haul(job as HaulJob)
+		elif job is BuildJob:
+			_begin_build(job as BuildJob)
+		elif job is CraftJob:
+			_begin_craft(job as CraftJob)
+		elif job is OperateStructureJob:
+			_begin_operation(job as OperateStructureJob)
+		elif _is_scrape_rust_job(job):
+			_begin_scrape_rust(job)
+		elif _is_scrape_biomass_job(job):
+			_begin_scrape_biomass(job)
+
+		if _job == job and _state != State.IDLE:
+			for f_job in claimed_this_tick:
+				_job_board.release(f_job)
+			return true
+		_mark_job_failed(job)
+		if _job_board.is_active(job):
+			_job_board.release(job)
+		if _job == job:
+			_job = null
+
 	for f_job in claimed_this_tick:
 		_job_board.release(f_job)
-	
-	if selected_job == null:
-		return false
-	
-	_job = selected_job
-	if selected_job is MineJob:
-		_begin_mine(selected_job as MineJob)
-	elif selected_job is HaulJob:
-		_begin_haul(selected_job as HaulJob)
-	elif selected_job is BuildJob:
-		_begin_build(selected_job as BuildJob)
-	elif selected_job is CraftJob:
-		_begin_craft(selected_job as CraftJob)
-	elif selected_job is OperateStructureJob:
-		_begin_operation(selected_job as OperateStructureJob)
-	elif _is_scrape_rust_job(selected_job):
-		_begin_scrape_rust(selected_job)
-	elif _is_scrape_biomass_job(selected_job):
-		_begin_scrape_biomass(selected_job)
-	return true
+	return false
 
 
 
@@ -1399,7 +1472,7 @@ func _begin_short_wander() -> bool:
 	var target: Vector2i = _random_walkable_near(here, 6)
 	if target == Pathfinder.UNREACHABLE or target == here:
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(here, target)
+	var path: PackedVector2Array = _find_explored_path(here, target)
 	if path.is_empty():
 		return false
 	_path = path
@@ -1515,7 +1588,7 @@ func _begin_roam(frontier: bool) -> bool:
 	var target: Vector2i = _random_idle_target(frontier)
 	if target == Pathfinder.UNREACHABLE:
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		return false
 	_path = path
@@ -1543,7 +1616,7 @@ func _random_idle_target(frontier: bool) -> Vector2i:
 			continue
 		if candidate == current_grid():
 			continue
-		if _pathfinder.has_path(current_grid(), candidate):
+		if _route_exists(current_grid(), candidate, true):
 			return candidate
 	return Pathfinder.UNREACHABLE
 
@@ -1555,7 +1628,7 @@ func _random_walkable_near(origin: Vector2i, radius: int) -> Vector2i:
 			continue
 		if _is_acid_tile_at(candidate):
 			continue
-		if _pathfinder.has_path(origin, candidate):
+		if _route_exists(origin, candidate, true):
 			return candidate
 	return Pathfinder.UNREACHABLE
 
@@ -1578,7 +1651,7 @@ func _begin_structure_activity(ids: Array, next_state: int) -> bool:
 	var target: Vector2i = _structure_manager.interaction_cell_for(anchor)
 	if target == Pathfinder.UNREACHABLE:
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		return false
 	_path = path
@@ -1597,7 +1670,7 @@ func _begin_assigned_dock_rest() -> bool:
 	var target: Vector2i = _structure_manager.interaction_cell_for(anchor)
 	if target == Pathfinder.UNREACHABLE:
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		return false
 	_path = path
@@ -1813,21 +1886,61 @@ func _teleporter_path_toward(_partner_grid: Vector2i) -> PackedVector2Array:
 
 
 func _find_explored_path(from: Vector2i, to: Vector2i) -> PackedVector2Array:
+	return _route_path(_route_between(from, to, true))
+
+
+func _route_path(route: Dictionary) -> PackedVector2Array:
+	return route.get("path", PackedVector2Array()) as PackedVector2Array
+
+
+func _route_between(from: Vector2i, to: Vector2i, explored_only: bool = true) -> Dictionary:
+	var empty_route: Dictionary = {
+		"path": PackedVector2Array(),
+		"entry": Pathfinder.UNREACHABLE,
+		"exit": Pathfinder.UNREACHABLE,
+		"uses_teleporter": false,
+	}
 	if _pathfinder == null:
-		return PackedVector2Array()
-	var path: PackedVector2Array = _pathfinder.find_path(from, to)
-	if path.is_empty():
-		return path
-	if _fog == null:
-		return path
-	for waypoint in path:
-		var grid := Vector2i(
-			int(floor(waypoint.x / Chunk.TILE_PIXELS)),
-			int(floor(waypoint.y / Chunk.TILE_PIXELS)),
-		)
-		if not _fog.is_explored(grid):
-			return PackedVector2Array()
-	return path
+		return empty_route
+	if from == to:
+		return empty_route
+	var now_msec: int = Time.get_ticks_msec()
+	var key: String = "%d,%d>%d,%d:%d" % [from.x, from.y, to.x, to.y, 1 if explored_only else 0]
+	var cached: Dictionary = _route_cache.get(key, {}) as Dictionary
+	if not cached.is_empty() and now_msec - int(cached.get("time", 0)) <= ROUTE_CACHE_MSEC:
+		return cached.get("route", empty_route) as Dictionary
+	var fog_arg: Object = _fog if explored_only else null
+	var route: Dictionary = _pathfinder.find_path_with_teleporters(from, to, fog_arg)
+	_route_cache[key] = {
+		"time": now_msec,
+		"route": route,
+	}
+	if _route_cache.size() > 96:
+		_route_cache.clear()
+	return route
+
+
+func _route_exists(from: Vector2i, to: Vector2i, explored_only: bool = true) -> bool:
+	return from == to or not _route_path(_route_between(from, to, explored_only)).is_empty()
+
+
+func _set_path_to(target: Vector2i, explored_only: bool = true) -> bool:
+	var route: Dictionary = _route_between(current_grid(), target, explored_only)
+	var path: PackedVector2Array = _route_path(route)
+	if path.is_empty() and current_grid() != target:
+		return false
+	_path = path
+	_path_index = 0
+	_stuck_watchdog_timer = 0.0
+	_stuck_last_position = position
+	return true
+
+
+func _grid_from_waypoint(point: Vector2) -> Vector2i:
+	return Vector2i(
+		int(floor(point.x / Chunk.TILE_PIXELS)),
+		int(floor(point.y / Chunk.TILE_PIXELS)),
+	)
 
 
 func _begin_mine(job: MineJob) -> void:
@@ -1839,7 +1952,7 @@ func _begin_mine(job: MineJob) -> void:
 		job.block_briefly()
 		_release_and_idle()
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
 		job.block_briefly()
 		_release_and_idle()
@@ -1857,7 +1970,7 @@ func _begin_scrape_rust(job: Job) -> void:
 		_job = null
 		_state = State.IDLE
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		if job.has_method("block_briefly"):
 			job.block_briefly(2.0)
@@ -1876,7 +1989,7 @@ func _begin_scrape_biomass(job: Job) -> void:
 		_job = null
 		_state = State.IDLE
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		if job.has_method("block_briefly"):
 			job.block_briefly(2.0)
@@ -1892,7 +2005,7 @@ func _begin_haul(job: HaulJob) -> void:
 		_finish_job()
 		return
 	var item_grid: Vector2i = (job.item as Item).get_grid()
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), item_grid)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), item_grid)
 	if path.is_empty() and current_grid() != item_grid:
 		var item := job.item as Item
 		_clear_job_reservations()
@@ -1915,7 +2028,7 @@ func _begin_build(job: BuildJob) -> void:
 			_mark_job_failed(job)
 			_release_and_idle()
 			return
-		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
+		var ready_path: PackedVector2Array = _find_explored_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
 			job.block_briefly(2.0)
 			_mark_job_failed(job)
@@ -1934,7 +2047,7 @@ func _begin_build(job: BuildJob) -> void:
 	job.source_item = source
 	source.reserved_by = self
 	var sg: Vector2i = source.get_grid()
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
 		job.block_briefly(2.0)
@@ -1956,7 +2069,7 @@ func _find_material_for_build(job: BuildJob) -> Item:
 			var it := child as Item
 			if it == null or it.reserved_by != null or it.kind != job.material_kind:
 				continue
-			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+			if it.get_grid() != origin and not _route_exists(origin, it.get_grid(), true):
 				continue
 			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
 			if d < best_d:
@@ -1972,7 +2085,7 @@ func _find_material_for_build(job: BuildJob) -> Item:
 				if occ is Item:
 					var it2 := occ as Item
 					if it2.reserved_by == null and it2.kind == job.material_kind:
-						if cell != origin and not _pathfinder.has_path(origin, cell):
+						if cell != origin and not _route_exists(origin, cell, true):
 							continue
 						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
 						if d2 < best_d:
@@ -1992,7 +2105,7 @@ func _begin_craft(job: CraftJob) -> void:
 			_mark_job_failed(job)
 			_release_and_idle()
 			return
-		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
+		var ready_path: PackedVector2Array = _find_explored_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
 			job.block_briefly(2.0)
 			_mark_job_failed(job)
@@ -2011,7 +2124,7 @@ func _begin_craft(job: CraftJob) -> void:
 	job.source_item = source
 	source.reserved_by = self
 	var sg: Vector2i = source.get_grid()
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
 		job.block_briefly(2.0)
@@ -2032,7 +2145,7 @@ func _find_material_for_craft(job: CraftJob) -> Item:
 			var it := child as Item
 			if it == null or it.reserved_by != null or it.kind != job.material_kind:
 				continue
-			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+			if it.get_grid() != origin and not _route_exists(origin, it.get_grid(), true):
 				continue
 			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
 			if d < best_d:
@@ -2047,7 +2160,7 @@ func _find_material_for_craft(job: CraftJob) -> Item:
 				if occ is Item:
 					var it2 := occ as Item
 					if it2.reserved_by == null and it2.kind == job.material_kind:
-						if cell != origin and not _pathfinder.has_path(origin, cell):
+						if cell != origin and not _route_exists(origin, cell, true):
 							continue
 						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
 						if d2 < best_d:
@@ -2072,7 +2185,7 @@ func _begin_operation(job: OperateStructureJob) -> void:
 			_mark_job_failed(job)
 			_release_and_idle()
 			return
-		var ready_path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand_ready)
+		var ready_path: PackedVector2Array = _find_explored_path(current_grid(), stand_ready)
 		if ready_path.is_empty() and current_grid() != stand_ready:
 			job.block_briefly(2.0)
 			_mark_job_failed(job)
@@ -2091,7 +2204,7 @@ func _begin_operation(job: OperateStructureJob) -> void:
 	job.source_item = source
 	source.reserved_by = self
 	var sg: Vector2i = source.get_grid()
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), sg)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), sg)
 	if path.is_empty() and current_grid() != sg:
 		source.reserved_by = null
 		job.block_briefly(2.0)
@@ -2112,7 +2225,7 @@ func _find_material_for_operation(job: OperateStructureJob) -> Item:
 			var it := child as Item
 			if it == null or it.reserved_by != null or it.kind != job.material_kind:
 				continue
-			if it.get_grid() != origin and not _pathfinder.has_path(origin, it.get_grid()):
+			if it.get_grid() != origin and not _route_exists(origin, it.get_grid(), true):
 				continue
 			var d: int = maxi(absi(it.get_grid().x - origin.x), absi(it.get_grid().y - origin.y))
 			if d < best_d:
@@ -2127,7 +2240,7 @@ func _find_material_for_operation(job: OperateStructureJob) -> Item:
 				if occ is Item:
 					var it2 := occ as Item
 					if it2.reserved_by == null and it2.kind == job.material_kind:
-						if cell != origin and not _pathfinder.has_path(origin, cell):
+						if cell != origin and not _route_exists(origin, cell, true):
 							continue
 						var d2: int = maxi(absi(cell.x - origin.x), absi(cell.y - origin.y))
 						if d2 < best_d:
@@ -2156,7 +2269,7 @@ func _pickup_for_haul() -> void:
 		return
 	var item := haul.item as Item
 	haul.item = _take_stack_for_haul(item)
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), haul.dropoff)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), haul.dropoff)
 	if path.is_empty() and current_grid() != haul.dropoff:
 		_drop_in_place()
 		return
@@ -2198,7 +2311,7 @@ func _pickup_for_build() -> void:
 	if stand == Pathfinder.UNREACHABLE:
 		_drop_in_place()
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
 		_drop_in_place()
 		return
@@ -2236,7 +2349,7 @@ func _pickup_for_craft() -> void:
 	if stand == Pathfinder.UNREACHABLE:
 		_drop_in_place()
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
 		_drop_in_place()
 		return
@@ -2274,7 +2387,7 @@ func _pickup_for_operation() -> void:
 	if stand == Pathfinder.UNREACHABLE:
 		_drop_in_place()
 		return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), stand)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
 		_drop_in_place()
 		return
@@ -2698,7 +2811,7 @@ func _replan() -> void:
 				int(floor(dest_pixel.x / Chunk.TILE_PIXELS)),
 				int(floor(dest_pixel.y / Chunk.TILE_PIXELS)),
 			)
-			var p: PackedVector2Array = _pathfinder.find_path(current_grid(), dest)
+			var p: PackedVector2Array = _find_explored_path(current_grid(), dest)
 			if p.is_empty():
 				_state = State.IDLE
 				_path = PackedVector2Array()
@@ -2755,7 +2868,7 @@ func _replan() -> void:
 			target_grid = c_stand
 		_:
 			return
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target_grid)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target_grid)
 	if path.is_empty() and current_grid() != target_grid:
 		# Lost reachability. Carrying? Drop it. Otherwise release.
 		if _carried != null:
@@ -2765,6 +2878,65 @@ func _replan() -> void:
 		return
 	_path = path
 	_path_index = 0
+
+
+func _update_stuck_watchdog(delta: float) -> void:
+	if not _is_moving_state():
+		_stuck_watchdog_timer = 0.0
+		_stuck_last_position = position
+		return
+	if _path.is_empty() or _path_index >= _path.size():
+		_stuck_watchdog_timer += delta
+	elif _stuck_last_position == Vector2.INF or position.distance_to(_stuck_last_position) > STUCK_PROGRESS_EPSILON_PX:
+		_stuck_watchdog_timer = 0.0
+		_stuck_last_position = position
+	else:
+		_stuck_watchdog_timer += delta
+	if _stuck_watchdog_timer < STUCK_WATCHDOG_SECONDS:
+		return
+	_stuck_watchdog_timer = 0.0
+	_stuck_last_position = position
+	_recover_stuck_movement()
+
+
+func _is_moving_state() -> bool:
+	return _state == State.MOVING_TO_WORK \
+		or _state == State.MOVING_TO_PICKUP \
+		or _state == State.CARRYING \
+		or _state == State.MOVING_TO_DROP \
+		or _state == State.MOVING_TO_BUILD_SITE \
+		or _state == State.MOVING_TO_CRAFT_SITE \
+		or _state == State.MOVING_FREEFORM \
+		or _state == State.MOVING_TO_CHARGE \
+		or _state == State.ROAMING \
+		or _state == State.WANDERING \
+		or _state == State.MOVING_TO_REST \
+		or _state == State.MOVING_TO_REPAIR \
+		or _state == State.MOVING_TO_SOCIALIZE \
+		or _state == State.MOVING_TO_MEDITATE \
+		or _state == State.MOVING_TO_SAVE \
+		or _state == State.CARRYING_WORKER \
+		or _state == State.MOVING_TO_DELIVER
+
+
+func _recover_stuck_movement() -> void:
+	_route_cache.clear()
+	if _state == State.MOVING_TO_SAVE or _state == State.CARRYING_WORKER or _state == State.MOVING_TO_DELIVER:
+		if _state == State.MOVING_TO_DELIVER and _save_destination != Pathfinder.UNREACHABLE:
+			if _set_path_to(_save_destination):
+				return
+		_abort_save()
+		_show_blocked_action("Save blocked")
+		return
+	if _job != null:
+		_replan()
+		if _path.is_empty() and _state != State.WORKING and _state != State.BUILDING and _state != State.CRAFTING:
+			_release_and_idle()
+		return
+	_state = State.IDLE
+	_path = PackedVector2Array()
+	_path_index = 0
+	_idle_cooldown = 0.0
 
 
 func _reachable_neighbor_of(grid: Vector2i) -> Vector2i:
@@ -2777,7 +2949,7 @@ func _reachable_neighbor_of(grid: Vector2i) -> Vector2i:
 		var candidate: Vector2i = grid + off
 		if not _chunk_manager.is_walkable(candidate):
 			continue
-		if candidate == origin or _pathfinder.has_path(origin, candidate):
+		if candidate == origin or _route_exists(origin, candidate, true):
 			return candidate
 	return Pathfinder.UNREACHABLE
 
@@ -2893,7 +3065,7 @@ func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 	if not _chunk_manager.is_walkable(target):
 		show_order_failed("Blocked tile")
 		return false
-	var path: PackedVector2Array = _pathfinder.find_path(current_grid(), target)
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
 	if path.is_empty() and current_grid() != target:
 		show_order_failed("No path")
 		return false
@@ -3024,18 +3196,20 @@ func _advance_path(delta: float) -> bool:
 		return true
 	if _path_index >= _path.size():
 		return true
+	if _chunk_manager != null and _chunk_manager.is_teleporter(current_grid()):
+		var next_grid: Vector2i = _grid_from_waypoint(_path[_path_index])
+		if next_grid != current_grid() and _chunk_manager.is_teleporter(next_grid):
+			return false
 	var speed_mult: float = CROWD_SLOW_MULTIPLIER if _crowd_slow_remaining > 0.0 else 1.0
 	if _door_slow_remaining > 0.0:
 		speed_mult *= DOOR_SLOW_MULTIPLIER
 	speed_mult *= _light_speed_multiplier()
 	speed_mult *= _water_speed_multiplier()
+	speed_mult *= _energy_speed_multiplier()
 	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
-		var target_grid := Vector2i(
-			int(floor(target.x / Chunk.TILE_PIXELS)),
-			int(floor(target.y / Chunk.TILE_PIXELS)),
-		)
+		var target_grid := _grid_from_waypoint(target)
 		if _structure_manager != null:
 			var structure: Dictionary = _structure_manager.structure_at(target_grid)
 			if not structure.is_empty() and int(structure["id"]) == BuildBlueprint.Id.DOOR:
@@ -3056,6 +3230,9 @@ func _advance_path(delta: float) -> bool:
 			position = target
 			step -= dist
 			_path_index += 1
+			if _chunk_manager != null and _chunk_manager.is_teleporter(target_grid):
+				_update_crowding_contacts()
+				return false
 		else:
 			position += to_target / dist * step
 			step = 0.0
@@ -3126,6 +3303,21 @@ func _water_speed_multiplier() -> float:
 	if tile == TerrainGenerator.TILE_ACID_PUDDLE:
 		return ACID_PUDDLE_SPEED_MULT
 	return 1.0
+
+
+func _is_low_energy_mode() -> bool:
+	return _energy <= ENERGY_LOW_MODE_THRESHOLD
+
+
+func _energy_speed_multiplier() -> float:
+	if _energy >= ENERGY_SLOW_THRESHOLD:
+		return 1.0
+	var t: float = clampf(
+		(_energy - ENERGY_LOW_MODE_THRESHOLD) / (ENERGY_SLOW_THRESHOLD - ENERGY_LOW_MODE_THRESHOLD),
+		0.0,
+		1.0
+	)
+	return lerpf(ENERGY_LOW_MODE_SPEED_MULT, 1.0, t)
 
 
 func _set_facing_from_vector(delta_pos: Vector2) -> void:
@@ -3200,8 +3392,15 @@ func _update_energy(delta: float) -> void:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
 		State.CHARGING, State.RESTING, State.MEDITATING:
 			drain = 0.0
+	if drain > 0.0 and _is_low_energy_mode():
+		drain *= ENERGY_LOW_MODE_DRAIN_MULT
+	var previous_energy: float = _energy
 	_energy = clampf(_energy - drain * delta, 0.0, ENERGY_MAX)
-	queue_redraw()
+	var crossed_threshold: bool = (previous_energy > ENERGY_LOW_MODE_THRESHOLD and _energy <= ENERGY_LOW_MODE_THRESHOLD) \
+		or (previous_energy > ENERGY_SLOW_THRESHOLD and _energy <= ENERGY_SLOW_THRESHOLD)
+	if crossed_threshold or absf(_energy - _last_energy_for_draw) >= 0.25:
+		_last_energy_for_draw = _energy
+		queue_redraw()
 
 
 func _update_body_stats(delta: float) -> void:
@@ -3297,7 +3496,15 @@ func _check_teleporter() -> void:
 	if not _chunk_manager.is_teleporter(here):
 		_last_teleporter_grid = Pathfinder.UNREACHABLE
 		return
-	var target: Vector2i = _chunk_manager.random_linked_teleporter(here)
+	var planned: bool = false
+	var target: Vector2i = Pathfinder.UNREACHABLE
+	if _path_index < _path.size():
+		var next_grid: Vector2i = _grid_from_waypoint(_path[_path_index])
+		if next_grid != here and _chunk_manager.is_teleporter(next_grid):
+			target = next_grid
+			planned = true
+	if target == Pathfinder.UNREACHABLE:
+		target = _chunk_manager.random_linked_teleporter(here)
 	if target == Pathfinder.UNREACHABLE:
 		return
 		
@@ -3307,11 +3514,16 @@ func _check_teleporter() -> void:
 		_teleport_charge_cooldown = 12.0
 
 	position = Chunk.grid_to_pixel_center(target)
-	_path = PackedVector2Array()
-	_path_index = 0
 	_teleport_cooldown = TELEPORT_COOLDOWN_SECONDS
 	_last_teleporter_grid = target
 	_remember("teleported from %d,%d to %d,%d" % [here.x, here.y, target.x, target.y])
+	if planned:
+		while _path_index < _path.size() and _grid_from_waypoint(_path[_path_index]) == target:
+			_path_index += 1
+		queue_redraw()
+		return
+	_path = PackedVector2Array()
+	_path_index = 0
 	if _job == null:
 		if _state == State.MOVING_TO_SOCIALIZE or _state == State.SOCIALIZING:
 			if not _repath_socialize_after_teleport():
@@ -3352,9 +3564,18 @@ func _should_seek_charge() -> bool:
 		return true
 	# Seek charge if energy drops below the low threshold, unless the worker 
 	# is currently engaged in combat.
-	if _energy <= ENERGY_LOW:
+	if _energy <= _recharge_threshold():
 		return _state != State.FIGHTING
 	return false
+
+
+func _recharge_threshold() -> float:
+	var outlet: Vector2i = _nearest_outlet_via_explored()
+	if outlet == Pathfinder.UNREACHABLE:
+		return ENERGY_RECHARGE_MAX_THRESHOLD
+	var route: PackedVector2Array = _find_explored_path(current_grid(), outlet)
+	var distance_bonus: float = clampf(float(route.size()) * 0.35, 0.0, 25.0)
+	return clampf(ENERGY_RECHARGE_MIN_THRESHOLD + distance_bonus, ENERGY_RECHARGE_MIN_THRESHOLD, ENERGY_RECHARGE_MAX_THRESHOLD)
 
 
 func _begin_auto_charge() -> bool:
@@ -3379,25 +3600,25 @@ func _begin_auto_charge() -> bool:
 ## must not magically know the path through undiscovered areas — if the
 ## only route to an outlet crosses fog, that outlet is hidden from auto and
 ## manual recharge planning.
-func _nearest_outlet_via_explored() -> Vector2i:
+func _nearest_outlet_via_explored(origin: Vector2i = Pathfinder.UNREACHABLE) -> Vector2i:
 	if _chunk_manager == null:
 		return Pathfinder.UNREACHABLE
-	var here: Vector2i = current_grid()
+	var here: Vector2i = current_grid() if origin == Pathfinder.UNREACHABLE else origin
 	var best: Vector2i = Pathfinder.UNREACHABLE
-	var best_d: int = 0x7fffffff
+	var best_cost: int = 0x7fffffff
 	for outlet in _chunk_manager.outlet_cells():
 		if _fog != null and not _fog.is_explored(outlet):
 			continue
 		if _chunk_manager.is_outlet_reserved_by_other(outlet, self):
 			continue
-		var d_chebyshev: int = maxi(absi(outlet.x - here.x), absi(outlet.y - here.y))
-		if d_chebyshev >= best_d:
-			continue
 		var path: PackedVector2Array = _find_explored_path(here, outlet)
 		if path.is_empty() and here != outlet:
 			continue
+		var cost: int = path.size()
+		if cost >= best_cost:
+			continue
 		best = outlet
-		best_d = d_chebyshev
+		best_cost = cost
 	return best
 
 
@@ -3588,24 +3809,39 @@ func _draw() -> void:
 
 
 func _draw_action_bubble() -> void:
-	if _action_text.is_empty():
-		return
 	var font: Font = ACTION_FONT
-	var text_size := font.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
-	var pad := Vector2(4, 3)
 	var screen_scale: Vector2 = get_global_transform_with_canvas().get_scale()
 	if is_zero_approx(screen_scale.x) or is_zero_approx(screen_scale.y):
 		return
+	var abs_scale := Vector2(absf(screen_scale.x), absf(screen_scale.y))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2(1.0 / screen_scale.x, 1.0 / screen_scale.y))
-	var origin := Vector2(
-		roundf(ACTION_BUBBLE_SCREEN_OFFSET.x - text_size.x * 0.5 - pad.x),
-		roundf(ACTION_BUBBLE_SCREEN_OFFSET.y - BODY_RADIUS - text_size.y - pad.y),
+	var anchor := Vector2(
+		ACTION_BUBBLE_SCREEN_OFFSET.x * abs_scale.x,
+		(-BODY_RADIUS - 8.0) * abs_scale.y,
 	)
-	var rect := Rect2(origin, text_size + pad * 2.0)
-	draw_rect(rect, Color(0.02, 0.02, 0.03, 0.82))
-	draw_rect(rect, Color(0.9, 0.9, 1.0, 0.6), false, 1.0)
-	draw_string(font, origin + Vector2(pad.x, text_size.y + pad.y - 1.0),
-		_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE, Color.WHITE)
+	var top_y: float = anchor.y
+	if not _action_text.is_empty():
+		var text_size := font.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
+		var pad := Vector2(4, 3)
+		var origin := Vector2(
+			roundf(anchor.x - text_size.x * 0.5 - pad.x),
+			roundf(anchor.y - text_size.y - pad.y),
+		)
+		var rect := Rect2(origin, text_size + pad * 2.0)
+		draw_rect(rect, Color(0.02, 0.02, 0.03, 0.82))
+		draw_rect(rect, Color(0.9, 0.9, 1.0, 0.6), false, 1.0)
+		draw_string(font, origin + Vector2(pad.x, text_size.y + pad.y - 1.0),
+			_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE, Color.WHITE)
+		top_y = origin.y
+	var name_text: String = display_name()
+	if not name_text.is_empty():
+		var name_size := font.get_string_size(name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_FONT_SIZE)
+		var name_pos := Vector2(
+			roundf(anchor.x - name_size.x * 0.5),
+			roundf(top_y - name_size.y - 3.0),
+		)
+		draw_string(font, name_pos + Vector2(1, 1), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_FONT_SIZE, Color(0.0, 0.0, 0.0, 0.75))
+		draw_string(font, name_pos, name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_FONT_SIZE, Color(0.88, 0.94, 1.0, 0.95))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 

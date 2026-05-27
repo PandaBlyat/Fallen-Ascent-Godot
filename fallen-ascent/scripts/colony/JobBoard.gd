@@ -116,6 +116,22 @@ func scrape_biomass_count() -> int:
 	return _scrape_biomass_targets.size()
 
 
+func cancel_order_at(grid: Vector2i) -> bool:
+	if _mine_targets.has(grid):
+		cancel_mine_at(grid)
+		return true
+	if _scrape_targets.has(grid):
+		cancel_scrape_rust_at(grid)
+		return true
+	if _scrape_biomass_targets.has(grid):
+		cancel_scrape_biomass_at(grid)
+		return true
+	if _build_targets.has(grid):
+		cancel_build_at(grid)
+		return true
+	return false
+
+
 func add_haul_job(item: Node, zone: Node, cell: Vector2i) -> HaulJob:
 	var job := HaulJob.new(item, zone, cell)
 	pending.append(job)

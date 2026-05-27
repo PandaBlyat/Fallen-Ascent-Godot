@@ -264,8 +264,11 @@ func nearest_structure_anchor(ids: Array, from: Vector2i, pathfinder: Pathfinder
 		var d: int = maxi(absi(anchor.x - from.x), absi(anchor.y - from.y))
 		if d >= best_d:
 			continue
-		if pathfinder != null and not pathfinder.has_path(from, target):
-			continue
+		if pathfinder != null:
+			var route: Dictionary = pathfinder.find_path_with_teleporters(from, target, fog)
+			var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+			if path.is_empty() and from != target:
+				continue
 		best = anchor
 		best_d = d
 	return best
@@ -375,10 +378,16 @@ func scrap_stand_for(grid: Vector2i, from: Vector2i, pathfinder: Pathfinder) -> 
 	if not _is_scrappable_generated_light(structure):
 		return Pathfinder.UNREACHABLE
 	var anchor: Vector2i = structure["anchor"] as Vector2i
-	if _chunk_manager.is_walkable(anchor) and (pathfinder == null or anchor == from or pathfinder.has_path(from, anchor)):
+	if _chunk_manager.is_walkable(anchor) and (pathfinder == null or anchor == from or _route_exists(pathfinder, from, anchor)):
 		return anchor
 	var cells: Array = structure["cells"] as Array
 	return _walkable_neighbor_of_cells(cells)
+
+
+func _route_exists(pathfinder: Pathfinder, from: Vector2i, to: Vector2i) -> bool:
+	var route: Dictionary = pathfinder.find_path_with_teleporters(from, to)
+	var path: PackedVector2Array = route.get("path", PackedVector2Array()) as PackedVector2Array
+	return not path.is_empty()
 
 
 func scrap_structure_at(grid: Vector2i) -> Dictionary:
@@ -1110,19 +1119,11 @@ func _draw_workshop(structure: Dictionary) -> void:
 		return
 	var anchor: Vector2i = structure["anchor"] as Vector2i
 	var origin := Vector2(anchor.x * Chunk.TILE_PIXELS, anchor.y * Chunk.TILE_PIXELS)
-	# Atlas cells are 64x64. 1x1-footprint workshops (research bench,
-	# crafting spot, sensor) carry their art in the top-left 32x32; draw
-	# only that quadrant so the structure visually fits its tile footprint.
-	var rotation: int = int(structure.get("rotation", 0))
-	var cells: int = BuildBlueprint.footprint(id, anchor, rotation).size()
 	var atlas_x: int = index * int(WORKSHOP_SOURCE_CELL_SIZE.x)
-	if cells <= 1:
-		var dest_small := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
-		var source_small := Rect2(Vector2(atlas_x, 0), Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
-		draw_texture_rect_region(WORKSHOP_ATLAS, dest_small, source_small)
-		return
-	var dest := Rect2(origin, Vector2(Chunk.TILE_PIXELS * 2, Chunk.TILE_PIXELS * 2))
-	var source := Rect2(Vector2(atlas_x, 0), WORKSHOP_SOURCE_CELL_SIZE)
+	var visual_tiles: Vector2i = BuildBlueprint.visual_size_tiles(id)
+	var pixel_size := Vector2(visual_tiles.x * Chunk.TILE_PIXELS, visual_tiles.y * Chunk.TILE_PIXELS)
+	var dest := Rect2(origin, pixel_size)
+	var source := Rect2(Vector2(atlas_x, 0), pixel_size)
 	draw_texture_rect_region(WORKSHOP_ATLAS, dest, source)
 
 

@@ -104,15 +104,16 @@ func _create_room(kind: int, cells: Array[Vector2i]) -> Dictionary:
 	return room
 
 
-func remove_room_at(grid: Vector2i) -> void:
+func remove_room_at(grid: Vector2i) -> bool:
 	var room: Dictionary = _cell_to_room.get(grid, {})
 	if room.is_empty():
-		return
+		return false
 	for cell in (room["cells"] as Array):
 		_cell_to_room.erase(cell)
 	_rooms.erase(room)
 	rooms_changed.emit()
 	queue_redraw()
+	return true
 
 
 func remove_all_rooms() -> void:

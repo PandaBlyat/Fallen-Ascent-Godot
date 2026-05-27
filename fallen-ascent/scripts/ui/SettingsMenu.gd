@@ -69,16 +69,23 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not String(_binding_action).is_empty():
-		if event is InputEventKey:
-			var key := event as InputEventKey
-			if key.pressed and not key.echo:
-				get_viewport().set_input_as_handled()
-				if key.physical_keycode != KEY_ESCAPE:
-					SettingsManager.set_action_key(_binding_action, key)
-				_binding_action = &""
-				_rebuild_controls()
+	# Handle key and mouse rebinding
+	if not _binding_action.is_empty():
+		if (event is InputEventKey and event.pressed and not event.echo) or (event is InputEventMouseButton and event.pressed):
+			get_viewport().set_input_as_handled()
+			
+			var is_escape := false
+			if event is InputEventKey:
+				is_escape = (event.physical_keycode == KEY_ESCAPE)
+			
+			# If Escape is pressed, cancel the rebinding process
+			if not is_escape:
+				SettingsManager.set_action_key(_binding_action, event)
+			
+			_binding_action = &""
+			_rebuild_controls()
 		return
+		
 	# "ui_cancel" is the Godot default for back/escape actions
 	if event.is_action_pressed("ui_cancel") or event.is_action_pressed("cancel_mode"):
 		get_viewport().set_input_as_handled()
@@ -135,7 +142,7 @@ func _initialize_fps() -> void:
 func _initialize_ui_scale() -> void:
 	_ui_scale_slider.min_value = 0.75
 	_ui_scale_slider.max_value = 2.0
-	_ui_scale_slider.step = 0.05
+	_ui_scale_slider.step = 0.25 # Stepped to prevent muddy/blurry pixel-art scaling
 	_ui_scale_slider.value = SettingsManager.ui_scale
 	_update_ui_scale_label(SettingsManager.ui_scale)
 	_ui_scale_slider.value_changed.connect(_on_ui_scale_changed)
@@ -170,23 +177,39 @@ func _initialize_audio() -> void:
 func _rebuild_controls() -> void:
 	if _controls_list == null:
 		return
+		
+	# Free old elements immediately
 	for child in _controls_list.get_children():
-		_controls_list.remove_child(child)
 		child.queue_free()
+		
 	if _capture_label != null:
-		_capture_label.text = "" if String(_binding_action).is_empty() else "Press new key for " + SettingsManager.action_display_name(_binding_action)
+		if _binding_action.is_empty():
+			_capture_label.text = ""
+		else:
+			_capture_label.text = "Press any key or mouse button for: " + SettingsManager.action_display_name(_binding_action) + "\n(Press Esc to Cancel)"
+
 	for action in SettingsManager.REBINDABLE_ACTIONS:
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_theme_constant_override("separation", 12)
+		
 		var label := Label.new()
 		label.text = SettingsManager.action_display_name(action)
 		label.custom_minimum_size = Vector2(190, 0)
+		label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		row.add_child(label)
+		
 		var button := Button.new()
-		button.text = "Listening..." if action == _binding_action else SettingsManager.action_key_text(action)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.pressed.connect(_begin_rebind.bind(action))
+		button.focus_mode = Control.FOCUS_ALL
+		
+		if action == _binding_action:
+			button.text = "Listening..."
+			button.disabled = true
+		else:
+			button.text = SettingsManager.action_key_text(action)
+			button.pressed.connect(_begin_rebind.bind(action))
+			
 		row.add_child(button)
 		_controls_list.add_child(row)
 
@@ -274,12 +297,15 @@ func _on_quit_pressed() -> void:
 func _is_in_game() -> bool:
 	# Hide the "Main Menu" button when we are already on the main menu.
 	var current: Node = get_tree().current_scene
-	if current == null:
+	if current == null or not ("scene_file_path" in current):
 		return false
 	return current.scene_file_path != MAIN_MENU_SCENE_PATH
 
 
 func _close() -> void:
+	# Save settings on close instead of writing to disk during slider movements
+	if SettingsManager.has_method("save_settings"):
+		SettingsManager.save_settings()
 	closed.emit()
 	queue_free()
 

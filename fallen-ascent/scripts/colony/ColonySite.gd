@@ -83,12 +83,13 @@ func _spawn_initial_workers() -> void:
 	# spawn cell itself so workers never end up stranded without charge.
 	var outlet_seed: Vector2i = spawn_cells[0] if not spawn_cells.is_empty() else Vector2i.ZERO
 	var placed_outlet: Vector2i = Pathfinder.UNREACHABLE
-	for spawn_cell in spawn_cells:
-		placed_outlet = chunk_manager.ensure_outlet_near(spawn_cell)
-		if placed_outlet != Pathfinder.UNREACHABLE:
-			break
+	if chunk_manager.has_method("ensure_spawn_outlet"):
+		placed_outlet = chunk_manager.ensure_spawn_outlet(spawn_cells, outlet_seed)
 	if placed_outlet == Pathfinder.UNREACHABLE:
-		placed_outlet = chunk_manager.ensure_outlet_near(outlet_seed)
+		for spawn_cell in spawn_cells:
+			placed_outlet = chunk_manager.ensure_outlet_near(spawn_cell)
+			if placed_outlet != Pathfinder.UNREACHABLE:
+				break
 	if placed_outlet == Pathfinder.UNREACHABLE:
 		placed_outlet = chunk_manager.force_outlet_on_spawn(spawn_cells, outlet_seed)
 	_spawn_neutral_bots(INITIAL_NEUTRALS)

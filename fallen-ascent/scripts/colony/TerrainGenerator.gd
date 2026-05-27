@@ -43,18 +43,18 @@ const _RUST_NOISE_THRESHOLD: float = -0.25
 const _WATER_NOISE_THRESHOLD: float = -0.72
 const _SERVICE_CORE_NOISE_THRESHOLD: float = 0.80
 const _RICH_WALL_NOISE_THRESHOLD: float = 0.76
-const _TELEPORTER_NOISE_THRESHOLD: float = 0.78
+const _TELEPORTER_NOISE_THRESHOLD: float = 1.01
 const _VOID_NEIGHBOUR_THRESHOLD: int = 6
 const _ROOM_MIN: int = 4
-const _ROOM_MAX: int = 14
+const _ROOM_MAX: int = 20
 const _ROOM_TARGET_MIN: int = 2
 const _ROOM_TARGET_MAX: int = 5
 const _ROOM_PLACEMENT_ATTEMPTS: int = 36
 const _EDGE_MARGIN: int = 2
-const _VOID_CLUSTER_MIN: int = 2
-const _VOID_CLUSTER_MAX: int = 5
-const _VOID_CLUSTER_RADIUS_MIN: int = 2
-const _VOID_CLUSTER_RADIUS_MAX: int = 6
+const _VOID_CLUSTER_MIN: int = 1
+const _VOID_CLUSTER_MAX: int = 4
+const _VOID_CLUSTER_RADIUS_MIN: int = 3
+const _VOID_CLUSTER_RADIUS_MAX: int = 7
 
 # Macro-Structure Probability (Concept 5)
 const _MACRO_STRUCTURE_PROBABILITY: float = 0.15

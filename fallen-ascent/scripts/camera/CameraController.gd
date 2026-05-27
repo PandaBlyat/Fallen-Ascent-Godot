@@ -22,6 +22,7 @@ var _last_emitted_zoom: Vector2 = Vector2.ZERO
 var _last_real_usec: int = 0
 var _has_world_bounds: bool = false
 var _world_bounds: Rect2 = Rect2()
+var _follow_target: Node2D = null
 
 
 func _ready() -> void:
@@ -37,7 +38,8 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	# Wall-clock delta (independent of Engine.time_scale).
 	var now: int = Time.get_ticks_usec()
-	var real_dt: float = (now - _last_real_usec) / 1_000_000.0
+	# Cap real_dt to 0.1s to prevent extreme positional jumps during engine lag spikes.
+	var real_dt: float = minf((now - _last_real_usec) / 1_000_000.0, 0.1)
 	_last_real_usec = now
 
 	var dir: Vector2 = Vector2(
@@ -47,16 +49,25 @@ func _process(_delta: float) -> void:
 	if edge_scroll_enabled:
 		dir += _edge_scroll_dir()
 	if dir != Vector2.ZERO:
+		clear_follow()
 		# Divide by zoom so we move the same SCREEN distance regardless of zoom.
 		position += dir.normalized() * pan_speed * real_dt / zoom.x
 		_clamp_to_world()
 		_emit_if_changed()
+	elif _follow_target != null:
+		if is_instance_valid(_follow_target):
+			position = _follow_target.global_position
+			_clamp_to_world()
+			_emit_if_changed()
+		else:
+			clear_follow()
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		_handle_mouse_button(event)
 	elif event is InputEventMouseMotion and _dragging:
+		clear_follow()
 		position -= event.relative / zoom.x
 		_clamp_to_world()
 		_emit_if_changed()
@@ -75,29 +86,49 @@ func center_on(world_pos: Vector2) -> void:
 	_emit_if_changed(true)
 
 
+func follow_node(node: Node2D) -> void:
+	_follow_target = node
+	if _follow_target != null and is_instance_valid(_follow_target):
+		center_on(_follow_target.global_position)
+
+
+func clear_follow() -> void:
+	_follow_target = null
+
+
 func _handle_mouse_button(event: InputEventMouseButton) -> void:
 	if event.button_index == MOUSE_BUTTON_MIDDLE:
+		if event.pressed:
+			clear_follow()
 		_dragging = event.pressed
 	elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+		clear_follow()
 		_zoom_at(get_global_mouse_position(), zoom_step)
 	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+		clear_follow()
 		_zoom_at(get_global_mouse_position(), 1.0 / zoom_step)
 
 
 func _zoom_at(world_target: Vector2, factor: float) -> void:
-	var new_z: float = clampf(zoom.x * factor, zoom_min, zoom_max)
-	if is_equal_approx(new_z, zoom.x):
+	var old_z: float = zoom.x
+	var new_z: float = clampf(old_z * factor, zoom_min, zoom_max)
+	if is_equal_approx(new_z, old_z):
 		return
-	# Keep the world point under the cursor stationary on screen.
-	var before: Vector2 = world_target
+
 	zoom = Vector2(new_z, new_z)
-	var after: Vector2 = get_global_mouse_position()
-	position += before - after
+	# Mathematical offset to ensure the target world point remains stationary under the cursor.
+	# This bypasses potential engine frame delays when calling get_global_mouse_position() mid-frame.
+	position += (world_target - position) * (1.0 - old_z / new_z)
 	_clamp_to_world()
 	_emit_if_changed()
 
 
 func _edge_scroll_dir() -> Vector2:
+	# Ignore edge scrolling if hovering over interactive UI panels or elements.
+	var hovered := get_viewport().gui_get_hovered_control()
+	if hovered and hovered.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+		return Vector2.ZERO
+
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	var m: Vector2 = get_viewport().get_mouse_position()
 	var d := Vector2.ZERO

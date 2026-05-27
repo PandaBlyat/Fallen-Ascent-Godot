@@ -167,6 +167,18 @@ static func footprint(id: int, anchor: Vector2i, rotation: int = 0) -> Array[Vec
 	return cells
 
 
+static func visual_size_tiles(id: int) -> Vector2i:
+	match id:
+		Id.DOCK:
+			return Vector2i(2, 1)
+		Id.MEDITATION_PAD, Id.FABRICATION_SPOT, Id.EXTRACTOR, Id.SENSOR, Id.CHARGE_PAD:
+			return Vector2i(1, 1)
+		Id.FABRICATOR, Id.REPAIR_BENCH, Id.PARTS_LOOM, Id.MAINTENANCE_DOCK, Id.SENTIENCE_CRADLE, Id.FABRICATOR_ADVANCED:
+			return Vector2i(2, 2)
+		_:
+			return Vector2i(1, 1)
+
+
 static func _rotate_offset(offset: Vector2i, rotation: int) -> Vector2i:
 	match posmod(rotation, 4):
 		1:

@@ -2,13 +2,13 @@
 
 importer="mp3"
 type="AudioStreamMP3"
-uid="uid://move_here_sound_fa01"
-path="res://.godot/imported/move_here_sound.mp3-move_here_sound_fa01.mp3str"
+uid="uid://eugjaoelvidb"
+path="res://.godot/imported/move_here_sound.mp3-72b454a712d856e767f722f4157d1d2b.mp3str"
 
 [deps]
 
 source_file="res://move_here_sound.mp3"
-dest_files=["res://.godot/imported/move_here_sound.mp3-move_here_sound_fa01.mp3str"]
+dest_files=["res://.godot/imported/move_here_sound.mp3-72b454a712d856e767f722f4157d1d2b.mp3str"]
 
 [params]
 

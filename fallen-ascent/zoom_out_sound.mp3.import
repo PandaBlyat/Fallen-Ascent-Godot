@@ -2,13 +2,13 @@
 
 importer="mp3"
 type="AudioStreamMP3"
-uid="uid://zoom_out_sound_fa01"
-path="res://.godot/imported/zoom_out_sound.mp3-zoom_out_sound_fa01.mp3str"
+uid="uid://dme101uknjmce"
+path="res://.godot/imported/zoom_out_sound.mp3-ad085c7ae5bfea27751ee9ba24c9a3c6.mp3str"
 
 [deps]
 
 source_file="res://zoom_out_sound.mp3"
-dest_files=["res://.godot/imported/zoom_out_sound.mp3-zoom_out_sound_fa01.mp3str"]
+dest_files=["res://.godot/imported/zoom_out_sound.mp3-ad085c7ae5bfea27751ee9ba24c9a3c6.mp3str"]
 
 [params]
 

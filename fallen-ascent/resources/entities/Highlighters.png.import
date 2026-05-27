@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://highlighters_atlas_fa01"
-path="res://.godot/imported/Highlighters.png-highlighters_atlas_fa01.ctex"
+uid="uid://cniqoahpgkhr3"
+path="res://.godot/imported/Highlighters.png-d467bdaee00c692b74465ee92e40e574.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://resources/entities/Highlighters.png"
-dest_files=["res://.godot/imported/Highlighters.png-highlighters_atlas_fa01.ctex"]
+dest_files=["res://.godot/imported/Highlighters.png-d467bdaee00c692b74465ee92e40e574.ctex"]
 
 [params]
 

@@ -37,6 +37,7 @@ var _loading_bar: ProgressBar = null
 var _loading_label: Label = null
 var _spawned_initial_workers: bool = false
 var _alert_system: Node = null
+var _forbidden_zone_manager: ForbiddenZoneManager = null
 ## Tracks which hostile nodes have already triggered a "spotted" alert.
 var _spotted_hostiles: Dictionary = {}
 ## Snapshot to restore instead of fresh-spawning, set when the colony scene is
@@ -61,6 +62,12 @@ func _ready() -> void:
 	structure_manager.setup(site.site_seed)
 	static_prop_manager.setup(site.site_seed)
 	camera.set_world_bounds(chunk_manager.map_world_rect())
+
+	var fzm := ForbiddenZoneManager.new()
+	fzm.name = "ForbiddenZoneManager"
+	add_child(fzm)
+	_forbidden_zone_manager = fzm
+	designator._forbidden_zone_manager = fzm
 
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.game_speed_changed.connect(_on_speed_changed)
@@ -114,6 +121,7 @@ func _spawn_initial_workers() -> void:
 		structure_manager,
 		room_manager,
 		embark_loadouts,
+		_forbidden_zone_manager,
 	)
 	# Seed an outlet inside the actual spawn room. Using a spawn cell as the
 	# BFS origin (instead of Vector2i.ZERO) guarantees the placed outlet sits
@@ -262,6 +270,7 @@ func capture_save() -> Dictionary:
 		"fog": fog_of_war.capture_save(),
 		"tech": TechManager.capture_save(),
 		"jobs": job_board.capture_save(),
+		"forbidden_zones": _forbidden_zone_manager.capture_save() if _forbidden_zone_manager != null else {},
 		"workers": _capture_workers(),
 		"items": _capture_loose_items(),
 		"neutrals": _capture_bots(neutrals_root),
@@ -283,6 +292,8 @@ func _restore_from_save(data: Dictionary) -> void:
 	_restore_loose_items(data.get("items", []) as Array)
 	room_manager.restore_save(data.get("rooms", {}) as Dictionary)
 	TechManager.restore_save(data.get("tech", {}) as Dictionary)
+	if _forbidden_zone_manager != null:
+		_forbidden_zone_manager.restore_save(data.get("forbidden_zones", {}) as Dictionary)
 	_restore_workers(data.get("workers", []) as Array)
 	_restore_bots(neutrals_root, data.get("neutrals", []) as Array, NEUTRAL_BOT_SCRIPT, "Neutral")
 	_restore_bots(hostiles_root, data.get("hostiles", []) as Array, HOSTILE_BOT_SCRIPT, "Hostile")
@@ -312,6 +323,7 @@ func _restore_workers(arr: Array) -> void:
 		w.setup(
 			job_board, pathfinder, chunk_manager, stockpile_manager,
 			items_root, self, fog_of_war, structure_manager, room_manager,
+			_forbidden_zone_manager,
 		)
 		w.position = d.get("pos", Vector2.ZERO) as Vector2
 		workers_root.add_child(w)

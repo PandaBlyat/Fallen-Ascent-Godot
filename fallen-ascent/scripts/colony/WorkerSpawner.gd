@@ -60,6 +60,7 @@ static func spawn(
 	structure_manager: StructureManager = null,
 	room_manager: Node = null,
 	loadouts: Array = [],
+	forbidden_zone_manager: ForbiddenZoneManager = null,
 ) -> Array[Vector2i]:
 	var target_count: int = loadouts.size() if not loadouts.is_empty() else count
 	var used: Array[Vector2i] = []
@@ -68,7 +69,7 @@ static func spawn(
 		var worker: Worker = _make_worker(
 			cell, index, chunk_manager, job_board, pathfinder,
 			stockpile_manager, items_root, colony_site, fog,
-			structure_manager, room_manager,
+			structure_manager, room_manager, forbidden_zone_manager,
 		)
 		workers_root.add_child(worker)
 		# apply_loadout runs AFTER add_child so the worker's _ready has built its
@@ -97,6 +98,7 @@ static func spawn_one_at(
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
 	room_manager: Node = null,
+	forbidden_zone_manager: ForbiddenZoneManager = null,
 ) -> Worker:
 	var target: Vector2i = _walkable_adjacent_or_self(anchor, chunk_manager)
 	if target == Pathfinder.UNREACHABLE:
@@ -105,7 +107,7 @@ static func spawn_one_at(
 	var worker: Worker = _make_worker(
 		target, index, chunk_manager, job_board, pathfinder,
 		stockpile_manager, items_root, colony_site, fog,
-		structure_manager, room_manager,
+		structure_manager, room_manager, forbidden_zone_manager,
 	)
 	workers_root.add_child(worker)
 	return worker
@@ -123,10 +125,11 @@ static func _make_worker(
 	fog: FogOfWar,
 	structure_manager: StructureManager,
 	room_manager: Node,
+	forbidden_zone_manager: ForbiddenZoneManager = null,
 ) -> Worker:
 	var worker: Worker = WORKER_SCRIPT.new() as Worker
 	worker.name = _generated_name(index)
-	worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager, room_manager)
+	worker.setup(job_board, pathfinder, chunk_manager, stockpile_manager, items_root, colony_site, fog, structure_manager, room_manager, forbidden_zone_manager)
 	worker.position = Chunk.grid_to_pixel_center(cell)
 	return worker
 

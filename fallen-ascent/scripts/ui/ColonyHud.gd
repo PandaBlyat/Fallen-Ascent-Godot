@@ -705,6 +705,8 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 		TAB_ZONES:
 			return [
 				{"mode": Designator.Mode.STOCKPILE, "label": "Stockpile", "tooltip": "Stockpile\nPaint explored walkable cells for loose item storage.\nWorkers haul loose stacks here and merge same-kind stacks.", "icon": ICON_STOCKPILE},
+				{"mode": Designator.Mode.FORBIDDEN_ZONE, "label": "Forbid", "tooltip": "Forbidden Zone\nPaint an area workers will not roam or wander into.\nDoes not block jobs — only idle movement.", "icon": ICON_REMOVE},
+				{"mode": Designator.Mode.REMOVE_FORBIDDEN_ZONE, "label": "Unforbid", "tooltip": "Remove Forbidden\nErase previously forbidden tiles.", "icon": ICON_CANCEL},
 			]
 		TAB_ROOMS:
 			return [
@@ -733,6 +735,7 @@ func _commands_for_tab(tab: StringName) -> Array[Dictionary]:
 				{"mode": Designator.Mode.BUILD_WALL, "label": "Wall", "tooltip": _build_tooltip(BuildBlueprint.Id.WALL), "icon": ICON_WALL, "build_id": BuildBlueprint.Id.WALL},
 				{"mode": Designator.Mode.BUILD_DOOR, "label": "Door", "tooltip": _build_tooltip(BuildBlueprint.Id.DOOR), "icon": ICON_DOOR, "build_id": BuildBlueprint.Id.DOOR},
 				{"mode": Designator.Mode.PLACE_OUTLET_EXTENSION, "label": "Outlet Ext", "tooltip": _build_tooltip(BuildBlueprint.Id.OUTLET_EXTENSION), "icon": ICON_OUTLET_EXTENSION, "build_id": BuildBlueprint.Id.OUTLET_EXTENSION},
+				{"mode": Designator.Mode.BUILD_FLOOR, "label": "Floor", "tooltip": _build_tooltip(BuildBlueprint.Id.FLOOR), "icon": ICON_WALL, "build_id": BuildBlueprint.Id.FLOOR, "required_tech_id": TechDatabase.BASIC_FLOORING},
 			]
 		TAB_STORAGE:
 			return [
@@ -1854,6 +1857,24 @@ func _build_structure_card() -> void:
 		_add_fabrication_controls(card)
 	elif BuildBlueprint.is_worker_operated(int(status["id"])):
 		_add_card_line(card, "job list", "%d operation queued" % int(status.get("operation_orders", 0)))
+	# Move button — available on all player-placed non-wall structures.
+	var struct_id: int = int(status["id"])
+	if struct_id != BuildBlueprint.Id.WALL and struct_id != BuildBlueprint.Id.FLOOR \
+			and struct_id != BuildBlueprint.Id.STORAGE_BIN and struct_id != BuildBlueprint.Id.OUTLET_EXTENSION:
+		_add_section_header(card, "actions", COLOR_ACCENT_MUTED)
+		var move_btn := Button.new()
+		move_btn.text = "Move"
+		move_btn.tooltip_text = "Move structure\nRemoves it and lets you place it at a new position.\nCost: 50% (rounded up) of original build resources."
+		move_btn.custom_minimum_size = Vector2(180, 30)
+		move_btn.add_theme_font_size_override("font_size", 11)
+		move_btn.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
+		move_btn.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+		move_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.16, 0.10, 1.0), COLOR_ACCENT_AMBER))
+		move_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+		move_btn.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+		move_btn.pressed.connect(_on_move_structure_pressed)
+		move_btn.pressed.connect(AudioManager.play_button_press)
+		card.add_child(move_btn)
 
 
 func _add_fabrication_controls(parent: Control) -> void:
@@ -1889,6 +1910,18 @@ func _add_fabrication_controls(parent: Control) -> void:
 	clear.pressed.connect(_on_clear_craft_orders_pressed)
 	clear.pressed.connect(AudioManager.play_button_press)
 	parent.add_child(clear)
+
+
+func _on_move_structure_pressed() -> void:
+	if _designator == null or _selected_structure_id < 0:
+		return
+	var rot: int = 0
+	if _structure_manager != null:
+		var status: Dictionary = _structure_manager.structure_status_by_anchor(_selected_structure_anchor)
+		rot = int(status.get("rotation", 0)) if not status.is_empty() else 0
+	_designator.start_relocate(_selected_structure_anchor, _selected_structure_id, rot)
+	_selected_structure_id = -1
+	_refresh_selection_panel()
 
 
 func _on_craft_order_pressed(object_kind: int) -> void:

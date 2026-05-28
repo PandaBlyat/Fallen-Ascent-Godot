@@ -31,6 +31,8 @@ const CALIBRATION: StringName = &"calibration"
 const MECHANIC_DOCK: StringName = &"mechanic_dock"
 const MECHANIC_ROOM: StringName = &"mechanic_room"
 const SENTIENCE_FORGE: StringName = &"sentience_forge"
+const DEBRIS_CLEARANCE: StringName = &"debris_clearance"
+const BASIC_FLOORING: StringName = &"basic_flooring"
 
 
 static func all() -> Array[TechData]:
@@ -176,6 +178,28 @@ static func all() -> Array[TechData]:
 		[],
 		Vector2i(2, 4),
 		"Bodywork",
+	))
+
+	# Debris + Flooring branch (row 5)
+	out.append(TechData.new(
+		DEBRIS_CLEARANCE,
+		"Debris Clearance",
+		"Allows workers to mine and remove debris tiles blocking pathways and construction.",
+		45,
+		[AWAKENING],
+		[],
+		Vector2i(1, 5),
+		"Infrastructure",
+	))
+	out.append(TechData.new(
+		BASIC_FLOORING,
+		"Basic Flooring",
+		"Unlocks the ability to lay basic floor tiles over walkable terrain.",
+		30,
+		[AWAKENING],
+		[BuildBlueprint.Id.FLOOR],
+		Vector2i(2, 5),
+		"Infrastructure",
 	))
 
 	# Capstone

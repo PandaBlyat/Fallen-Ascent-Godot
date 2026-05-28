@@ -1516,6 +1516,8 @@ static func _service_core_pass(
 	service_threshold: float,
 	rich_threshold: float,
 ) -> void:
+	# Collect rich-wall seed cells first, then expand each into a cluster of 3-4.
+	var rich_seeds: Array[Vector2i] = []
 	for ly in chunk_size:
 		for lx in chunk_size:
 			var idx: int = ly * chunk_size + lx
@@ -1533,6 +1535,51 @@ static func _service_core_pass(
 					and _is_local_noise_peak(noise, base_x + lx, base_y + ly, 1.9) \
 					and not _has_special_neighbor(out, chunk_size, Vector2i(lx, ly), 2):
 				out[idx] = TILE_RICH_WALL
+				rich_seeds.append(Vector2i(lx, ly))
+	# Expand each seed into a cluster of 3-4 tiles.
+	const CLUSTER_OFFSETS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+		Vector2i(1, 1), Vector2i(-1, 1), Vector2i(1, -1), Vector2i(-1, -1),
+	]
+	var rng := RandomNumberGenerator.new()
+	for seed_cell in rich_seeds:
+		rng.seed = hash([base_x + seed_cell.x, base_y + seed_cell.y, "rich_cluster"])
+		var cluster_size: int = rng.randi_range(2, 3)
+		var added: int = 0
+		var candidates: Array[Vector2i] = []
+		for off in CLUSTER_OFFSETS:
+			candidates.append(seed_cell + off)
+		candidates.shuffle()
+		for c in candidates:
+			if added >= cluster_size:
+				break
+			if c.x < 0 or c.x >= chunk_size or c.y < 0 or c.y >= chunk_size:
+				continue
+			var cidx: int = c.y * chunk_size + c.x
+			if out[cidx] != TILE_WALL:
+				continue
+			# Only block placement if there's a SERVICE_CORE neighbor (not another RICH_WALL).
+			if _has_service_core_neighbor(out, chunk_size, c, 1):
+				continue
+			out[cidx] = TILE_RICH_WALL
+			added += 1
+
+
+static func _has_service_core_neighbor(
+	out: PackedInt32Array,
+	chunk_size: int,
+	cell: Vector2i,
+	radius: int = 1,
+) -> bool:
+	for y in range(cell.y - radius, cell.y + radius + 1):
+		for x in range(cell.x - radius, cell.x + radius + 1):
+			if x < 0 or x >= chunk_size or y < 0 or y >= chunk_size:
+				continue
+			if x == cell.x and y == cell.y:
+				continue
+			if out[y * chunk_size + x] == TILE_SERVICE_CORE:
+				return true
+	return false
 
 
 static func _teleporter_pass(

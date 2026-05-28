@@ -55,6 +55,9 @@ tile is added, also add a flat-color placeholder entry for it:
   hashes world-tile coords to vary brightness/tint and dust on a fraction
   of tiles. Tune via uniforms; don't paint dozens of variation atlases.
 - UI command icons go in `resources/ui/placeholder_ui_atlas.png`.
+- Achievement icons go in `resources/ui/achievements_atlas.png` — one row of
+  32 px cells; cell `i` maps to `AchievementManager.ACHIEVEMENTS[i]` (same
+  order). Append-only; see the sibling `.md`.
 - UI panel backgrounds go in `resources/ui/panels/<panel_name>.png` (48x48
   with 16 px corners for 9-slice). Each PNG has a sibling `.md`
   describing what panel it skins. `ColonyHud._panel_textured_style` loads
@@ -131,11 +134,43 @@ and Esc still cancels through `Designator.cancel_active()`.
 
 ## Bot mood + needs
 
-`Worker._mood` is a 0..100 stat with `MOOD_BASELINE = 80`. `_unsatisfied_needs`
-is recomputed every frame from `RoomManager`. Each unmet need drains mood at
-`MOOD_NEED_DECAY_PER_SEC`; when satisfied, mood drifts back to baseline at
-`MOOD_RECOVERY_PER_SEC`. Add new needs by appending to `_unsatisfied_needs`
-in `Worker._update_mood` — the HUD will render them automatically.
+`Worker._mood` is a 0..100 stat. The baseline is `_mood_baseline` (default
+`MOOD_BASELINE = 80`, but personality/parts shift it) and recovery is scaled by
+`_mood_recovery_mult`. `_unsatisfied_needs` is recomputed every frame from
+`RoomManager`. Each unmet need drains mood at `MOOD_NEED_DECAY_PER_SEC`; when
+satisfied, mood drifts back to baseline. Add new needs by appending to
+`_unsatisfied_needs` in `Worker._update_mood` — the HUD renders them
+automatically.
+
+`Worker.Personality` has **9** values (Dutiful, Grumpy, Cheerful, Philosophical,
+Paranoid, Stoic, Nostalgic, Competitive, Glitchy) and maps 1:1 to
+`WorkerLines` dialogue buckets and `WorkerLoadout.PERSONALITY_MODS`. Keep these
+three in sync when adding a personality.
+
+## Worker parts, skills, and embark
+
+Workers are built from a Cogmind-style part system. A bare `Worker` is a
+**shell** (`PartDatabase.SHELL`): slow, low bash, tiny carry. Parts slot into
+five categories (`PartDatabase.Slot`: Power/Propulsion/Manipulation/Utility/
+Weapon) across Tiers 1–5.
+
+- `scripts/colony/parts/PartDatabase.gd` — static, append-only part registry +
+  `accumulate()` (shell + part mods → stats dict). Add parts by appending to
+  `PARTS`; never reshuffle ids (saved loadouts resolve by id).
+- `scripts/colony/parts/WorkerLoadout.gd` — `Resource` holding name,
+  personality, `part_ids` (parallel to `SLOT_LAYOUT`), `skills`, `specialty`.
+  `derive()` folds parts + skills + personality into one flat stats dict.
+- `Worker.apply_loadout(loadout)` pushes derived stats onto the live worker
+  (move/work/carry/hp/bash/armor/sight/energy/mood). Workers spawned WITHOUT a
+  loadout keep the original pre-parts balance, so cradle spawns and old saves
+  don't regress. Loadouts are persisted in `capture_save`/`restore_save`.
+
+Embark flow: `EmbarkScreen` (per-run pool points) → `embark_confirmed(Array[
+WorkerLoadout])` → `GameState.embark_loadouts` → `ColonySite` →
+`WorkerSpawner.spawn(..., loadouts)`. Achievement points
+(`AchievementManager`) permanently unlock higher part tiers and extra worker
+slots from the embark store. **Names** come from `WorkerSpawner.BOT_NAMES` (the
+single source) and the embark screen draws from that same pool.
 
 `RoomManager` owns the list of player-designated rooms. Kinds:
 - `DOCK_ROOM` — 1×2+ area containing at least one Dock Bed (or Mechanic Dock).

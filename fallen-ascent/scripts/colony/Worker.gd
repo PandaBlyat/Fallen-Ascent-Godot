@@ -53,10 +53,15 @@ enum Personality {
 	PHILOSOPHICAL,
 	PARANOID,
 	STOIC,
+	NOSTALGIC,
+	COMPETITIVE,
+	GLITCHY,
 }
 
+## Order matches Personality and WorkerLines flavour buckets 1:1.
 const PERSONALITY_LABELS: Array[String] = [
 	"Dutiful", "Grumpy", "Cheerful", "Philosophical", "Paranoid", "Stoic",
+	"Nostalgic", "Competitive", "Glitchy",
 ]
 
 const CombatStatsScript: Script = preload("res://scripts/combat/CombatStats.gd")
@@ -185,6 +190,26 @@ const STUCK_WATCHDOG_SECONDS: float = 3.0
 const STUCK_PROGRESS_EPSILON_PX: float = 0.5
 
 var _personality: int = Personality.DUTIFUL
+## Display name override from an embark loadout (falls back to the node name).
+var _display_name: String = ""
+## Equipped build + skills, set by apply_loadout. Empty until/unless loadout-spawned.
+var _loadout: WorkerLoadout = null
+var _skills: Dictionary = {}
+## Derived stats. Defaults equal the pre-parts balance so workers spawned WITHOUT
+## a loadout (cradle, neutral conversions, legacy saves) behave exactly as before.
+## apply_loadout overwrites these from PartDatabase + skills + personality.
+var _move_speed: float = MOVE_SPEED_PX_PER_SEC
+var _work_speed_mult: float = 1.0
+var _mine_speed_mult: float = 1.0
+var _build_speed_mult: float = 1.0
+var _carry_capacity: int = MAX_CARRY_STACK
+var _armor: float = 0.0
+var _sight_bonus: int = 0
+var _energy_recharge_mult: float = 1.0
+var _energy_drain_mult: float = 1.0
+var _wisdom_mult: float = 1.0
+var _mood_baseline: float = MOOD_BASELINE
+var _mood_recovery_mult: float = 1.0
 var _state: int = State.IDLE
 var _job: Job = null
 var _path: PackedVector2Array = PackedVector2Array()
@@ -313,7 +338,7 @@ func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 	_highlighter_atlas = load(HIGHLIGHTER_ATLAS_PATH) as Texture2D
 	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
-	_personality = randi() % (Personality.STOIC + 1)
+	_personality = randi() % PERSONALITY_LABELS.size()
 	_init_limbs()
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
@@ -474,8 +499,11 @@ func current_target() -> Node:
 func take_damage(amount: float, attacker: Node) -> void:
 	if _dead or stats == null:
 		return
-	stats.hp = maxf(0.0, stats.hp - amount)
-	_damage_limb(amount / 1.6)
+	# Armor (from Utility parts / personality) soaks a flat amount, but a hit
+	# always lands for at least a sliver so heavy armor isn't full immunity.
+	var taken: float = maxf(0.5, amount - _armor)
+	stats.hp = maxf(0.0, stats.hp - taken)
+	_damage_limb(taken / 1.6)
 	_last_combat_contact_at = _now_seconds()
 	if attacker is Node2D and is_instance_valid(attacker):
 		if _state != State.FIGHTING:
@@ -649,6 +677,8 @@ func is_selected() -> bool:
 
 
 func display_name() -> String:
+	if not _display_name.is_empty():
+		return _display_name
 	return str(name) if not str(name).is_empty() else "bot"
 
 
@@ -657,7 +687,78 @@ func personality() -> int:
 
 
 func personality_label() -> String:
-	return PERSONALITY_LABELS[_personality]
+	return PERSONALITY_LABELS[clampi(_personality, 0, PERSONALITY_LABELS.size() - 1)]
+
+
+## Apply an embark loadout: name, personality, equipped parts, skills, and all
+## the stats they derive. Safe to call after _ready (stats already exist) — the
+## WorkerSpawner calls it right after add_child.
+func apply_loadout(loadout: WorkerLoadout) -> void:
+	if loadout == null:
+		return
+	_loadout = loadout
+	if not loadout.display_name.is_empty():
+		_display_name = loadout.display_name
+	_personality = clampi(loadout.personality, 0, PERSONALITY_LABELS.size() - 1)
+	_skills = loadout.skills.duplicate()
+	_apply_derived_stats(loadout.derive())
+
+
+## Push a derived stats dict (see WorkerLoadout.derive / PartDatabase) onto the
+## live worker. Combat stats flow through `stats`; the rest into local fields
+## the per-frame code already reads.
+func _apply_derived_stats(s: Dictionary) -> void:
+	_move_speed = float(s.get("move_speed", _move_speed))
+	_work_speed_mult = maxf(0.1, float(s.get("work_speed", _work_speed_mult)))
+	_mine_speed_mult = maxf(0.1, float(s.get("mine_speed", _mine_speed_mult)))
+	_build_speed_mult = maxf(0.1, float(s.get("build_speed", _build_speed_mult)))
+	_carry_capacity = maxi(1, int(round(s.get("carry", _carry_capacity))))
+	_armor = maxf(0.0, float(s.get("armor", _armor)))
+	_sight_bonus = int(s.get("sight", _sight_bonus))
+	_energy_recharge_mult = maxf(0.1, float(s.get("energy_recharge", _energy_recharge_mult)))
+	_energy_drain_mult = maxf(0.1, float(s.get("energy_drain", _energy_drain_mult)))
+	_wisdom_mult = maxf(0.1, float(s.get("wisdom", _wisdom_mult)))
+	_mood_baseline = clampf(float(s.get("mood_baseline", _mood_baseline)), 10.0, MOOD_MAX)
+	_mood_recovery_mult = maxf(0.1, float(s.get("mood_recovery_mult", _mood_recovery_mult)))
+	if stats != null:
+		stats.max_hp = maxf(10.0, float(s.get("max_hp", stats.max_hp)))
+		stats.hp = stats.max_hp
+		stats.damage_min = maxf(0.5, float(s.get("bash_min", stats.damage_min)))
+		stats.damage_max = maxf(stats.damage_min, float(s.get("bash_max", stats.damage_max)))
+		stats.dodge_chance = clampf(float(s.get("dodge", stats.dodge_chance)), 0.0, 0.9)
+	_mood = _mood_baseline
+	queue_redraw()
+
+
+func skill_level(skill: StringName) -> int:
+	return int(_skills.get(skill, 0))
+
+
+## Human-readable build summary for the worker inspect panel.
+func loadout_summary_lines() -> Array[String]:
+	var lines: Array[String] = []
+	if _loadout == null:
+		lines.append("Standard chassis")
+		return lines
+	for i in _loadout.part_ids.size():
+		var part_id: StringName = StringName(_loadout.part_ids[i])
+		var slot: int = PartDatabase.SLOT_LAYOUT[i] if i < PartDatabase.SLOT_LAYOUT.size() else 0
+		var part_def: Dictionary = PartDatabase.part(part_id)
+		if part_def.is_empty():
+			lines.append("%s: —" % PartDatabase.slot_label(slot))
+		else:
+			lines.append("%s: %s" % [PartDatabase.slot_label(slot), str(part_def["name"])])
+	return lines
+
+
+## Skill levels as "Label Lv" strings (only non-zero), for the inspect panel.
+func skill_summary_lines() -> Array[String]:
+	var lines: Array[String] = []
+	for skill in WorkerLoadout.SKILL_KEYS:
+		var lvl: int = skill_level(skill)
+		if lvl > 0:
+			lines.append("%s %d" % [str(WorkerLoadout.SKILL_LABELS[skill]), lvl])
+	return lines
 
 
 func action_history() -> Array[String]:
@@ -685,13 +786,21 @@ func capture_save() -> Dictionary:
 		"hp": stats.hp if stats != null else COMBAT_HP_MAX,
 		"history": _action_history.duplicate(),
 		"history_index": _history_index,
+		"display_name": _display_name,
 	}
+	if _loadout != null:
+		d["loadout"] = _loadout.to_dict()
 	if _carried != null and is_instance_valid(_carried):
 		d["carried"] = {"kind": _carried.kind, "count": _carried.count}
 	return d
 
 
 func restore_save(data: Dictionary) -> void:
+	# Re-derive the bot's build first so max_hp / stat fields are correct, then
+	# overwrite the live values (hp, mood, …) with the saved snapshot below.
+	_display_name = str(data.get("display_name", _display_name))
+	if data.has("loadout"):
+		apply_loadout(WorkerLoadout.from_dict(data["loadout"] as Dictionary))
 	_personality = int(data.get("personality", _personality))
 	_energy = float(data.get("energy", ENERGY_MAX))
 	_condition = float(data.get("condition", CONDITION_MAX))
@@ -741,7 +850,7 @@ func mood_value() -> int:
 
 
 func sight_radius() -> int:
-	return 4 if _is_low_energy_mode() else FogOfWar.WORKER_SIGHT_RADIUS
+	return 4 if _is_low_energy_mode() else FogOfWar.WORKER_SIGHT_RADIUS + _sight_bonus
 
 
 func status_modifiers() -> Array[String]:
@@ -1073,16 +1182,16 @@ func _process(delta: float) -> void:
 			var work_delta: float = delta * _light_speed_multiplier()
 			if _job is MineJob:
 				var mine := _job as MineJob
-				mine.progress += work_delta
+				mine.progress += work_delta * _mine_speed_mult
 				if mine.progress >= MineJob.DURATION:
 					_complete_mine(mine)
 			elif _is_scrape_rust_job(_job):
-				var scrape_progress: float = float(_job.get("progress")) + work_delta
+				var scrape_progress: float = float(_job.get("progress")) + work_delta * _work_speed_mult
 				_job.set("progress", scrape_progress)
 				if scrape_progress >= SCRAPE_RUST_DURATION:
 					_complete_scrape_rust(_job)
 			elif _is_scrape_biomass_job(_job):
-				var biomass_progress: float = float(_job.get("progress")) + work_delta
+				var biomass_progress: float = float(_job.get("progress")) + work_delta * _work_speed_mult
 				_job.set("progress", biomass_progress)
 				if biomass_progress >= SCRAPE_BIOMASS_DURATION:
 					_complete_scrape_biomass(_job)
@@ -1103,7 +1212,7 @@ func _process(delta: float) -> void:
 			if build == null:
 				_abandon_job()
 				return
-			build.progress += delta * _light_speed_multiplier()
+			build.progress += delta * _light_speed_multiplier() * _build_speed_mult
 			if build.progress >= build.build_duration():
 				_complete_build(build)
 		State.MOVING_TO_CRAFT_SITE:
@@ -1115,7 +1224,7 @@ func _process(delta: float) -> void:
 		State.CRAFTING:
 			if _job is OperateStructureJob:
 				var op := _job as OperateStructureJob
-				op.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(op.anchor)
+				op.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(op.anchor) * _work_speed_mult
 				if op.progress >= op.operate_duration():
 					_complete_operation(op)
 			else:
@@ -1123,7 +1232,7 @@ func _process(delta: float) -> void:
 				if craft == null:
 					_abandon_job()
 					return
-				craft.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(craft.station_anchor)
+				craft.progress += delta * _light_speed_multiplier() * _workshop_room_speed_multiplier(craft.station_anchor) * _work_speed_mult
 				if craft.progress >= craft.craft_duration():
 					_complete_craft(craft)
 		State.MOVING_FREEFORM:
@@ -1138,7 +1247,7 @@ func _process(delta: float) -> void:
 			if _advance_path(delta):
 				_state = State.CHARGING
 		State.CHARGING:
-			_energy = minf(ENERGY_MAX, _energy + ENERGY_CHARGE_PER_SEC * delta)
+			_energy = minf(ENERGY_MAX, _energy + ENERGY_CHARGE_PER_SEC * delta * _energy_recharge_mult)
 			queue_redraw()
 			if _energy >= ENERGY_MAX:
 				_manual_charging = false
@@ -1209,6 +1318,7 @@ func _process(delta: float) -> void:
 			var rate: float = WISDOM_PER_SEC
 			if TechManager != null and TechManager.is_unlocked(TechDatabase.FOCUSED_MIND):
 				rate *= WISDOM_FOCUSED_MULTIPLIER
+			rate *= _wisdom_mult
 			_wisdom_carry += rate * delta
 			# Research is mentally taxing — chips away at mood while the bot
 			# is hunched over a research bench.
@@ -2690,12 +2800,12 @@ func _take_into_hand(item: Item) -> void:
 
 
 func _take_stack_for_haul(item: Item) -> Item:
-	if item.count <= MAX_CARRY_STACK:
+	if item.count <= _carry_capacity:
 		_take_into_hand(item)
 		return item
 	var carried: Item = ITEM_SCRIPT.new() as Item
-	carried.setup(item.get_grid(), item.kind, MAX_CARRY_STACK)
-	item.count -= MAX_CARRY_STACK
+	carried.setup(item.get_grid(), item.kind, _carry_capacity)
+	item.count -= _carry_capacity
 	item.reserved_by = null
 	item.queue_redraw()
 	_take_into_hand(carried)
@@ -3470,7 +3580,7 @@ func _advance_path(delta: float) -> bool:
 	speed_mult *= _light_speed_multiplier()
 	speed_mult *= _water_speed_multiplier()
 	speed_mult *= _energy_speed_multiplier()
-	var step: float = MOVE_SPEED_PX_PER_SEC * speed_mult * delta
+	var step: float = _move_speed * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
 		var target_grid := _grid_from_waypoint(target)
@@ -3656,6 +3766,7 @@ func _update_energy(delta: float) -> void:
 			drain = ENERGY_WORK_DRAIN_PER_SEC
 		State.CHARGING, State.RESTING, State.MEDITATING:
 			drain = 0.0
+	drain *= _energy_drain_mult
 	if drain > 0.0 and _is_low_energy_mode():
 		drain *= ENERGY_LOW_MODE_DRAIN_MULT
 	var previous_energy: float = _energy
@@ -3707,7 +3818,8 @@ func _update_mood(delta: float) -> void:
 		_needs_refresh_timer = NEEDS_REFRESH_SECONDS
 		_refresh_unsatisfied_needs()
 	# Mood drift: recover toward baseline, but suffer per unsatisfied need.
-	var target: float = MOOD_BASELINE
+	# Baseline + recovery speed are personality/parts-derived (see WorkerLoadout).
+	var target: float = _mood_baseline
 	if _social < 25.0:
 		target -= 8.0
 	if _mental_tiredness > 70.0:
@@ -3716,7 +3828,7 @@ func _update_mood(delta: float) -> void:
 		target -= 6.0
 	var penalty: float = float(_unsatisfied_needs.size()) * MOOD_NEED_DECAY_PER_SEC
 	if _mood < target:
-		_mood = minf(MOOD_MAX, _mood + MOOD_RECOVERY_PER_SEC * delta)
+		_mood = minf(MOOD_MAX, _mood + MOOD_RECOVERY_PER_SEC * _mood_recovery_mult * delta)
 	if penalty > 0.0:
 		_mood = maxf(0.0, _mood - penalty * delta)
 	# Hard ceiling clamp.

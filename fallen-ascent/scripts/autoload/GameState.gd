@@ -11,6 +11,10 @@ var game_speed: float = 1.0
 ## hands it to ChunkManager before the first chunk load. Set on the
 ## new-game seed/size prompt; otherwise the ChunkManager default applies.
 var requested_map_size_chunks: Vector2i = Vector2i.ZERO
+## Starting-crew builds chosen on the embark screen (Array[WorkerLoadout]).
+## Consumed once by WorkerSpawner on the first spawn, then cleared. Empty means
+## "no embark customization" — the spawner falls back to random default bots.
+var embark_loadouts: Array = []
 
 
 func set_world_seed(value: int) -> void:

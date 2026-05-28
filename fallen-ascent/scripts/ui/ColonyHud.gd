@@ -1444,6 +1444,7 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 			_add_status_banner(right, modifier, COLOR_ACCENT_CYAN)
 	_add_history_panel(right, worker)
 	_add_limb_grid(right, worker)
+	_add_loadout_section(right, worker)
 
 
 func _add_worker_pause_button(parent: Control, worker: Worker) -> void:
@@ -1562,6 +1563,20 @@ func _add_status_banner(parent: Control, text_value: String, color: Color) -> vo
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", color)
 	parent.add_child(label)
+
+
+## Shows the worker's equipped parts and any trained skills (from its embark
+## loadout). Parts read one line per slot; skills are a compact wrapped line.
+func _add_loadout_section(parent: Control, worker: Worker) -> void:
+	var part_lines: Array[String] = worker.loadout_summary_lines()
+	if not part_lines.is_empty():
+		_add_section_label(parent, "parts")
+		for line in part_lines:
+			_add_status_banner(parent, line, COLOR_TEXT_MUTED)
+	var skill_lines: Array[String] = worker.skill_summary_lines()
+	if not skill_lines.is_empty():
+		_add_section_label(parent, "skills")
+		_add_status_banner(parent, ", ".join(skill_lines), COLOR_ACCENT_CYAN)
 
 
 func _add_limb_grid(parent: Control, worker: Worker) -> void:

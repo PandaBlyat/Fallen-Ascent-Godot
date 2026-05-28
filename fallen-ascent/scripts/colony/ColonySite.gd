@@ -88,6 +88,11 @@ func _spawn_initial_workers() -> void:
 		_restore_from_save(_pending_load)
 		_pending_load = {}
 		return
+	# Embark builds (if the player customized a crew) drive both the worker count
+	# and their parts/skills/names. Consume once, then clear so a later new game
+	# without embark falls back to random default bots.
+	var embark_loadouts: Array = GameState.embark_loadouts
+	GameState.embark_loadouts = []
 	var spawn_cells: Array[Vector2i] = WorkerSpawner.spawn(
 		WorkerSpawner.INITIAL_WORKERS,
 		Vector2i.ZERO,
@@ -101,6 +106,7 @@ func _spawn_initial_workers() -> void:
 		fog_of_war,
 		structure_manager,
 		room_manager,
+		embark_loadouts,
 	)
 	# Seed an outlet inside the actual spawn room. Using a spawn cell as the
 	# BFS origin (instead of Vector2i.ZERO) guarantees the placed outlet sits

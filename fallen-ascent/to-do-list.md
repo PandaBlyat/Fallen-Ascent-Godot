@@ -13,20 +13,32 @@ Format: `[area] short description — why it matters / first hint at how`.
 
 ## Embark + achievements + lighting + highlighter session
 
-- [ ] **Embark screen worker data not wired to gameplay.** `EmbarkScreen.gd`
-      generates name/role/trait for each starting worker and emits them via
-      `embark_confirmed`. Currently the data is discarded — wire it into
-      `WorkerSpawner` so workers start with the chosen names and traits once
-      Worker has a `display_name` setter and trait system.
+- [x] **Embark screen worker data wired to gameplay.** Done: `EmbarkScreen`
+      emits `Array[WorkerLoadout]` → `GameState.embark_loadouts` →
+      `WorkerSpawner.spawn` → `Worker.apply_loadout`. Names come from
+      `WorkerSpawner.BOT_NAMES`, personalities from `Worker.Personality`.
+- [x] **Embark depth: parts, skills, personalities, AP economy.** Done:
+      `PartDatabase` (Cogmind-style T1–T5 parts), `WorkerLoadout` (parts +
+      skills + specialty), achievement-point store for tier/worker unlocks.
 - [ ] **Achievement hooks for non-signal events.** `AchievementManager` has
       public methods (`on_stockpile_designated`, `on_room_designated`,
       `on_workshop_placed`, `on_worker_saved`, `on_worker_count_changed`) but
       they aren't yet called from `StockpileManager`, `RoomManager`,
       `StructureManager`, or `SelectionController`. Wire them in to unlock
-      those achievements.
-- [ ] **Embark screen: future depth.** Limb selection, skill points,
-      personality buffs/debuffs, and achievement-point-based extra workers
-      are all stubbed. Add once the Worker trait system exists.
+      those achievements. (`on_worker_count_changed` also needs a caller when
+      workers spawn/die so the 5/10-worker achievements can fire.)
+- [ ] **Part placeholder art + worker visuals.** Parts currently have no atlas
+      art and `Worker` still draws a generic body regardless of equipped parts.
+      Add per-part placeholder icons (an embark part atlas) and reflect a few
+      parts on the worker sprite (legs/weapon) once art lands. Achievement
+      icons are flat-color placeholders in `resources/ui/achievements_atlas.png`.
+- [ ] **Wire WorkerLines flavour to actions.** `WorkerLines.get_line()` is
+      fully populated (9 personalities) but never called — hook it into
+      `_remember` / action bubbles so personalities also *talk* differently,
+      not just stat-differ.
+- [ ] **Balance pass on shell baseline vs part tiers.** `PartDatabase.SHELL`
+      and the tier mod values are first-draft. Once playable, tune so a Tier-1
+      full kit ≈ the old fixed worker and higher tiers feel worth the AP.
 - [ ] **Lighting shader pixel_size tuning.** `pixel_size = 4.0` gives chunky
       4×4 dither blocks. Tune together with `dither_strength` and `light_bands`
       once real pixel-art tile art lands — values might need adjusting for

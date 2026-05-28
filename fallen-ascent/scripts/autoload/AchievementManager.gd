@@ -1,84 +1,49 @@
 extends Node
 ##
-## Tracks and persists achievements across all playthroughs.
-## Achievements unlock on first-time events (colony milestones, combat, etc.).
+## Tracks and persists achievements across all playthroughs, plus the
+## achievement-point (AP) economy they feed. Achievements unlock on first-time
+## events (colony milestones, combat, etc.) and each grants a fixed number of
+## points. Points are a persistent currency the player spends — once, and
+## permanently — in the embark screen to unlock higher part tiers and extra
+## starting worker slots.
 ## Save file: user://achievements.cfg
 ##
 
 const SAVE_PATH: String = "user://achievements.cfg"
 
-## Static achievement registry. Each entry: id (StringName), name, desc.
-## Add new achievements here; the unlock state is stored in the save file.
+## Static achievement registry. Each entry: id, name, desc, points.
+## Add new achievements here; unlock state + spent points live in the save file.
 const ACHIEVEMENTS: Array = [
-	{
-		"id": &"first_mine",
-		"name": "Into the Rock",
-		"desc": "Mine your first wall tile.",
-	},
-	{
-		"id": &"first_build",
-		"name": "Foundations",
-		"desc": "Place your first structure.",
-	},
-	{
-		"id": &"first_worker_dead",
-		"name": "Sacrifice",
-		"desc": "Lose your first worker.",
-	},
-	{
-		"id": &"first_hostile_killed",
-		"name": "Survivors",
-		"desc": "Destroy your first hostile bot.",
-	},
-	{
-		"id": &"first_tech_unlock",
-		"name": "Curious Minds",
-		"desc": "Unlock your first technology.",
-	},
-	{
-		"id": &"first_stockpile",
-		"name": "Hoarder",
-		"desc": "Designate your first stockpile zone.",
-	},
-	{
-		"id": &"first_room",
-		"name": "Shelter",
-		"desc": "Designate your first room.",
-	},
-	{
-		"id": &"first_workshop",
-		"name": "Workshop",
-		"desc": "Place your first workshop structure.",
-	},
-	{
-		"id": &"workers_5",
-		"name": "Growing Crew",
-		"desc": "Have 5 workers active at once.",
-	},
-	{
-		"id": &"workers_10",
-		"name": "Small Colony",
-		"desc": "Have 10 workers active at once.",
-	},
-	{
-		"id": &"first_cradle_spawn",
-		"name": "New Life",
-		"desc": "Produce a worker from a Replication Cradle.",
-	},
-	{
-		"id": &"first_save",
-		"name": "No Bot Left Behind",
-		"desc": "Rescue a downed worker.",
-	},
-	{
-		"id": &"first_embark",
-		"name": "Into the Dark",
-		"desc": "Start your first colony.",
-	},
+	{"id": &"first_mine", "name": "Into the Rock", "desc": "Mine your first wall tile.", "points": 5},
+	{"id": &"first_build", "name": "Foundations", "desc": "Place your first structure.", "points": 5},
+	{"id": &"first_stockpile", "name": "Hoarder", "desc": "Designate your first stockpile zone.", "points": 5},
+	{"id": &"first_embark", "name": "Into the Dark", "desc": "Start your first colony.", "points": 5},
+	{"id": &"first_room", "name": "Shelter", "desc": "Designate your first room.", "points": 10},
+	{"id": &"first_workshop", "name": "Workshop", "desc": "Place your first workshop structure.", "points": 10},
+	{"id": &"first_worker_dead", "name": "Sacrifice", "desc": "Lose your first worker.", "points": 10},
+	{"id": &"first_hostile_killed", "name": "Survivors", "desc": "Destroy your first hostile bot.", "points": 15},
+	{"id": &"first_tech_unlock", "name": "Curious Minds", "desc": "Unlock your first technology.", "points": 15},
+	{"id": &"first_save", "name": "No Bot Left Behind", "desc": "Rescue a downed worker.", "points": 20},
+	{"id": &"workers_5", "name": "Growing Crew", "desc": "Have 5 workers active at once.", "points": 20},
+	{"id": &"first_cradle_spawn", "name": "New Life", "desc": "Produce a worker from a Replication Cradle.", "points": 25},
+	{"id": &"workers_10", "name": "Small Colony", "desc": "Have 10 workers active at once.", "points": 40},
 ]
+
+## AP cost to permanently unlock each part tier (tier 1 is free/always on).
+const TIER_UNLOCK_COSTS: Dictionary = {2: 10, 3: 25, 4: 50, 5: 90}
+## AP cost for each extra starting-worker slot beyond the base count.
+const WORKER_SLOT_COSTS: Array[int] = [15, 30, 50]
+const BASE_WORKER_SLOTS: int = 3
+
+## Emitted whenever unlock state OR spend state changes, so menus refresh.
+signal unlocks_changed
 
 ## In-memory set of unlocked achievement ids.
 var _unlocked: Dictionary = {}
+## Persistent spend state.
+var _unlocked_tier: int = 1
+var _extra_worker_slots: int = 0
+var _spent_points: int = 0
 
 
 func _ready() -> void:
@@ -111,10 +76,88 @@ func unlock(id: StringName) -> void:
 	_unlocked[id] = true
 	_save_achievements()
 	EventBus.achievement_unlocked.emit(id)
+	unlocks_changed.emit()
 
 
 func is_unlocked(id: StringName) -> bool:
 	return _unlocked.has(id)
+
+
+func unlocked_count() -> int:
+	return _unlocked.size()
+
+
+# ---- Achievement-point economy ----------------------------------------------
+
+## Total points earned from every unlocked achievement (lifetime).
+func total_points() -> int:
+	var sum: int = 0
+	for ach in ACHIEVEMENTS:
+		if _unlocked.has(ach["id"] as StringName):
+			sum += int(ach["points"])
+	return sum
+
+
+## Points still available to spend (earned minus permanently spent).
+func available_points() -> int:
+	return maxi(0, total_points() - _spent_points)
+
+
+func spent_points() -> int:
+	return _spent_points
+
+
+## Highest part tier the player has permanently unlocked (1..PartDatabase.MAX_TIER).
+func unlocked_tier() -> int:
+	return _unlocked_tier
+
+
+func extra_worker_slots() -> int:
+	return _extra_worker_slots
+
+
+## Number of starting worker slots the player may fill in the embark screen.
+func starting_worker_slots() -> int:
+	return BASE_WORKER_SLOTS + _extra_worker_slots
+
+
+## AP cost to unlock the next tier, or -1 when all tiers are unlocked.
+func next_tier_cost() -> int:
+	var next_tier: int = _unlocked_tier + 1
+	if TIER_UNLOCK_COSTS.has(next_tier):
+		return int(TIER_UNLOCK_COSTS[next_tier])
+	return -1
+
+
+## AP cost for the next extra worker slot, or -1 at the cap.
+func next_worker_slot_cost() -> int:
+	if _extra_worker_slots >= WORKER_SLOT_COSTS.size():
+		return -1
+	return WORKER_SLOT_COSTS[_extra_worker_slots]
+
+
+## Spend AP to unlock the next part tier. Returns true on success.
+func purchase_tier_unlock() -> bool:
+	var cost: int = next_tier_cost()
+	if cost < 0 or cost > available_points():
+		return false
+	_unlocked_tier += 1
+	_spent_points += cost
+	_save_achievements()
+	unlocks_changed.emit()
+	return true
+
+
+## Spend AP to unlock the next extra worker slot. Returns true on success.
+func purchase_worker_slot() -> bool:
+	var cost: int = next_worker_slot_cost()
+	if cost < 0 or cost > available_points():
+		return false
+	_extra_worker_slots += 1
+	_spent_points += cost
+	_save_achievements()
+	unlocks_changed.emit()
+	return true
 
 
 ## Called when the player starts a new colony (called from _start_game flow).
@@ -177,6 +220,9 @@ func _load_achievements() -> void:
 	var ids: Array = cfg.get_value("achievements", "unlocked", []) as Array
 	for id in ids:
 		_unlocked[id as StringName] = true
+	_unlocked_tier = clampi(int(cfg.get_value("economy", "unlocked_tier", 1)), 1, PartDatabase.MAX_TIER)
+	_extra_worker_slots = maxi(0, int(cfg.get_value("economy", "extra_worker_slots", 0)))
+	_spent_points = maxi(0, int(cfg.get_value("economy", "spent_points", 0)))
 
 
 func _save_achievements() -> void:
@@ -185,4 +231,7 @@ func _save_achievements() -> void:
 	for id in _unlocked:
 		ids.append(id as StringName)
 	cfg.set_value("achievements", "unlocked", ids)
+	cfg.set_value("economy", "unlocked_tier", _unlocked_tier)
+	cfg.set_value("economy", "extra_worker_slots", _extra_worker_slots)
+	cfg.set_value("economy", "spent_points", _spent_points)
 	cfg.save(SAVE_PATH)

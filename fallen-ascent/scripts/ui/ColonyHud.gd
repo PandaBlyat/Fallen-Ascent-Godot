@@ -70,7 +70,7 @@ const COLOR_METER_GOOD := Color(0.3, 0.9, 0.55)
 const COLOR_METER_LOW := Color(1.0, 0.78, 0.2)
 const COLOR_FACTION_HOSTILE := Color(0.96, 0.36, 0.34, 1.0)
 const COLOR_FACTION_NEUTRAL := Color(0.97, 0.78, 0.32, 1.0)
-const HISTORY_VISIBLE_ROWS: int = 7
+const HISTORY_VISIBLE_ROWS: int = 12
 const WORKER_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
 const BOTS_ATLAS_PATH := "res://resources/entities/bots_atlas.png"
 const WORKER_REGION_SIZE := Vector2(32, 32)
@@ -89,9 +89,9 @@ const WORKER_LIST_ROW_HEIGHT: float = 28.0
 const WORKER_LIST_ROW_SEP: float = 4.0
 const WORKER_LIST_INNER_PAD: float = 5.0
 const WORKER_LIST_HEADER_HEIGHT: float = 18.0
-const SELECTION_PANEL_WIDTH: float = 560.0
-const SELECTION_PANEL_HEIGHT: float = 650.0
-const WORKER_CARD_WIDTH: float = 440.0
+const SELECTION_PANEL_WIDTH: float = 640.0
+const SELECTION_PANEL_HEIGHT: float = 850.0
+const WORKER_CARD_WIDTH: float = 520.0
 const INSPECT_CARD_WIDTH: float = 300.0
 const INSPECT_CARD_HEIGHT: float = 150.0
 const PANEL_DRAG_BORDER_PX: float = 8.0
@@ -104,7 +104,6 @@ const PANEL_DRAG_BORDER_PX: float = 8.0
 @export var structure_manager_path: NodePath
 @export var camera_path: NodePath
 @export var selection_controller_path: NodePath
-
 
 var _designator: Designator
 var _job_board: JobBoard
@@ -163,17 +162,10 @@ var _status_refresh_queued: bool = false
 var _last_npc_strip_count: int = -1
 var _npc_buttons_by_worker: Dictionary = {}       ## Worker -> Button
 var _combat_tweens_by_worker: Dictionary = {}     ## Worker -> Tween
-# Tracks the set of workers currently fighting so the auto-pause only fires
-# on the *first* worker entering combat each engagement. As long as somebody
-# is still fighting, additional `worker_entered_combat` signals do not
-# re-pause the game; the set is cleared once everyone is back to non-combat.
 var _workers_in_combat: Dictionary = {}           ## Worker -> true
 var _drag_offsets: Dictionary = {}                ## Control -> Vector2 user-positioned offset (top-left in viewport coords; Vector2.INF if untouched)
 var _dragging_panel: Control = null
-## Re-entry guards. `_position_palette_panel` and `_position_selection_panel`
-## modify their panels' anchors/offsets, which can fire the panel's `resized`
-## signal — which is connected back to the same function. Without these flags
-## a stable size never gets reached and GDScript blows the script stack.
+var _hardware_popup: PanelContainer = null
 var _positioning_palette: bool = false
 var _positioning_selection: bool = false
 var _drag_grab_offset: Vector2 = Vector2.ZERO
@@ -203,10 +195,6 @@ func _ready() -> void:
 	_set_tab(TAB_ORDERS)
 	_refresh_all()
 
-	# Dynamic HUD refresh is wall-clock based via `_process` so it doesn't
-	# tick 3-4x faster on high game speed (a Timer node scales with
-	# Engine.time_scale and would rebuild cards/labels well over twice a
-	# second when the player fast-forwards).
 	set_process(true)
 
 
@@ -250,14 +238,14 @@ func _build_layout() -> void:
 	add_child(top_strip)
 
 	var top_margin := MarginContainer.new()
-	top_margin.add_theme_constant_override("margin_left", 10)
+	top_margin.add_theme_constant_override("margin_left", 12)
 	top_margin.add_theme_constant_override("margin_top", 5)
-	top_margin.add_theme_constant_override("margin_right", 10)
+	top_margin.add_theme_constant_override("margin_right", 12)
 	top_margin.add_theme_constant_override("margin_bottom", 5)
 	top_strip.add_child(top_margin)
 
 	var status_row := HBoxContainer.new()
-	status_row.add_theme_constant_override("separation", 7)
+	status_row.add_theme_constant_override("separation", 9)
 	top_margin.add_child(status_row)
 
 	# Stats Badges
@@ -280,7 +268,6 @@ func _build_layout() -> void:
 		_resource_category_buttons[category] = button
 		_build_resource_popup(category)
 
-	# Wisdom (research currency). Color-tinted lavender to read as abstract.
 	_wisdom_label = _status_label("wisdom 0")
 	_wisdom_label.add_theme_color_override("font_color", Color(0.82, 0.78, 1.0))
 	status_row.add_child(_badge_container(_wisdom_label))
@@ -382,8 +369,6 @@ func _build_layout() -> void:
 	_add_tab_button(tabs, TAB_BUILDING, "Building")
 	_add_delete_button(tabs)
 
-	# Building subtabs (General / Storage / Visibility / Objects). The row is
-	# only made visible while the Building tab is active.
 	_building_subtab_row = HBoxContainer.new()
 	_building_subtab_row.add_theme_constant_override("separation", 4)
 	_building_subtab_row.visible = false
@@ -411,7 +396,7 @@ func _build_layout() -> void:
 	var selection_margin := MarginContainer.new()
 	selection_margin.add_theme_constant_override("margin_left", 8)
 	selection_margin.add_theme_constant_override("margin_top", 8)
-	selection_margin.add_theme_constant_override("margin_right", 4)
+	selection_margin.add_theme_constant_override("margin_right", 8)
 	selection_margin.add_theme_constant_override("margin_bottom", 8)
 	_selection_panel.add_child(selection_margin)
 
@@ -427,7 +412,6 @@ func _build_layout() -> void:
 	_selection_box.add_theme_constant_override("separation", 12)
 	selection_scroll.add_child(_selection_box)
 
-	# NPC Inspect Card - centered above the command palette.
 	_inspect_panel = PanelContainer.new()
 	_inspect_panel.name = "InspectCard"
 	_inspect_panel.visible = false
@@ -440,8 +424,6 @@ func _build_layout() -> void:
 	_inspect_panel.offset_top = -PALETTE_HEIGHT - 16.0 - INSPECT_CARD_HEIGHT - 10.0
 	_inspect_panel.offset_right = INSPECT_CARD_WIDTH * 0.5
 	_inspect_panel.offset_bottom = -PALETTE_HEIGHT - 16.0 - 10.0
-	# Inspect card sits on top of the HUD strip; no outer panel chrome so it
-	# doesn't look like a panel nested inside the larger HUD background.
 	_inspect_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	add_child(_inspect_panel)
 
@@ -461,16 +443,9 @@ func _build_layout() -> void:
 	_position_palette_panel()
 	resized.connect(_position_selection_panel)
 
-	# Allow click-drag near panel edges to relocate the HUD panels around the
-	# screen. gui_input fires before the panel's children consume the event,
-	# so we only grab when the cursor sits in the outer border zone — clicks
-	# on buttons inside still work normally.
 	_palette_panel.gui_input.connect(_on_drag_panel_input.bind(_palette_panel))
 	_npc_panel.gui_input.connect(_on_drag_panel_input.bind(_npc_panel))
 	_top_strip.gui_input.connect(_on_drag_panel_input.bind(_top_strip))
-	# The worker / selection info card is built dynamically when something is
-	# selected, but the outer panel persists across selections, so a single
-	# RMB-drag wiring at construction time is enough.
 	_selection_panel.gui_input.connect(_on_drag_panel_input.bind(_selection_panel))
 
 
@@ -497,13 +472,6 @@ func _has_user_drag_offset(panel: Control) -> bool:
 func _on_drag_panel_input(event: InputEvent, panel: Control) -> void:
 	if panel == null or not is_instance_valid(panel) or not panel.is_inside_tree():
 		return
-	# Secondary-button anywhere on the panel grabs it for dragging. The
-	# primary button stays free for buttons/sliders inside the panel. Which
-	# physical button counts as secondary depends on the swap-mouse-buttons
-	# setting (defaults to right-click). We always consume RMB so it never
-	# leaks out to SelectionController and crashes when there is no world
-	# tile under the cursor (or fires an unintended order on the world tile
-	# that happens to be behind the HUD).
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index != SettingsManager.secondary_mouse_button():
@@ -549,9 +517,6 @@ func _is_on_panel_drag_border(local: Vector2, rect: Rect2) -> bool:
 
 
 func _apply_panel_absolute_position(panel: Control, top_left: Vector2) -> void:
-	# Convert absolute top-left into anchor-relative offsets. We don't change
-	# anchors here — the existing anchor presets stay, we just rewrite offsets
-	# so the panel lands where the user dropped it.
 	panel.anchor_left = 0.0
 	panel.anchor_top = 0.0
 	panel.anchor_right = 0.0
@@ -571,7 +536,7 @@ func _position_selection_panel() -> void:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
 		return
-	var width: float = clampf(viewport_size.x * 0.34, 500.0, SELECTION_PANEL_WIDTH)
+	var width: float = clampf(viewport_size.x * 0.38, 560.0, SELECTION_PANEL_WIDTH)
 	if viewport_size.x < 900.0:
 		width = viewport_size.x - 24.0
 	var left: float = viewport_size.x - width - 16.0
@@ -591,8 +556,6 @@ func _position_palette_panel() -> void:
 	if _has_user_drag_offset(_palette_panel):
 		return
 	_positioning_palette = true
-	# Anchor to bottom-center so width auto-sizes from content (tab row +
-	# command grid) and we manually recenter horizontally.
 	_palette_panel.anchor_left = 0.5
 	_palette_panel.anchor_top = 1.0
 	_palette_panel.anchor_right = 0.5
@@ -604,8 +567,6 @@ func _position_palette_panel() -> void:
 		_palette_panel.offset_bottom = -16.0
 		_positioning_palette = false
 		return
-	# Use the larger of the explicit min-width and the actual measured width
-	# so all designation tabs fit even when categories are added later.
 	var measured: float = _palette_panel.get_combined_minimum_size().x
 	var width: float = maxf(PALETTE_WIDTH, measured)
 	_palette_panel.offset_left = -width * 0.5
@@ -616,10 +577,6 @@ func _position_palette_panel() -> void:
 
 
 func _add_delete_button(parent: HBoxContainer) -> void:
-	# Sits at the end of the tab row as a bold red toggle. Activates the
-	# global DELETE designation mode that can wipe any player-built
-	# structure, stockpile, room, or pending order under the cursor (RMB),
-	# refunding 50% of build ingredients where applicable.
 	var button := Button.new()
 	button.text = "Delete"
 	button.toggle_mode = true
@@ -660,10 +617,9 @@ func _add_tab_button(parent: HBoxContainer, tab: StringName, label_text: String)
 	button.custom_minimum_size = Vector2(96, 28)
 	button.add_theme_font_size_override("font_size", 12)
 
-	# Tab specific styling
-	button.add_theme_stylebox_override("normal", _tab_style(Color(0.12, 0.14, 0.16, 0.4), Color.TRANSPARENT))
-	button.add_theme_stylebox_override("hover", _tab_style(Color(0.18, 0.20, 0.22, 0.6), COLOR_ACCENT_MUTED))
-	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("normal", _tab_style(Color(0.12, 0.14, 0.16, 0.4), Color.TRANSPARENT, false))
+	button.add_theme_stylebox_override("hover", _tab_style(Color(0.18, 0.20, 0.22, 0.6), COLOR_ACCENT_MUTED, true))
+	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_AMBER, true))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
@@ -683,11 +639,10 @@ func _add_building_subtab_button(parent: HBoxContainer, subtab: StringName, labe
 	button.focus_mode = Control.FOCUS_NONE
 	button.custom_minimum_size = Vector2(86, 24)
 	button.add_theme_font_size_override("font_size", 11)
-	# Slightly subdued styling so the subtab row reads as secondary to the
-	# main tab row above it.
-	button.add_theme_stylebox_override("normal", _tab_style(Color(0.10, 0.12, 0.14, 0.35), Color.TRANSPARENT))
-	button.add_theme_stylebox_override("hover", _tab_style(Color(0.16, 0.18, 0.20, 0.55), COLOR_ACCENT_MUTED))
-	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.18, 0.16, 0.12, 0.85), COLOR_ACCENT_AMBER))
+
+	button.add_theme_stylebox_override("normal", _tab_style(Color(0.10, 0.12, 0.14, 0.35), Color.TRANSPARENT, false))
+	button.add_theme_stylebox_override("hover", _tab_style(Color(0.16, 0.18, 0.20, 0.55), COLOR_ACCENT_MUTED, true))
+	button.add_theme_stylebox_override("pressed", _tab_style(Color(0.18, 0.16, 0.12, 0.85), COLOR_ACCENT_AMBER, true))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
 	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
@@ -700,8 +655,6 @@ func _add_building_subtab_button(parent: HBoxContainer, subtab: StringName, labe
 
 func _on_building_subtab_pressed(subtab: StringName) -> void:
 	_current_building_subtab = subtab
-	# Subtab changes only rebuild the command grid; the Building tab itself
-	# stays selected.
 	_render_current_tab()
 
 
@@ -717,8 +670,6 @@ func _render_current_tab() -> void:
 		child.queue_free()
 	_command_buttons.clear()
 
-	# Building tab is a wrapper: render the subtab row and use the active
-	# subtab as the effective source for `_commands_for_tab`.
 	var is_building: bool = _current_tab == TAB_BUILDING
 	if _building_subtab_row != null:
 		_building_subtab_row.visible = is_building
@@ -837,18 +788,17 @@ func _add_command_button(
 	button.expand_icon = true
 	button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
 
-	# Styling typography & spacing for button structure
 	button.add_theme_font_size_override("font_size", 12)
 	button.add_theme_constant_override("h_separation", 6)
 
 	var base_button_color := COLOR_BG_RAISED
 	var hover_button_color := Color(0.16, 0.18, 0.20, 0.95)
-	var active_button_color := Color(0.25, 0.20, 0.12, 1.0) # Amber tone when active
+	var active_button_color := Color(0.25, 0.20, 0.12, 1.0)
 
-	button.add_theme_stylebox_override("normal", _button_style(base_button_color, COLOR_BORDER_DEFAULT))
-	button.add_theme_stylebox_override("hover", _button_style(hover_button_color, COLOR_ACCENT_MUTED))
-	button.add_theme_stylebox_override("pressed", _button_style(active_button_color, COLOR_ACCENT_AMBER))
-	button.add_theme_stylebox_override("disabled", _button_style(Color(0.08, 0.09, 0.10, 0.85), Color(0.30, 0.32, 0.34, 0.35)))
+	button.add_theme_stylebox_override("normal", _command_button_style(base_button_color, COLOR_BORDER_DEFAULT))
+	button.add_theme_stylebox_override("hover", _command_button_style(hover_button_color, COLOR_ACCENT_MUTED, 2))
+	button.add_theme_stylebox_override("pressed", _command_button_style(active_button_color, COLOR_ACCENT_AMBER, 3))
+	button.add_theme_stylebox_override("disabled", _command_button_style(Color(0.08, 0.09, 0.10, 0.85), Color(0.30, 0.32, 0.34, 0.35)))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	if locked:
@@ -878,6 +828,7 @@ func _on_command_pressed(mode: int) -> void:
 func _on_mode_changed(_mode: int) -> void:
 	_refresh_mode_buttons()
 	_schedule_status_refresh()
+	_close_hardware_popup()
 
 
 func _on_job_changed(_job: Job) -> void:
@@ -906,10 +857,6 @@ func _refresh_dynamic_status() -> void:
 	_refresh_status()
 	_refresh_combat_portraits()
 	_refresh_npc_strip_if_needed()
-	# Skip rebuilding the selection panel while the mouse is over it — the
-	# rebuild destroys/recreates buttons, which kills hover state and eats
-	# clicks (notably on the fabrication-spot craft order buttons). Explicit
-	# selection / job / stockpile signal handlers will still refresh it.
 	if not _mouse_over_selection_panel():
 		_refresh_selection_panel()
 	_refresh_inspect_card()
@@ -933,6 +880,7 @@ func _on_workers_selected(workers: Array[Worker]) -> void:
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
+		_close_hardware_popup()
 	_refresh_status()
 	_refresh_selection_panel()
 	_refresh_inspect_card()
@@ -947,6 +895,7 @@ func _on_structure_selected(id: int, anchor: Vector2i) -> void:
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
+		_close_hardware_popup()
 	_refresh_selection_panel()
 	_refresh_inspect_card()
 
@@ -959,6 +908,7 @@ func _on_stockpile_selected(zone: Node) -> void:
 		_selected_build_anchor = Pathfinder.UNREACHABLE
 		_inspected_node = null
 		_inspected_faction = 0
+		_close_hardware_popup()
 	_refresh_selection_panel()
 	_refresh_inspect_card()
 
@@ -971,6 +921,7 @@ func _on_build_job_selected(anchor: Vector2i) -> void:
 		_selected_stockpile = null
 		_inspected_node = null
 		_inspected_faction = 0
+		_close_hardware_popup()
 	_refresh_selection_panel()
 	_refresh_inspect_card()
 
@@ -983,6 +934,7 @@ func _on_bot_inspected(node: Node, faction: int) -> void:
 		_selected_structure_id = -1
 		_selected_stockpile = null
 		_selected_build_anchor = Pathfinder.UNREACHABLE
+		_close_hardware_popup()
 		_refresh_selection_panel()
 	_refresh_inspect_card()
 
@@ -1001,8 +953,6 @@ func _on_wisdom_changed(new_total: float) -> void:
 
 
 func _on_tech_unlocked(_tech_id: StringName) -> void:
-	# A new tech can flip the unlocked state of structures — re-render the
-	# current tab so locked rows refresh.
 	_set_tab(_current_tab)
 
 
@@ -1013,6 +963,7 @@ func _on_settings_changed() -> void:
 
 func _on_default_tile_clicked(_grid: Vector2i) -> void:
 	_set_palette_collapsed(true)
+	_close_hardware_popup()
 
 
 func _on_palette_gui_input(event: InputEvent) -> void:
@@ -1091,7 +1042,6 @@ func _refresh_status() -> void:
 		var button := _resource_category_buttons[category] as Button
 		if button != null:
 			button.text = "%s %d" % [Item.category_name(int(category)), _category_total(int(category), counts)]
-			button.add_theme_color_override("font_color", Item.category_color(int(category)).lerp(Color.WHITE, 0.35))
 	if _wisdom_label != null and TechManager != null:
 		_wisdom_label.text = "wisdom %d" % int(roundf(TechManager.wisdom))
 	_refresh_npc_strip_if_needed()
@@ -1100,6 +1050,7 @@ func _refresh_status() -> void:
 func _resource_counts() -> Dictionary:
 	var counts: Dictionary = {
 		Item.Kind.SCRAP: 0,
+		Item.Kind.BIOMASS: 0,
 		Item.Kind.MECHANISM: 0,
 		Item.Kind.PLATING: 0,
 		Item.Kind.DATACORE: 0,
@@ -1117,11 +1068,6 @@ func _resource_counts() -> Dictionary:
 			if zone == null or not is_instance_valid(zone):
 				continue
 			for value in zone.occupant.values():
-				# `value` may reference an Item that's been queue_freed but not
-				# yet cleared from the stockpile bookkeeping. `value is Item`
-				# would throw "left operand of `is` is a previously freed
-				# instance" on a stale ref, so route through typeof + is_instance_valid
-				# (Variant-level checks that don't dereference the Object).
 				if value == null:
 					continue
 				if typeof(value) == TYPE_OBJECT and not is_instance_valid(value as Object):
@@ -1177,13 +1123,16 @@ func _resource_category_button(category: int) -> Button:
 	button.text = "%s 0" % Item.category_name(category)
 	button.tooltip_text = _category_tooltip(category)
 	button.focus_mode = Control.FOCUS_NONE
-	button.custom_minimum_size = Vector2(104, 28)
+	button.custom_minimum_size = Vector2(110, 28)
 	button.add_theme_font_size_override("font_size", 11)
-	button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, COLOR_BORDER_DEFAULT))
-	button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
-	button.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.14, 0.20, 1.0), COLOR_ACCENT_AMBER))
+	
+	var cat_color := Item.category_color(category)
+	button.add_theme_stylebox_override("normal", _category_button_style(cat_color, COLOR_BG_RAISED))
+	button.add_theme_stylebox_override("hover", _category_button_style(cat_color * Color(1.15, 1.15, 1.15), Color(0.16, 0.18, 0.20, 0.95)))
+	button.add_theme_stylebox_override("pressed", _category_button_style(cat_color, Color(0.18, 0.14, 0.20, 1.0)))
 	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	button.add_theme_color_override("font_color", Item.category_color(category).lerp(Color.WHITE, 0.35))
+	
+	button.add_theme_color_override("font_color", cat_color.lerp(Color.WHITE, 0.45))
 	button.add_theme_color_override("font_hover_color", Color.WHITE)
 	button.pressed.connect(_toggle_resource_popup.bind(category))
 	button.pressed.connect(AudioManager.play_button_press)
@@ -1330,6 +1279,7 @@ func _npc_portrait() -> Texture2D:
 func _refresh_selection_panel() -> void:
 	if _selection_panel == null or _selection_box == null:
 		return
+	_close_hardware_popup()
 	for child in _selection_box.get_children():
 		_selection_box.remove_child(child)
 		child.queue_free()
@@ -1372,7 +1322,7 @@ func _add_worker_roster(workers: Array[Worker]) -> void:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 6)
 	margin.add_child(box)
-	_add_section_label(box, "%d selected" % workers.size())
+	_add_section_header(box, "%d selected" % workers.size())
 	for worker in workers:
 		var b := Button.new()
 		b.text = worker.display_name()
@@ -1405,26 +1355,27 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	card_panel.add_child(margin)
 
 	var card := VBoxContainer.new()
-	card.add_theme_constant_override("separation", 8)
+	card.add_theme_constant_override("separation", 10)
 	margin.add_child(card)
 
 	_add_worker_header(card, worker)
-	_add_worker_pause_button(card, worker)
+	_add_worker_summary(card, worker)
+
 	var columns := HBoxContainer.new()
-	columns.add_theme_constant_override("separation", 14)
+	columns.add_theme_constant_override("separation", 16)
 	card.add_child(columns)
 
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.add_theme_constant_override("separation", 7)
+	left.add_theme_constant_override("separation", 8)
 	columns.add_child(left)
 
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right.add_theme_constant_override("separation", 7)
+	right.add_theme_constant_override("separation", 8)
 	columns.add_child(right)
 
-	_add_worker_summary(left, worker)
+	_add_section_header(left, "Vitals", COLOR_ACCENT_AMBER)
 	_add_meter(left, "energy", worker.energy_ratio(), COLOR_METER_LOW if worker.energy_ratio() < 0.3 else COLOR_METER_GOOD)
 	_add_meter(left, "condition", worker.condition_ratio(), Color(0.95, 0.52, 0.38))
 	_add_meter(left, "mental exhaustion", worker.mental_tiredness_ratio(), Color(0.72, 0.58, 1.0))
@@ -1433,21 +1384,26 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	_add_meter(left, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
 
 	var needs: Array[String] = worker.unsatisfied_needs()
-	_add_section_label(right, "needs")
-	if needs.is_empty():
-		_add_status_banner(right, "satisfied", COLOR_METER_GOOD)
-	else:
-		_add_status_banner(right, ", ".join(needs), Color(1.0, 0.5, 0.35))
 	var modifiers: Array[String] = worker.status_modifiers()
+	
+	if not needs.is_empty() or not modifiers.is_empty():
+		var spacer := Control.new()
+		spacer.custom_minimum_size = Vector2(0, 4)
+		left.add_child(spacer)
+
+	if not needs.is_empty():
+		_add_section_header(left, "Needs", Color(1.0, 0.45, 0.35))
+		for need in needs:
+			_add_status_banner(left, "• " + need, Color(1.0, 0.5, 0.35))
+
 	if not modifiers.is_empty():
-		_add_section_label(right, "modifiers")
+		_add_section_header(left, "Status Modifiers", COLOR_ACCENT_CYAN)
 		for modifier in modifiers:
-			_add_status_banner(right, modifier, COLOR_ACCENT_CYAN)
+			_add_status_banner(left, "• " + modifier, COLOR_ACCENT_CYAN)
+
 	_add_parts_condition_grid(right, worker)
 	_add_loadout_section(right, worker)
 
-	# Thought history sits isolated at the bottom, full-width, so it reads like a
-	# log rather than competing with the stat columns above it.
 	var divider := HSeparator.new()
 	divider.add_theme_stylebox_override("separator", _hsep_style())
 	card.add_child(divider)
@@ -1483,51 +1439,76 @@ func _on_worker_pause_toggled(pressed: bool, worker: Worker) -> void:
 
 func _add_worker_header(parent: Control, worker: Worker) -> void:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 10)
 	parent.add_child(row)
 
 	var portrait := TextureRect.new()
 	portrait.texture = _bot_icon()
-	portrait.custom_minimum_size = Vector2(28, 28)
+	portrait.custom_minimum_size = Vector2(36, 36)
 	portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	row.add_child(portrait)
 
 	var name_box := VBoxContainer.new()
-	name_box.add_theme_constant_override("separation", 0)
+	name_box.add_theme_constant_override("separation", 1)
 	name_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(name_box)
 
 	var name_label := Label.new()
 	name_label.text = worker.display_name()
-	name_label.add_theme_font_size_override("font_size", 15)
+	name_label.add_theme_font_size_override("font_size", 16)
 	name_label.add_theme_color_override("font_color", Color.WHITE)
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_box.add_child(name_label)
+
+	var sub_row := HBoxContainer.new()
+	sub_row.add_theme_constant_override("separation", 6)
+	name_box.add_child(sub_row)
 
 	var state_label := Label.new()
 	state_label.text = worker.state_label()
 	state_label.add_theme_font_size_override("font_size", 11)
 	state_label.add_theme_color_override("font_color", COLOR_ACCENT_CYAN)
-	state_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_box.add_child(state_label)
+	sub_row.add_child(state_label)
+
+	var separator_dot := Label.new()
+	separator_dot.text = "•"
+	separator_dot.add_theme_font_size_override("font_size", 11)
+	separator_dot.add_theme_color_override("font_color", COLOR_TEXT_MUTED * 0.7)
+	sub_row.add_child(separator_dot)
 
 	var personality_label := Label.new()
 	personality_label.text = worker.personality_label()
-	personality_label.add_theme_font_size_override("font_size", 10)
-	personality_label.add_theme_color_override("font_color", Color(0.72, 0.62, 0.42, 0.85))
-	personality_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	name_box.add_child(personality_label)
+	personality_label.add_theme_font_size_override("font_size", 11)
+	personality_label.add_theme_color_override("font_color", Color(0.92, 0.75, 0.45))
+	sub_row.add_child(personality_label)
+
+	var button := Button.new()
+	button.focus_mode = Control.FOCUS_NONE
+	button.toggle_mode = true
+	button.button_pressed = worker.is_paused()
+	button.text = "Resume" if worker.is_paused() else "Pause"
+	button.custom_minimum_size = Vector2(80, 26)
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	button.add_theme_font_size_override("font_size", 11)
+	button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_DARK, COLOR_BORDER_DEFAULT))
+	button.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.20, 0.95), COLOR_ACCENT_MUTED))
+	button.add_theme_stylebox_override("pressed", _button_style(Color(0.30, 0.20, 0.10, 1.0), COLOR_ACCENT_AMBER))
+	button.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	button.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.toggled.connect(_on_worker_pause_toggled.bind(worker))
+	button.toggled.connect(func(_p: bool) -> void: AudioManager.play_button_press())
+	row.add_child(button)
 
 
 func _add_worker_summary(parent: Control, worker: Worker) -> void:
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
-	parent.add_child(grid)
-	_add_metric_chip(grid, "job", worker.job_label(), COLOR_ACCENT_AMBER)
-	_add_metric_chip(grid, "carry", worker.carried_label(), COLOR_TEXT_LIGHT)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	parent.add_child(row)
+	_add_metric_chip(row, "job", worker.job_label(), COLOR_ACCENT_AMBER)
+	_add_metric_chip(row, "carry", worker.carried_label(), COLOR_TEXT_LIGHT)
 
 
 func _add_metric_chip(parent: Control, key: String, value: String, color: Color) -> void:
@@ -1563,6 +1544,28 @@ func _add_section_label(parent: Control, text_value: String) -> void:
 	parent.add_child(label)
 
 
+func _add_section_header(parent: Control, title_text: String, accent_color: Color = COLOR_ACCENT_CYAN) -> void:
+	var container := VBoxContainer.new()
+	container.add_theme_constant_override("separation", 3)
+	
+	if parent.get_child_count() > 0:
+		var spacer := Control.new()
+		spacer.custom_minimum_size = Vector2(0, 4)
+		container.add_child(spacer)
+	parent.add_child(container)
+
+	var label := Label.new()
+	label.text = title_text.to_upper()
+	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_color_override("font_color", accent_color)
+	container.add_child(label)
+
+	var line := ColorRect.new()
+	line.custom_minimum_size = Vector2(0, 1)
+	line.color = accent_color * Color(1.0, 1.0, 1.0, 0.25)
+	container.add_child(line)
+
+
 func _add_status_banner(parent: Control, text_value: String, color: Color) -> void:
 	var label := Label.new()
 	label.text = text_value
@@ -1572,25 +1575,182 @@ func _add_status_banner(parent: Control, text_value: String, color: Color) -> vo
 	parent.add_child(label)
 
 
-## Shows the worker's equipped parts and any trained skills (from its embark
-## loadout). Parts read one line per slot; skills are a compact wrapped line.
 func _add_loadout_section(parent: Control, worker: Worker) -> void:
-	var part_lines: Array[String] = worker.loadout_summary_lines()
-	if not part_lines.is_empty():
-		_add_section_label(parent, "parts")
-		for line in part_lines:
-			_add_status_banner(parent, line, COLOR_TEXT_MUTED)
+	_add_section_header(parent, "Installed Modules", Color(0.75, 0.75, 0.85))
+	
+	var hw_button := Button.new()
+	hw_button.text = "Inspect Hardware Loadout"
+	hw_button.tooltip_text = "Click to inspect equipped tactical modules, utility arms, and structural plating."
+	hw_button.focus_mode = Control.FOCUS_NONE
+	hw_button.custom_minimum_size = Vector2(0, 26)
+	hw_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hw_button.add_theme_font_size_override("font_size", 11)
+	hw_button.add_theme_stylebox_override("normal", _button_style(COLOR_BG_DARK, COLOR_ACCENT_CYAN * Color(1, 1, 1, 0.45)))
+	hw_button.add_theme_stylebox_override("hover", _button_style(Color(0.12, 0.16, 0.18, 0.95), COLOR_ACCENT_CYAN))
+	hw_button.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.15, 0.12, 1.0), COLOR_ACCENT_AMBER))
+	hw_button.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	hw_button.add_theme_color_override("font_hover_color", Color.WHITE)
+	hw_button.pressed.connect(_toggle_hardware_popup.bind(worker, hw_button))
+	hw_button.pressed.connect(AudioManager.play_button_press)
+	parent.add_child(hw_button)
+
+	_add_section_header(parent, "Stats", Color(0.92, 0.75, 0.45))
+	
 	var skill_lines: Array[String] = worker.skill_summary_lines()
-	if not skill_lines.is_empty():
-		_add_section_label(parent, "skills")
-		_add_status_banner(parent, ", ".join(skill_lines), COLOR_ACCENT_CYAN)
+	if skill_lines.is_empty():
+		var empty := Label.new()
+		empty.text = "No operational protocols recorded."
+		empty.add_theme_font_size_override("font_size", 10)
+		empty.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+		parent.add_child(empty)
+	else:
+		var stats_box := VBoxContainer.new()
+		stats_box.add_theme_constant_override("separation", 5)
+		parent.add_child(stats_box)
+		
+		for line in skill_lines:
+			var skill_info := _parse_skill_line(line)
+			_add_stat_bar_row(stats_box, skill_info.name, skill_info.level)
 
 
-## One labelled condition bar per equipped body part (replaces the old abstract
-## limb grid now that workers are built from defined parts). A part-less shell
-## shows a single "Chassis" entry.
+func _toggle_hardware_popup(worker: Worker, trigger_button: Button) -> void:
+	if _hardware_popup != null and is_instance_valid(_hardware_popup):
+		_close_hardware_popup()
+		return
+		
+	var popup := PanelContainer.new()
+	popup.name = "HardwarePopup"
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup.z_index = 160
+	popup.custom_minimum_size = Vector2(280, 0)
+	popup.add_theme_stylebox_override("panel", _panel_textured_style("hardware_popup", COLOR_BG_DARK, COLOR_ACCENT_CYAN, 4.0, true))
+	popup.gui_input.connect(_on_drag_panel_input.bind(popup))
+	add_child(popup)
+	_hardware_popup = popup
+	
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 10)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	popup.add_child(margin)
+	
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	margin.add_child(box)
+	
+	var header := HBoxContainer.new()
+	box.add_child(header)
+	
+	var title := Label.new()
+	title.text = "EQUIPPED HARDWARE"
+	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_color_override("font_color", COLOR_ACCENT_CYAN)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	
+	var close_btn := Button.new()
+	close_btn.text = "×"
+	close_btn.focus_mode = Control.FOCUS_NONE
+	close_btn.custom_minimum_size = Vector2(20, 20)
+	close_btn.add_theme_font_size_override("font_size", 12)
+	close_btn.add_theme_stylebox_override("normal", _button_style(COLOR_BG_RAISED, Color.TRANSPARENT))
+	close_btn.pressed.connect(_close_hardware_popup)
+	close_btn.pressed.connect(AudioManager.play_button_press)
+	header.add_child(close_btn)
+	
+	var divider := HSeparator.new()
+	divider.add_theme_stylebox_override("separator", _hsep_style())
+	box.add_child(divider)
+	
+	var part_lines: Array[String] = worker.loadout_summary_lines()
+	if part_lines.is_empty():
+		var empty := Label.new()
+		empty.text = "No hardware modules installed."
+		empty.add_theme_font_size_override("font_size", 11)
+		empty.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+		box.add_child(empty)
+	else:
+		for line in part_lines:
+			var is_empty_slot: bool = line.ends_with("-") or line.contains("-")
+			var color: Color = COLOR_TEXT_MUTED * Color(1.0, 1.0, 1.0, 0.55) if is_empty_slot else COLOR_TEXT_LIGHT
+			
+			var l_item := Label.new()
+			l_item.text = line
+			l_item.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l_item.add_theme_font_size_override("font_size", 11)
+			l_item.add_theme_color_override("font_color", color)
+			box.add_child(l_item)
+			
+	var vp_size := get_viewport_rect().size
+	var target_pos := trigger_button.global_position - Vector2(popup.custom_minimum_size.x + 16, 20)
+	target_pos.x = clampf(target_pos.x, 16.0, vp_size.x - popup.custom_minimum_size.x - 16.0)
+	target_pos.y = clampf(target_pos.y, 16.0, vp_size.y - 200.0)
+	popup.global_position = target_pos
+
+
+func _close_hardware_popup() -> void:
+	if _hardware_popup != null and is_instance_valid(_hardware_popup):
+		_hardware_popup.queue_free()
+	_hardware_popup = null
+
+
+func _parse_skill_line(line: String) -> Dictionary:
+	var clean_line := line.strip_edges()
+	var level := 0
+	var name := clean_line
+	
+	var regex := RegEx.new()
+	var err := regex.compile("^\\s*(.+?)\\s*[:\\-]?\\s*(\\d+)(?:\\s*/\\s*\\d+)?\\s*$")
+	if err == OK:
+		var result := regex.search(clean_line)
+		if result:
+			name = result.get_string(1).strip_edges().capitalize()
+			level = int(result.get_string(2))
+		else:
+			var parts := clean_line.split(":")
+			if parts.size() >= 2:
+				name = parts[0].strip_edges().capitalize()
+				level = int(parts[1].strip_edges())
+	return {"name": name, "level": clampi(level, 0, 10)}
+
+
+func _add_stat_bar_row(parent: Control, stat_name: String, level: int) -> void:
+	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parent.add_child(row)
+	
+	var label := Label.new()
+	label.text = stat_name
+	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(label)
+	
+	var num_label := Label.new()
+	num_label.text = "%d/10" % level
+	num_label.add_theme_font_size_override("font_size", 10)
+	num_label.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	num_label.custom_minimum_size = Vector2(32, 0)
+	num_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(num_label)
+	
+	var bar_container := HBoxContainer.new()
+	bar_container.add_theme_constant_override("separation", 2)
+	row.add_child(bar_container)
+	
+	for i in range(1, 11):
+		var pip := ColorRect.new()
+		pip.custom_minimum_size = Vector2(5, 10)
+		if i <= level:
+			pip.color = COLOR_ACCENT_AMBER if level >= 8 else COLOR_ACCENT_CYAN
+		else:
+			pip.color = Color(0.12, 0.14, 0.16, 0.7)
+		bar_container.add_child(pip)
+
+
 func _add_parts_condition_grid(parent: Control, worker: Worker) -> void:
-	_add_section_label(parent, "part condition")
+	_add_section_header(parent, "Part Condition", COLOR_ACCENT_CYAN)
 	var entries: Array[Dictionary] = worker.part_condition_entries()
 	for entry in entries:
 		var ratio: float = clampf(float(entry.get("ratio", 1.0)), 0.0, 1.0)
@@ -1606,7 +1766,7 @@ func _add_parts_condition_grid(parent: Control, worker: Worker) -> void:
 func _add_part_condition_cell(parent: Control, part_name: String, slot_label: String, pct: int, ratio: float, color: Color) -> void:
 	var cell := VBoxContainer.new()
 	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cell.add_theme_constant_override("separation", 1)
+	cell.add_theme_constant_override("separation", 2)
 	parent.add_child(cell)
 
 	var row := HBoxContainer.new()
@@ -1639,7 +1799,7 @@ func _add_part_condition_cell(parent: Control, part_name: String, slot_label: St
 	bar.max_value = 1.0
 	bar.value = ratio
 	bar.show_percentage = false
-	bar.custom_minimum_size = Vector2(0, 4)
+	bar.custom_minimum_size = Vector2(0, 5)
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.08, 0.09, 0.10, 0.95)
 	bg.corner_radius_top_left = 2
@@ -1655,6 +1815,10 @@ func _add_part_condition_cell(parent: Control, part_name: String, slot_label: St
 	bar.add_theme_stylebox_override("background", bg)
 	bar.add_theme_stylebox_override("fill", fg)
 	cell.add_child(bar)
+
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0, 2)
+	cell.add_child(spacer)
 
 
 func _build_structure_card() -> void:
@@ -1693,7 +1857,7 @@ func _build_structure_card() -> void:
 
 
 func _add_fabrication_controls(parent: Control) -> void:
-	_add_section_label(parent, "craft orders")
+	_add_section_header(parent, "craft orders", COLOR_ACCENT_AMBER)
 	for object_kind in Item.craftable_object_kinds():
 		var button := Button.new()
 		button.text = "Make " + Item.kind_name(object_kind)
@@ -1759,7 +1923,7 @@ func _build_stockpile_card() -> void:
 	if counts.is_empty():
 		_add_card_line(card, "resources", "empty", COLOR_TEXT_MUTED)
 		return
-	_add_section_label(card, "resources")
+	_add_section_header(card, "resources", COLOR_ACCENT_CYAN)
 	for kind in _tracked_item_kinds():
 		var count: int = int(counts.get(kind, 0))
 		if count <= 0:
@@ -1837,7 +2001,7 @@ func _add_meter(parent: Control, label_text: String, ratio: float, fill: Color) 
 	row.add_theme_constant_override("separation", 6)
 	parent.add_child(row)
 	var label := Label.new()
-	label.text = label_text
+	label.text = label_text.capitalize()
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1855,30 +2019,24 @@ func _add_meter(parent: Control, label_text: String, ratio: float, fill: Color) 
 	bar.custom_minimum_size = Vector2(0, 6)
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.08, 0.09, 0.10, 0.95)
-	bg.corner_radius_top_left = 2
-	bg.corner_radius_top_right = 2
-	bg.corner_radius_bottom_left = 2
-	bg.corner_radius_bottom_right = 2
+	bg.corner_radius_top_left = 3
+	bg.corner_radius_top_right = 3
+	bg.corner_radius_bottom_left = 3
+	bg.corner_radius_bottom_right = 3
 	var fg := StyleBoxFlat.new()
 	fg.bg_color = fill
-	fg.corner_radius_top_left = 2
-	fg.corner_radius_top_right = 2
-	fg.corner_radius_bottom_left = 2
-	fg.corner_radius_bottom_right = 2
+	fg.corner_radius_top_left = 3
+	fg.corner_radius_top_right = 3
+	fg.corner_radius_bottom_left = 3
+	fg.corner_radius_bottom_right = 3
 	bar.add_theme_stylebox_override("background", bg)
 	bar.add_theme_stylebox_override("fill", fg)
 	parent.add_child(bar)
 
 
 func _add_history_panel(parent: Control, worker: Worker) -> void:
-	var title := Label.new()
-	title.text = "THOUGHT HISTORY"
-	title.add_theme_font_size_override("font_size", 11)
-	title.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
-	parent.add_child(title)
+	_add_section_header(parent, "Thought History", COLOR_ACCENT_AMBER)
 
-	# Wrap the log in its own panel chrome so it reads as a discrete section at the
-	# bottom of the card rather than blending into the stats above it.
 	var log_panel := PanelContainer.new()
 	log_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_panel.add_theme_stylebox_override("panel", _panel_textured_style("history_log", Color(0.05, 0.065, 0.08, 0.95), Color(0.24, 0.30, 0.33, 0.55), 4.0, false))
@@ -1892,7 +2050,7 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 	log_panel.add_child(inner)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0.0, HISTORY_VISIBLE_ROWS * 16)
+	scroll.custom_minimum_size = Vector2(0.0, 220.0)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -1921,7 +2079,6 @@ func _add_history_panel(parent: Control, worker: Worker) -> void:
 		box.add_child(label)
 
 
-## Subtle horizontal divider used to isolate sections inside the worker card.
 func _hsep_style() -> StyleBoxLine:
 	var line := StyleBoxLine.new()
 	line.color = Color(0.30, 0.42, 0.46, 0.45)
@@ -2009,9 +2166,6 @@ func _focus_worker(worker: Worker) -> void:
 func _on_worker_entered_combat(worker: Node) -> void:
 	if worker == null or not is_instance_valid(worker):
 		return
-	# Only pause when this is a *fresh* engagement. As long as another worker
-	# was already fighting, the player has already been alerted; re-pausing
-	# on every individual attack thereafter was the original bug.
 	var any_in_combat: bool = not _workers_in_combat.is_empty()
 	_workers_in_combat[worker] = true
 	if not any_in_combat:
@@ -2027,8 +2181,6 @@ func _refresh_combat_portraits() -> void:
 		if worker == null or not is_instance_valid(worker) or worker.state_label() != "fighting":
 			_stop_combat_blink(worker_key as Node)
 			_workers_in_combat.erase(worker_key)
-	# Drop any tracked worker that has died or is no longer in the tree so the
-	# next combat is treated as a fresh engagement.
 	for w_key in _workers_in_combat.keys():
 		var w := w_key as Worker
 		if w == null or not is_instance_valid(w) or w.state_label() != "fighting":
@@ -2112,8 +2264,6 @@ func _status_label(label_text: String) -> Label:
 	return label
 
 
-# Same look as `_badge_container` but built on a Button so the badge becomes
-# clickable. Used by the jobs badge to open a dropdown listing pending jobs.
 func _jobs_badge_button(initial_text: String) -> Button:
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_NONE
@@ -2165,7 +2315,6 @@ func _toggle_jobs_popup() -> void:
 	if _jobs_popup.visible:
 		_jobs_popup.visible = false
 		return
-	# Close any other popups so the screen doesn't stack overlapping dropdowns.
 	for other_popup in _resource_popups.values():
 		var p := other_popup as PanelContainer
 		if p != null:
@@ -2189,7 +2338,6 @@ func _refresh_jobs_popup() -> void:
 		empty.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
 		_jobs_popup_box.add_child(empty)
 		return
-	# Snapshot the list — cancelling mutates pending mid-iteration.
 	var jobs: Array[Job] = []
 	for job in _job_board.pending:
 		jobs.append(job)
@@ -2236,11 +2384,9 @@ func _on_cancel_job(job: Job) -> void:
 	if _job_board == null or job == null:
 		return
 	_job_board.cancel_job(job)
-	# Repopulate to reflect the new pending list.
 	_refresh_jobs_popup()
 
 
-# Wraps a label in a neat panel "badge" for consistent visual separation
 func _badge_container(content_label: Label) -> PanelContainer:
 	var badge := PanelContainer.new()
 	badge.add_theme_stylebox_override("panel", _panel_textured_style(
@@ -2279,29 +2425,22 @@ func _panel_style(fill: Color, border: Color, radius: float, with_shadow: bool =
 	style.bg_color = fill
 	style.border_color = border
 	style.set_border_width_all(1)
+	style.border_width_top = 2
+	style.border_width_bottom = 2
 	style.corner_radius_top_left = int(radius)
 	style.corner_radius_top_right = int(radius)
 	style.corner_radius_bottom_left = int(radius)
 	style.corner_radius_bottom_right = int(radius)
 
 	if with_shadow:
-		style.shadow_color = Color(0, 0, 0, 0.38)
-		style.shadow_size = 8
-		style.shadow_offset = Vector2(0, 4)
+		style.shadow_color = Color(0, 0, 0, 0.42)
+		style.shadow_size = 10
+		style.shadow_offset = Vector2(0, 5)
 	return style
 
 
-## Returns a `StyleBoxTexture` backed by the placeholder PNG at
-## `resources/ui/panels/<panel_name>.png` so dropping in real art there
-## immediately retextures the panel. Falls back to the legacy
-## `_panel_style` flat fill if the texture is missing on disk.
-##
-## See `resources/ui/panels/README.md` for the 9-slice contract (48x48
-## tile, 16 px corners).
 func _panel_textured_style(panel_name: String, fallback_fill: Color, fallback_border: Color, radius: float, with_shadow: bool = false) -> StyleBox:
 	var texture: Texture2D = _panel_texture(panel_name)
-	# If a panel doesn't have its own PNG yet, reuse selection_panel.png as a
-	# project-wide default so we stop drawing UI chrome from code.
 	if texture == null:
 		texture = _panel_texture("selection_panel")
 	if texture == null:
@@ -2336,18 +2475,49 @@ func _button_style(fill: Color, border: Color) -> StyleBoxFlat:
 	return style
 
 
-func _tab_style(fill: Color, bottom_border_color: Color) -> StyleBoxFlat:
+func _category_button_style(category_color: Color, bg_color: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg_color
+	style.border_color = category_color * Color(1.0, 1.0, 1.0, 0.65)
+	style.set_border_width_all(0)
+	style.border_width_left = 3
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 10.0
+	style.content_margin_right = 8.0
+	return style
+
+
+func _command_button_style(bg_color: Color, border_color: Color, border_left_width: int = 0) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg_color
+	style.border_color = border_color
+	style.set_border_width_all(1)
+	if border_left_width > 0:
+		style.border_width_left = border_left_width
+	style.corner_radius_top_left = 4
+	style.corner_radius_top_right = 4
+	style.corner_radius_bottom_left = 4
+	style.corner_radius_bottom_right = 4
+	style.content_margin_left = 8.0
+	style.content_margin_right = 8.0
+	return style
+
+
+func _tab_style(fill: Color, accent_color: Color, is_active: bool = false) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
 	style.bg_color = fill
 	style.corner_radius_top_left = 4
 	style.corner_radius_top_right = 4
-
-	# Tab style uses a dynamic accent line on the bottom edge to show focus/selection
-	if bottom_border_color != Color.TRANSPARENT:
-		style.set_border_width_all(0)
-		style.border_width_bottom = 2
-		style.border_color = bottom_border_color
-
 	style.content_margin_left = 12.0
 	style.content_margin_right = 12.0
+	
+	if is_active and accent_color != Color.TRANSPARENT:
+		style.set_border_width_all(0)
+		style.border_width_bottom = 3
+		style.border_color = accent_color
+	elif accent_color != Color.TRANSPARENT:
+		style.set_border_width_all(0)
+		style.border_width_bottom = 1
+		style.border_color = accent_color * Color(1, 1, 1, 0.3)
 	return style

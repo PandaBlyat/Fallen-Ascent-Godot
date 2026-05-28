@@ -164,6 +164,9 @@ const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -34.0)
 const BLOCKED_ACTION_SECONDS: float = 2.0
 const CROWD_FRAME_META: StringName = &"fa_crowd_frame"
 const CROWD_CELLS_META: StringName = &"fa_crowd_cells"
+const CROWD_LAST_TICK_META: StringName = &"fa_crowd_last_tick"
+const CROWD_CACHE_LIFETIME_MS: int = 150
+const CROWD_TICK_INTERVAL: float = 0.18
 const WISDOM_PER_SEC: float = 0.28
 const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
 const ASSIGNED_DOCK_REST_MULTIPLIER: float = 1.6
@@ -187,6 +190,15 @@ const AI_DECISION_JITTER_SECONDS: float = 0.08
 const ROUTE_CACHE_MSEC: int = 450
 const STUCK_WATCHDOG_SECONDS: float = 3.0
 const STUCK_PROGRESS_EPSILON_PX: float = 0.5
+
+const MOVING_STATES: Array[int] = [
+	State.MOVING_TO_WORK, State.MOVING_TO_PICKUP, State.CARRYING,
+	State.MOVING_TO_DROP, State.MOVING_TO_BUILD_SITE, State.MOVING_TO_CRAFT_SITE,
+	State.MOVING_FREEFORM, State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING,
+	State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE,
+	State.MOVING_TO_MEDITATE, State.MOVING_TO_SAVE, State.CARRYING_WORKER,
+	State.MOVING_TO_DELIVER
+]
 
 var _personality: int = Personality.DUTIFUL
 ## Display name override from an embark loadout (falls back to the node name).
@@ -221,6 +233,8 @@ var _charge_target: Vector2i = Vector2i.ZERO
 var _has_charge_reservation: bool = false
 var _manual_charging: bool = false
 var _action_text: String = ""
+var _action_text_size := Vector2.ZERO
+var _name_text_size := Vector2.ZERO
 var _blocked_action_text: String = ""
 var _blocked_action_timer: float = 0.0
 var _condition: float = CONDITION_MAX
@@ -257,6 +271,7 @@ var _knockback_vec: Vector2 = Vector2.ZERO
 var _stun_remaining: float = 0.0
 var _dead: bool = false
 var _crowd_slow_remaining: float = 0.0
+var _crowd_tick_timer: float = 0.0
 var _door_slow_remaining: float = 0.0
 var _last_door_slow_cell: Vector2i = Pathfinder.UNREACHABLE
 var _crowd_contacts: Dictionary = {}
@@ -341,7 +356,9 @@ func _ready() -> void:
 	_entity_atlas = load(ENTITY_ATLAS_PATH) as Texture2D
 	_highlighter_atlas = load(HIGHLIGHTER_ATLAS_PATH) as Texture2D
 	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
+	_crowd_tick_timer = randf_range(0.0, CROWD_TICK_INTERVAL)
 	_personality = randi() % PERSONALITY_LABELS.size()
+	_update_name_text_size()
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
 	stats.hp = COMBAT_HP_MAX
@@ -463,23 +480,7 @@ func _check_condition_alerts() -> void:
 
 
 func _is_moving_sound_state(s: int) -> bool:
-	return s == State.MOVING_TO_WORK \
-		or s == State.MOVING_TO_PICKUP \
-		or s == State.CARRYING \
-		or s == State.MOVING_TO_DROP \
-		or s == State.MOVING_TO_BUILD_SITE \
-		or s == State.MOVING_TO_CRAFT_SITE \
-		or s == State.MOVING_FREEFORM \
-		or s == State.MOVING_TO_CHARGE \
-		or s == State.ROAMING \
-		or s == State.WANDERING \
-		or s == State.MOVING_TO_REST \
-		or s == State.MOVING_TO_REPAIR \
-		or s == State.MOVING_TO_SOCIALIZE \
-		or s == State.MOVING_TO_MEDITATE \
-		or s == State.MOVING_TO_SAVE \
-		or s == State.CARRYING_WORKER \
-		or s == State.MOVING_TO_DELIVER
+	return s in MOVING_STATES
 
 
 func is_alive() -> bool:
@@ -705,6 +706,7 @@ func apply_loadout(loadout: WorkerLoadout) -> void:
 	_skills = loadout.skills.duplicate()
 	_init_part_conditions()
 	_apply_derived_stats(loadout.derive())
+	_update_name_text_size()
 
 
 ## Seed full condition for every equipped part slot. Called when a loadout is
@@ -832,6 +834,7 @@ func restore_save(data: Dictionary) -> void:
 	_history_index = int(data.get("history_index", _action_history.size()))
 	_state = State.IDLE
 	_idle_cooldown = 0.0
+	_update_name_text_size()
 	queue_redraw()
 
 
@@ -1093,10 +1096,7 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 	# If the changed tile lies on the remaining path, re-plan.
 	for i in range(_path_index, _path.size()):
 		var p: Vector2 = _path[i]
-		var g := Vector2i(
-			int(floor(p.x / Chunk.TILE_PIXELS)),
-			int(floor(p.y / Chunk.TILE_PIXELS)),
-		)
+		var g := Vector2i((p / Chunk.TILE_PIXELS).floor())
 		if g == grid:
 			_replan()
 			return
@@ -1148,8 +1148,19 @@ func _process(delta: float) -> void:
 		_door_slow_remaining = maxf(0.0, _door_slow_remaining - delta)
 	if _teleport_cooldown > 0.0:
 		_teleport_cooldown = maxf(0.0, _teleport_cooldown - delta)
+		
+	# Throttled crowding tick
+	_crowd_tick_timer -= delta
+	if _crowd_tick_timer <= 0.0:
+		_crowd_tick_timer = CROWD_TICK_INTERVAL
+		if _is_moving_state():
+			_update_crowding_contacts()
+
 	if _blocked_action_timer > 0.0:
 		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
+		if _blocked_action_timer == 0.0:
+			_refresh_action_text()
+			
 	if _no_repair_bench_complaint_timer > 0.0:
 		_no_repair_bench_complaint_timer = maxf(0.0, _no_repair_bench_complaint_timer - delta)
 	if _research_urge_cooldown > 0.0:
@@ -1377,12 +1388,13 @@ func _process(delta: float) -> void:
 					_drop_off_carried_worker()
 	_check_teleporter()
 	_update_stuck_watchdog(delta)
-	# Action text only depends on state/job/blocked timer — skip the match
-	# statement allocation entirely when nothing relevant changed.
-	if _state != _last_action_state or _job != _last_action_job or _blocked_action_timer > 0.0:
+	
+	# Action text updates strictly on state/job transitions
+	if _state != _last_action_state or _job != _last_action_job:
 		_last_action_state = _state
 		_last_action_job = _job
 		_refresh_action_text()
+		
 	if _state != _last_sound_state or _job != _last_sound_job:
 		_last_sound_state = _state
 		_last_sound_job = _job
@@ -1520,7 +1532,7 @@ func _pickup_downed_worker() -> void:
 	_carried_worker.carried_by = self
 	_carried_worker.visible = false
 	_carried_worker.position = position
-	_state = State.CARRYING_WORKER # Set carrying state. Let _process coordinate delivering path next frame.
+	_state = State.CARRYING_WORKER
 
 
 func _drop_off_carried_worker() -> void:
@@ -1531,7 +1543,7 @@ func _drop_off_carried_worker() -> void:
 	_idle_cooldown = 0.0
 	if carried == null or not is_instance_valid(carried):
 		return
-	carried.carried_by = null # Deregister carrying
+	carried.carried_by = null
 	carried.position = position
 	carried.visible = true
 	
@@ -1551,7 +1563,7 @@ func _drop_off_carried_worker() -> void:
 
 func _abort_save() -> void:
 	if _carried_worker != null and is_instance_valid(_carried_worker):
-		_carried_worker.carried_by = null # Deregister carrying
+		_carried_worker.carried_by = null
 		_carried_worker.visible = true
 		_carried_worker.position = position
 	_carried_worker = null
@@ -1561,7 +1573,6 @@ func _abort_save() -> void:
 	_state = State.IDLE
 	_idle_cooldown = 0.0
 	_remember("save aborted")
-
 
 
 ## Restore condition / energy after being rescued. Called by the carrier.
@@ -1644,9 +1655,6 @@ func _try_claim_job() -> bool:
 	
 	# Keep pulling jobs until one starts successfully. Failed claims are held
 	# until this tick ends so the board can offer another candidate.
-	# Bounded attempts per tick: each iteration runs a board scan + a pathfind,
-	# so a high cap multiplies cost when hundreds of jobs exist. Failed jobs are
-	# blocked board-side (see _mark_job_failed), so a few attempts suffice.
 	var safety_limit := 6
 	while safety_limit > 0:
 		safety_limit -= 1
@@ -1689,7 +1697,6 @@ func _try_claim_job() -> bool:
 	for f_job in claimed_this_tick:
 		_job_board.release(f_job)
 	return false
-
 
 
 func _try_start_next_direct_order() -> bool:
@@ -1784,8 +1791,7 @@ func _choose_idle_behavior() -> void:
 			_remember("Can't repair myself, no repair bench")
 			_no_repair_bench_complaint_timer = 18.0
 
-	# Prioritize recharging if energy is low, rather than letting it compete 
-	# with other low-priority idle behaviors in the shuffled array.
+	# Prioritize recharging if energy is low
 	if _energy <= ENERGY_LOW:
 		if _idle_try_top_off_charge():
 			return
@@ -1801,17 +1807,12 @@ func _choose_idle_behavior() -> void:
 			_remember("decided to research")
 			return
 	# Idle bots cycle through low-priority chores so they look alive even when
-	# the job board is empty. We try the rolled behavior, then fall through to
-	# alternative chores so a single failure (no rust nearby, no chat partner
-	# in range, etc.) doesn't freeze the bot for seconds.
+	# the job board is empty.
 	var behaviors: Array[Callable] = _idle_behavior_order()
 	for behavior in behaviors:
 		if behavior.call() as bool:
 			return
-	# Last-resort wander: pick any walkable cell nearby so a worker in a
-	# sparse area (no rust/grass/explored frontier/chat partners/structures)
-	# still moves around instead of freezing in place. This is the
-	# safety-net that guarantees idle ticks always have *something* to do.
+	# Last-resort wander
 	if _begin_short_wander():
 		return
 	_idle_cooldown = randf_range(0.4, IDLE_FALLBACK_RETRY_SECONDS)
@@ -1962,8 +1963,7 @@ func _random_idle_target(frontier: bool) -> Vector2i:
 			continue
 		if not _chunk_manager.is_walkable(candidate):
 			continue
-		# Wandering is leisure — never pick a cell that bites back. Acid is
-		# walkable but always damaging; let workers idle elsewhere.
+		# Wandering is leisure — never pick a cell that bites back.
 		if _is_acid_tile_at(candidate):
 			continue
 		if candidate == current_grid():
@@ -2650,7 +2650,6 @@ func _pickup_for_build() -> void:
 	if src_parent is StockpileZone:
 		(src_parent as StockpileZone).take(item.get_grid())
 	# Carry only one unit; if the stack has more, leave the remainder loose.
-	# The StockpileManager will re-haul it if a slot is available.
 	if item.count > 1:
 		var remainder: Item = ITEM_SCRIPT.new() as Item
 		_items_root.add_child(remainder)
@@ -2879,9 +2878,6 @@ func _drop_in_place() -> void:
 		_carried.visible = true
 		_carried.set_grid(here)
 		_carried.reserved_by = null
-		# Briefly bar re-hauling so a failed delivery (unreachable / full
-		# stockpile) doesn't immediately re-post a haul and loop the worker
-		# through pick-up/drop on the same item.
 		_carried.haul_blocked_until_msec = Time.get_ticks_msec() + StockpileManager.HAUL_RETRY_COOLDOWN_MS
 		dropped = _carried
 	_carried = null
@@ -2954,7 +2950,6 @@ func _complete_scrape_biomass(scrape: Job) -> void:
 
 
 func _complete_build(build: BuildJob) -> void:
-	# Convert the completed blueprint to terrain or static object.
 	if _carried != null:
 		remove_child(_carried)
 		_carried.queue_free()
@@ -3051,8 +3046,6 @@ func _note_missing_operation_material(job: OperateStructureJob) -> void:
 
 
 func _abandon_job(release_claim: bool = true) -> void:
-	# Used when the job was cancelled or invalid mid-flight. Drop anything
-	# carried in place so we don't lose the item.
 	_release_charge_reservation()
 	_clear_job_reservations()
 	var dropped: Item = null
@@ -3065,7 +3058,7 @@ func _abandon_job(release_claim: bool = true) -> void:
 		_carried.set_grid(here)
 		_carried.reserved_by = null
 		dropped = _carried
-	_carried = null # Explicitly clear the reference
+	_carried = null
 	
 	var rematch_item: Item = null
 	if release_claim and _job != null and _job_board != null and _job_board.is_active(_job):
@@ -3145,6 +3138,7 @@ func _clear_resume() -> void:
 func _show_blocked_action(text: String) -> void:
 	_blocked_action_text = text
 	_blocked_action_timer = BLOCKED_ACTION_SECONDS
+	_refresh_action_text()
 	queue_redraw()
 
 
@@ -3164,10 +3158,7 @@ func _replan() -> void:
 				or _state == State.MOVING_TO_MEDITATE) and _path.size() > 0:
 			# Try to re-path to the final waypoint.
 			var dest_pixel: Vector2 = _path[_path.size() - 1]
-			var dest: Vector2i = Vector2i(
-				int(floor(dest_pixel.x / Chunk.TILE_PIXELS)),
-				int(floor(dest_pixel.y / Chunk.TILE_PIXELS)),
-			)
+			var dest := Vector2i((dest_pixel / Chunk.TILE_PIXELS).floor())
 			var p: PackedVector2Array = _find_explored_path(current_grid(), dest)
 			if p.is_empty():
 				_state = State.IDLE
@@ -3257,23 +3248,7 @@ func _update_stuck_watchdog(delta: float) -> void:
 
 
 func _is_moving_state() -> bool:
-	return _state == State.MOVING_TO_WORK \
-		or _state == State.MOVING_TO_PICKUP \
-		or _state == State.CARRYING \
-		or _state == State.MOVING_TO_DROP \
-		or _state == State.MOVING_TO_BUILD_SITE \
-		or _state == State.MOVING_TO_CRAFT_SITE \
-		or _state == State.MOVING_FREEFORM \
-		or _state == State.MOVING_TO_CHARGE \
-		or _state == State.ROAMING \
-		or _state == State.WANDERING \
-		or _state == State.MOVING_TO_REST \
-		or _state == State.MOVING_TO_REPAIR \
-		or _state == State.MOVING_TO_SOCIALIZE \
-		or _state == State.MOVING_TO_MEDITATE \
-		or _state == State.MOVING_TO_SAVE \
-		or _state == State.CARRYING_WORKER \
-		or _state == State.MOVING_TO_DELIVER
+	return _state in MOVING_STATES
 
 
 func _recover_stuck_movement() -> void:
@@ -3426,7 +3401,6 @@ func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 	if path.is_empty() and current_grid() != target:
 		show_order_failed("No path")
 		return false
-	# Abort whatever we were doing only after destination is valid.
 	if clear_queue:
 		_direct_order_queue.clear()
 	_abandon_job()
@@ -3439,9 +3413,6 @@ func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 
 
 func command_mine(target: Vector2i, clear_queue: bool = true) -> bool:
-	# Add a mine designation (if needed) and immediately take it for ourselves.
-	# If something else already had this job claimed, cancelling drops their
-	# claim cleanly via the job_cancelled signal.
 	if not _is_mineable_target(target):
 		return false
 	if clear_queue:
@@ -3618,12 +3589,15 @@ func _advance_path(delta: float) -> bool:
 			step -= dist
 			_path_index += 1
 			if _chunk_manager != null and _chunk_manager.is_teleporter(target_grid):
-				_update_crowding_contacts()
 				return false
 		else:
 			position += to_target / dist * step
 			step = 0.0
-	_update_crowding_contacts()
+			
+	# Redraw on movement only if selection circles or order highlighters need to follow the worker
+	if _selected or _highlight_cell() >= 0:
+		queue_redraw()
+		
 	return _path_index >= _path.size()
 
 
@@ -3710,15 +3684,20 @@ func _energy_speed_multiplier() -> float:
 func _set_facing_from_vector(delta_pos: Vector2) -> void:
 	var ax: float = absf(delta_pos.x)
 	var ay: float = absf(delta_pos.y)
+	var next_facing := _facing
+	
 	if ax > ay * 2.0:
-		_facing = FACING_EAST if delta_pos.x > 0.0 else FACING_WEST
+		next_facing = FACING_EAST if delta_pos.x > 0.0 else FACING_WEST
 	elif ay > ax * 2.0:
-		_facing = FACING_SOUTH if delta_pos.y > 0.0 else FACING_NORTH
+		next_facing = FACING_SOUTH if delta_pos.y > 0.0 else FACING_NORTH
 	elif delta_pos.x > 0.0:
-		_facing = FACING_SOUTH_EAST if delta_pos.y > 0.0 else FACING_NORTH_EAST
+		next_facing = FACING_SOUTH_EAST if delta_pos.y > 0.0 else FACING_NORTH_EAST
 	else:
-		_facing = FACING_SOUTH_WEST if delta_pos.y > 0.0 else FACING_NORTH_WEST
-	queue_redraw()
+		next_facing = FACING_SOUTH_WEST if delta_pos.y > 0.0 else FACING_NORTH_WEST
+		
+	if _facing != next_facing:
+		_facing = next_facing
+		queue_redraw()
 
 
 func apply_crowding_slow() -> void:
@@ -3749,9 +3728,11 @@ func _update_crowding_contacts() -> void:
 
 
 func _crowd_cells_for(parent_node: Node) -> Dictionary:
-	var frame: int = Engine.get_process_frames()
-	if int(parent_node.get_meta(CROWD_FRAME_META, -1)) == frame:
+	var now := Time.get_ticks_msec()
+	var last_tick: int = int(parent_node.get_meta(CROWD_LAST_TICK_META, 0))
+	if now - last_tick < CROWD_CACHE_LIFETIME_MS:
 		return parent_node.get_meta(CROWD_CELLS_META, {}) as Dictionary
+		
 	var cells: Dictionary = {}
 	for child in parent_node.get_children():
 		var worker := child as Worker
@@ -3761,7 +3742,8 @@ func _crowd_cells_for(parent_node: Node) -> Dictionary:
 		var bucket: Array = cells.get(grid, []) as Array
 		bucket.append(worker)
 		cells[grid] = bucket
-	parent_node.set_meta(CROWD_FRAME_META, frame)
+		
+	parent_node.set_meta(CROWD_LAST_TICK_META, now)
 	parent_node.set_meta(CROWD_CELLS_META, cells)
 	return cells
 
@@ -3808,7 +3790,6 @@ func _update_body_stats(delta: float) -> void:
 		State.RESTING:
 			pass
 		State.MEDITATING:
-			# Meditation slowly lowers mental exhaustion as a side benefit.
 			_mental_tiredness = maxf(0.0, _mental_tiredness - REST_RECOVERY_PER_SEC * 0.4 * delta)
 		_:
 			_mental_tiredness = minf(MENTAL_TIRED_MAX, _mental_tiredness + MENTAL_IDLE_RISE_PER_SEC * delta)
@@ -3830,8 +3811,6 @@ func _update_mood(delta: float) -> void:
 	if _needs_refresh_timer <= 0.0:
 		_needs_refresh_timer = NEEDS_REFRESH_SECONDS
 		_refresh_unsatisfied_needs()
-	# Mood drift: recover toward baseline, but suffer per unsatisfied need.
-	# Baseline + recovery speed are personality/parts-derived (see WorkerLoadout).
 	var target: float = _mood_baseline
 	if _social < 25.0:
 		target -= 8.0
@@ -3844,7 +3823,6 @@ func _update_mood(delta: float) -> void:
 		_mood = minf(MOOD_MAX, _mood + MOOD_RECOVERY_PER_SEC * _mood_recovery_mult * delta)
 	if penalty > 0.0:
 		_mood = maxf(0.0, _mood - penalty * delta)
-	# Hard ceiling clamp.
 	_mood = clampf(_mood, 0.0, MOOD_MAX)
 
 
@@ -3988,6 +3966,7 @@ func _begin_auto_charge() -> bool:
 		
 	return false
 
+
 ## Picks the closest outlet reachable through fog-explored cells only. Bots
 ## must not magically know the path through undiscovered areas — if the
 ## only route to an outlet crosses fog, that outlet is hidden from auto and
@@ -4043,8 +4022,6 @@ func _begin_charge_via_teleporter() -> bool:
 	_manual_charging = false
 	_path = best_path
 	_path_index = 0
-	# Treat the walk-to-teleporter trip as a recharge attempt so the HUD
-	# shows the right action text and idle pacing kicks in after the hop.
 	_state = State.MOVING_TO_CHARGE
 	_charge_target = Vector2i.ZERO
 	_has_charge_reservation = false
@@ -4153,15 +4130,21 @@ func _refresh_action_text() -> void:
 	if _action_text == next_text:
 		return
 	_action_text = next_text
+	
+	if ACTION_FONT != null:
+		_action_text_size = ACTION_FONT.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
+		
 	if not next_text.is_empty():
 		_remember(next_text.to_lower())
 	queue_redraw()
 
 
+func _update_name_text_size() -> void:
+	if ACTION_FONT != null:
+		_name_text_size = ACTION_FONT.get_string_size(display_name(), HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_FONT_SIZE)
+
+
 func _highlight_cell() -> int:
-	# Green for all player-issued orders (move, repair, build, recharge).
-	# Red for destructive orders (mine, scrape, salvage, attack).
-	# Returns -1 for autonomous AI behaviors (wandering, auto-charge, etc.)
 	match _state:
 		State.FIGHTING:
 			return HIGHLIGHT_CELL_RED
@@ -4200,9 +4183,6 @@ func _order_highlight_world_target() -> Vector2:
 
 func _draw() -> void:
 	_draw_action_bubble()
-	# Draw the 32x32 order highlight on the target tile (move destination, charge
-	# / repair point, or attack target) so it reads as a marker on the world,
-	# not hidden underneath the worker sprite.
 	if _highlighter_atlas != null:
 		var cell: int = _highlight_cell()
 		if cell >= 0:
@@ -4214,12 +4194,10 @@ func _draw() -> void:
 				src,
 			)
 	if _selected:
-		draw_circle(Vector2.ZERO, BODY_RADIUS + 3.0, Color(0, 0, 0, 0))
 		draw_arc(Vector2.ZERO, BODY_RADIUS + 3.0, 0.0, TAU, 24, SELECTION_COLOR, 1.0)
 	# Rebooting / downed bots get a dim red halo so the player can spot them
 	# from across the colony and right-click a save order.
 	var downed: bool = _state == State.REBOOTING and not _dead
-	
 	
 	if downed:
 		var pulse: float = 0.55 + 0.45 * sin(Time.get_ticks_msec() * 0.004)
@@ -4266,7 +4244,7 @@ func _draw_action_bubble() -> void:
 	)
 	var top_y: float = anchor.y
 	if not _action_text.is_empty():
-		var text_size := font.get_string_size(_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE)
+		var text_size := _action_text_size
 		var pad := Vector2(4, 3)
 		var origin := Vector2(
 			roundf(anchor.x - text_size.x * 0.5 - pad.x),
@@ -4280,7 +4258,7 @@ func _draw_action_bubble() -> void:
 		top_y = origin.y
 	var name_text: String = display_name()
 	if not name_text.is_empty():
-		var name_size := font.get_string_size(name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, NAME_FONT_SIZE)
+		var name_size := _name_text_size
 		var name_pos := Vector2(
 			roundf(anchor.x - name_size.x * 0.5),
 			roundf(top_y - name_size.y - 3.0),

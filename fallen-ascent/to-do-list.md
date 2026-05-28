@@ -116,3 +116,42 @@ Format: `[area] short description — why it matters / first hint at how`.
       nearest non-empty chunk cluster instead of every job. This is a big
       win but still O(jobs nearby); a per-chunk "closest claimable job"
       cache would scale further for thousand-tile mining orders.
+
+## Move / dismantle / debris / floor / forbid / ore-cluster session
+
+- [x] **Move button for placed structures.** Workshop/object info panel now has
+      a "Move" button. Clicking it enters `RELOCATE` designator mode; the player
+      picks a new tile; old structure removed instantly (no refund), new
+      `BuildJob` queued at 50% pre-filled ingredients.
+- [x] **Workshop dismantling as worker job.** Deleting a structure queues a
+      `DismantleJob` (toggle second click to cancel). Worker walks to the
+      structure and works for 4 s, then calls `complete_dismantle_at` which
+      removes it and refunds 50% ingredients.
+- [x] **Debris tile + two new techs.** `TILE_DEBRIS` already in TerrainGenerator;
+      `TechDatabase.DEBRIS_CLEARANCE` (unlocks mining debris) and
+      `TechDatabase.BASIC_FLOORING` (unlocks building floor tiles) added.
+      `can_place_blueprint` gates WALL-on-debris behind DEBRIS_CLEARANCE.
+- [x] **Ore wall clusters.** `_service_core_pass` now expands each RICH_WALL
+      seed into a cluster of 3–4 adjacent TILE_WALL cells using seeded RNG.
+- [x] **Forbidden zone painting.** `ForbiddenZoneManager` Node2D tracks
+      player-painted forbidden cells with a red overlay. Workers skip forbidden
+      cells for idle wander. "Forbid" / "Unforbid" paintbrush buttons in Zones
+      tab. Save/restore included.
+- [x] **Fix workers stuck inside workstations.** `_build_stand_for` finds a
+      walkable neighbor cell that is NOT inside the structure's footprint.
+- [x] **Manual order idle time.** After completing a job from
+      `_direct_order_queue`, workers idle 2–3 s before picking the next
+      automatic job.
+- [x] **Mine unexplored tiles.** Players can designate any tile for mining
+      (fog-of-war included). `_begin_mine` routes through unexplored space when
+      needed. `_complete_mine` cancels silently if tile turns out not minable.
+- [ ] **Cradle-spawned workers and forbidden zones.** Workers spawned by the
+      Replication Cradle currently receive `null` for `_forbidden_zone_manager`
+      and won't respect forbidden zones for idle wander. Fix by adding a
+      `_forbidden_zone_manager` field to `StructureManager` and passing it
+      through `WorkerSpawner.spawn_one_at`.
+- [ ] **FLOOR tile requires BASIC_FLOORING tech at build time.** The tech gate
+      in `ColonyHud` greys the button out, but `can_place_blueprint` and
+      `Worker._complete_build` do not check the tech. Add a
+      `TechManager.is_unlocked(TechDatabase.BASIC_FLOORING)` guard in both
+      so cheats / console-placed floors are also gated.

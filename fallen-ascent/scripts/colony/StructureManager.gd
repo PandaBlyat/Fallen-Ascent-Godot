@@ -143,7 +143,13 @@ func can_place_blueprint(id: int, anchor: Vector2i, rotation: int = 0) -> bool:
 		if tile == TerrainGenerator.TILE_OUTLET:
 			has_outlet = true
 		if id == BuildBlueprint.Id.WALL:
-			if tile != TerrainGenerator.TILE_FLOOR:
+			if tile == TerrainGenerator.TILE_DEBRIS:
+				if not (TechManager != null and TechManager.is_unlocked(TechDatabase.DEBRIS_CLEARANCE)):
+					return false
+			elif tile != TerrainGenerator.TILE_FLOOR:
+				return false
+		elif id == BuildBlueprint.Id.FLOOR:
+			if not _chunk_manager.is_walkable(cell):
 				return false
 		elif id == BuildBlueprint.Id.STORAGE_BIN:
 			if _stockpile_manager == null or _stockpile_manager.zone_at(cell) == null:
@@ -460,6 +466,76 @@ func scrap_structure_at(grid: Vector2i) -> Dictionary:
 	elif rng.randf() < 0.35:
 		rewards[Item.Kind.PLATING] = 1
 	return rewards
+
+
+## Queue a dismantle job for the structure at `grid`. Returns true if a job
+## was created. Workers will walk to the structure, spend time dismantling
+## it, then 50% of its build ingredients drop as loose stacks.
+func request_dismantle_at(grid: Vector2i) -> bool:
+	var structure: Dictionary = structure_at(grid)
+	if structure.is_empty():
+		return false
+	if bool(structure.get("generated", false)):
+		return false
+	if _job_board == null:
+		return false
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	var id: int = int(structure["id"])
+	if _job_board.has_dismantle_at(anchor):
+		_job_board.cancel_dismantle_at(anchor)
+		return true
+	_job_board.add_dismantle_job(anchor, id)
+	return true
+
+
+## Immediately remove a structure and refund 50% of its ingredients (used by
+## the dismantle job completion and the old instant-delete fallback path).
+func complete_dismantle_at(anchor: Vector2i) -> bool:
+	var structure: Dictionary = structure_at(anchor)
+	if structure.is_empty():
+		return false
+	var id: int = int(structure["id"])
+	var cells: Array = structure["cells"] as Array
+	_structures.erase(structure)
+	for raw_cell in cells:
+		var cell: Vector2i = raw_cell as Vector2i
+		_cell_to_structure.erase(cell)
+		if id == BuildBlueprint.Id.CHARGE_PAD:
+			_chunk_manager.set_tile_at(cell, TerrainGenerator.TILE_FLOOR)
+		if id == BuildBlueprint.Id.STORAGE_BIN and _stockpile_manager != null \
+				and _stockpile_manager.has_method("unregister_storage_bin"):
+			_stockpile_manager.call("unregister_storage_bin", cell)
+		EventBus.tile_changed.emit(cell, _chunk_manager.get_tile_at(cell))
+		_mark_delete_overlay(cell)
+	_refund_ingredients(structure, anchor, 0.5)
+	EventBus.structure_built.emit(self)
+	queue_redraw()
+	return true
+
+
+## Remove a structure for relocation without any refund. Returns its id and
+## rotation so the caller can queue a build at the new position.
+func remove_for_relocation(grid: Vector2i) -> Dictionary:
+	var structure: Dictionary = structure_at(grid)
+	if structure.is_empty() or bool(structure.get("generated", false)):
+		return {}
+	var id: int = int(structure["id"])
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	var rot: int = int(structure.get("rotation", 0))
+	var cells: Array = structure["cells"] as Array
+	_structures.erase(structure)
+	for raw_cell in cells:
+		var cell: Vector2i = raw_cell as Vector2i
+		_cell_to_structure.erase(cell)
+		if id == BuildBlueprint.Id.CHARGE_PAD:
+			_chunk_manager.set_tile_at(cell, TerrainGenerator.TILE_FLOOR)
+		if id == BuildBlueprint.Id.STORAGE_BIN and _stockpile_manager != null \
+				and _stockpile_manager.has_method("unregister_storage_bin"):
+			_stockpile_manager.call("unregister_storage_bin", cell)
+		EventBus.tile_changed.emit(cell, _chunk_manager.get_tile_at(cell))
+	EventBus.structure_built.emit(self)
+	queue_redraw()
+	return {"id": id, "rotation": rot, "anchor": anchor}
 
 
 ## Global delete tool target. Removes ANY player-placed structure under
@@ -1096,6 +1172,7 @@ func _status_for(structure: Dictionary) -> Dictionary:
 	return {
 		"id": id,
 		"anchor": structure["anchor"] as Vector2i,
+		"rotation": int(structure.get("rotation", 0)),
 		"name": BuildBlueprint.display_name(id),
 		"description": BuildBlueprint.description(id),
 		"timer": operation_job.progress if operation_job != null else timer,

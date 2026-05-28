@@ -16,6 +16,8 @@ enum Mode {
 	SCRAPE_BIOMASS,
 	STOCKPILE,
 	REMOVE_STOCKPILE,
+	FORBIDDEN_ZONE,
+	REMOVE_FORBIDDEN_ZONE,
 	BUILD_WALL,
 	BUILD_DOOR,
 	BUILD_EXTRACTOR,
@@ -30,6 +32,7 @@ enum Mode {
 	BUILD_SENTIENCE_CRADLE,
 	BUILD_FABRICATION_SPOT,
 	BUILD_FABRICATOR_ADVANCED,
+	BUILD_FLOOR,
 	PLACE_STORAGE_BIN,
 	PLACE_OUTLET_EXTENSION,
 	PLACE_RUDIMENTARY_SENSOR,
@@ -41,6 +44,7 @@ enum Mode {
 	DESIGNATE_WORKSHOP_ROOM,
 	REMOVE_ROOM,
 	DELETE,
+	RELOCATE,
 }
 
 const ZONE_PREVIEW_FILL := Color(0.4, 0.85, 0.5, 0.09)
@@ -52,6 +56,8 @@ const ROOM_PREVIEW_BORDER := Color(0.45, 0.62, 0.98, 0.45)
 const OUTLET_RANGE_COLOR := Color(0.35, 0.78, 1.0, 0.20)
 const DELETE_PREVIEW_FILL := Color(0.95, 0.20, 0.20, 0.18)
 const DELETE_PREVIEW_BORDER := Color(1.0, 0.32, 0.28, 0.85)
+const FORBIDDEN_PREVIEW_FILL := Color(0.85, 0.12, 0.12, 0.18)
+const FORBIDDEN_PREVIEW_BORDER := Color(1.0, 0.22, 0.18, 0.65)
 
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
@@ -61,6 +67,7 @@ const DELETE_PREVIEW_BORDER := Color(1.0, 0.32, 0.28, 0.85)
 @export var static_prop_manager_path: NodePath
 @export var fog_of_war_path: NodePath
 @export var room_manager_path: NodePath
+@export var forbidden_zone_manager_path: NodePath
 
 var _camera: Camera2D
 var _chunk_manager: ChunkManager
@@ -70,6 +77,7 @@ var _structure_manager: StructureManager
 var _static_prop_manager: Node
 var _fog: FogOfWar
 var _room_manager: Node
+var _forbidden_zone_manager: ForbiddenZoneManager
 
 var _mode: int = Mode.NONE
 var _dragging: bool = false
@@ -77,6 +85,10 @@ var _drag_start: Vector2i = Vector2i.ZERO
 var _drag_end: Vector2i = Vector2i.ZERO
 var _hover_grid: Vector2i = Vector2i.ZERO
 var _build_rotation: int = 0
+## Anchor + id saved when "Move" is clicked; cleared on successful placement.
+var _relocate_source_anchor: Vector2i = Vector2i.ZERO
+var _relocate_source_id: int = -1
+var _relocate_source_rotation: int = 0
 
 
 func _ready() -> void:
@@ -88,6 +100,7 @@ func _ready() -> void:
 	_static_prop_manager = get_node_or_null(static_prop_manager_path)
 	_fog = get_node(fog_of_war_path) as FogOfWar
 	_room_manager = get_node_or_null(room_manager_path)
+	_forbidden_zone_manager = get_node_or_null(forbidden_zone_manager_path) as ForbiddenZoneManager
 
 
 func current_mode() -> int:
@@ -108,6 +121,8 @@ func mode_label() -> String:
 		Mode.SCRAPE_BIOMASS: return "SCRAPE BIOMASS"
 		Mode.STOCKPILE: return "STOCKPILE"
 		Mode.REMOVE_STOCKPILE: return "REMOVE_STOCKPILE"
+		Mode.FORBIDDEN_ZONE: return "FORBIDDEN ZONE"
+		Mode.REMOVE_FORBIDDEN_ZONE: return "REMOVE FORBIDDEN"
 		Mode.BUILD_WALL: return "BUILD WALL"
 		Mode.BUILD_DOOR: return "BUILD DOOR"
 		Mode.BUILD_EXTRACTOR: return "BUILD EXTRACTOR"
@@ -133,13 +148,24 @@ func mode_label() -> String:
 		Mode.DESIGNATE_WORKSHOP_ROOM: return "WORKSHOP ROOM"
 		Mode.REMOVE_ROOM: return "REMOVE ROOM"
 		Mode.DELETE: return "DELETE"
+		Mode.RELOCATE: return "RELOCATE"
+		Mode.BUILD_FLOOR: return "BUILD FLOOR"
 		_: return "-"
+
+
+func start_relocate(anchor: Vector2i, structure_id: int, rotation: int) -> void:
+	_relocate_source_anchor = anchor
+	_relocate_source_id = structure_id
+	_relocate_source_rotation = rotation
+	_set_mode(Mode.RELOCATE)
 
 
 func cancel_active() -> bool:
 	if _mode == Mode.NONE:
 		return false
 	_dragging = false
+	if _mode == Mode.RELOCATE:
+		_relocate_source_id = -1
 	_set_mode(Mode.NONE)
 	return true
 
@@ -215,17 +241,18 @@ func _on_right_press() -> void:
 	var grid := _world_to_grid(_camera.get_global_mouse_position())
 	match _mode:
 		Mode.MINE, Mode.SCRAPE_BIOMASS, Mode.STOCKPILE, Mode.REMOVE_STOCKPILE, \
+		Mode.FORBIDDEN_ZONE, Mode.REMOVE_FORBIDDEN_ZONE, \
 		Mode.BUILD_WALL, Mode.BUILD_DOOR, Mode.BUILD_EXTRACTOR, \
 		Mode.BUILD_SENSOR, Mode.BUILD_CHARGE_PAD, Mode.BUILD_FABRICATOR, \
 		Mode.BUILD_DOCK, Mode.BUILD_REPAIR_BENCH, Mode.BUILD_PARTS_LOOM, \
 		Mode.BUILD_MAINTENANCE_DOCK, \
 		Mode.BUILD_MEDITATION_PAD, Mode.BUILD_SENTIENCE_CRADLE, Mode.BUILD_FABRICATION_SPOT, \
-		Mode.BUILD_FABRICATOR_ADVANCED, \
+		Mode.BUILD_FABRICATOR_ADVANCED, Mode.BUILD_FLOOR, \
 		Mode.PLACE_STORAGE_BIN, Mode.PLACE_OUTLET_EXTENSION, Mode.PLACE_RUDIMENTARY_SENSOR, \
 		Mode.PLACE_SMALL_LIGHT_DEVICE, Mode.PLACE_LARGE_LIGHT_DEVICE, \
 		Mode.DESIGNATE_DOCK_ROOM, Mode.DESIGNATE_RESEARCH_ROOM, \
 		Mode.DESIGNATE_MECHANIC_ROOM, Mode.DESIGNATE_WORKSHOP_ROOM, Mode.REMOVE_ROOM, \
-		Mode.DELETE:
+		Mode.DELETE, Mode.RELOCATE:
 			_dragging = true
 			_drag_start = grid
 			_drag_end = grid
@@ -238,7 +265,8 @@ func _on_right_release() -> void:
 	_dragging = false
 	var cells: Array[Vector2i] = _rect_cells(_drag_start, _drag_end)
 	var blueprint_id: int = _blueprint_for_mode()
-	if _fog != null:
+	# Filter explored cells for most modes, but NOT for mine (allow fog designation).
+	if _fog != null and _mode != Mode.MINE:
 		var explored_cells: Array[Vector2i] = []
 		for cell in cells:
 			if _fog.is_explored(cell):
@@ -259,6 +287,15 @@ func _on_right_release() -> void:
 			Mode.REMOVE_STOCKPILE:
 				for cell in cells:
 					_apply_remove_stockpile_click(cell)
+			Mode.FORBIDDEN_ZONE:
+				for cell in cells:
+					if _forbidden_zone_manager != null:
+						_forbidden_zone_manager.mark(cell)
+				_did_place = true
+			Mode.REMOVE_FORBIDDEN_ZONE:
+				for cell in cells:
+					if _forbidden_zone_manager != null:
+						_forbidden_zone_manager.unmark(cell)
 			Mode.DESIGNATE_DOCK_ROOM:
 				_apply_dock_room(cells)
 				_did_place = true
@@ -277,10 +314,12 @@ func _on_right_release() -> void:
 			Mode.DELETE:
 				for cell in cells:
 					_apply_delete_click(cell)
+			Mode.RELOCATE:
+				_apply_relocate_click(_drag_start)
 			_:
 				if _is_build_mode():
 					var anchors: Array[Vector2i] = []
-					if blueprint_id == BuildBlueprint.Id.WALL:
+					if blueprint_id == BuildBlueprint.Id.WALL or blueprint_id == BuildBlueprint.Id.FLOOR:
 						anchors = cells
 					else:
 						anchors.append(_drag_start)
@@ -293,10 +332,13 @@ func _on_right_release() -> void:
 
 
 func _apply_mine_click(grid: Vector2i) -> void:
-	if _fog != null and not _fog.is_explored(grid):
-		return
 	if _job_board.has_mine_at(grid):
 		_job_board.cancel_mine_at(grid)
+		return
+	# For unexplored tiles we always queue the mine job; the worker will cancel
+	# it on arrival if the tile turns out not to be minable.
+	if _fog != null and not _fog.is_explored(grid):
+		_job_board.add_mine_job(grid)
 		return
 	if _static_prop_manager != null \
 			and _static_prop_manager.has_method("has_mineable_prop") \
@@ -307,6 +349,8 @@ func _apply_mine_click(grid: Vector2i) -> void:
 	if tile == TerrainGenerator.TILE_WALL \
 			or tile == TerrainGenerator.TILE_SERVICE_CORE \
 			or tile == TerrainGenerator.TILE_RICH_WALL:
+		_job_board.add_mine_job(grid)
+	elif tile == TerrainGenerator.TILE_DEBRIS:
 		_job_board.add_mine_job(grid)
 	elif tile == TerrainGenerator.TILE_RUST:
 		_job_board.add_scrape_rust_job(grid)
@@ -377,9 +421,9 @@ func _apply_delete_click(grid: Vector2i) -> void:
 	if _job_board != null and _job_board.has_build_at(grid):
 		_job_board.cancel_build_at(grid)
 		return
-	if _structure_manager != null and _structure_manager.has_method("delete_structure_at"):
-		var removed: bool = bool(_structure_manager.call("delete_structure_at", grid))
-		if removed:
+	if _structure_manager != null and _structure_manager.has_method("request_dismantle_at"):
+		var queued: bool = bool(_structure_manager.call("request_dismantle_at", grid))
+		if queued:
 			return
 	if _stockpile_manager != null:
 		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
@@ -394,6 +438,31 @@ func _apply_delete_click(grid: Vector2i) -> void:
 		if bool(_job_board.call("cancel_order_at", grid)):
 			return
 		return
+
+
+func _apply_relocate_click(grid: Vector2i) -> void:
+	if _relocate_source_id < 0 or _structure_manager == null:
+		_set_mode(Mode.NONE)
+		return
+	if _fog != null and not _fog.is_explored(grid):
+		return
+	if not _structure_manager.can_place_blueprint(_relocate_source_id, grid, _relocate_source_rotation):
+		return
+	var info: Dictionary = _structure_manager.remove_for_relocation(_relocate_source_anchor)
+	if info.is_empty():
+		_set_mode(Mode.NONE)
+		return
+	var build_job: BuildJob = _job_board.add_build_job(grid, _relocate_source_id, _relocate_source_rotation)
+	# Pre-fill 50% (rounded up) of each ingredient so the move costs less.
+	var full_recipe: Dictionary = BuildBlueprint.ingredients(_relocate_source_id)
+	for kind in full_recipe.keys():
+		var full: int = int(full_recipe[kind])
+		var prefill: int = int(ceil(float(full) * 0.5))
+		if prefill > 0:
+			build_job.accept_delivered(int(kind), prefill)
+	_relocate_source_id = -1
+	_set_mode(Mode.NONE)
+	AudioManager.play_placing()
 
 
 func _apply_remove_room(grid: Vector2i) -> void:
@@ -440,12 +509,15 @@ func _blueprint_for_mode() -> int:
 			return BuildBlueprint.Id.SMALL_LIGHT_DEVICE
 		Mode.PLACE_LARGE_LIGHT_DEVICE:
 			return BuildBlueprint.Id.LARGE_LIGHT_DEVICE
+		Mode.BUILD_FLOOR:
+			return BuildBlueprint.Id.FLOOR
 		_:
 			return BuildBlueprint.Id.WALL
 
 
 func _is_build_mode() -> bool:
 	return _mode == Mode.BUILD_WALL \
+		or _mode == Mode.BUILD_FLOOR \
 		or _mode == Mode.BUILD_DOOR \
 		or _mode == Mode.BUILD_EXTRACTOR \
 		or _mode == Mode.BUILD_SENSOR \
@@ -520,7 +592,11 @@ func _draw() -> void:
 				or _mode == Mode.DESIGNATE_WORKSHOP_ROOM:
 			fill = ROOM_PREVIEW_FILL
 			border = ROOM_PREVIEW_BORDER
-		elif _mode == Mode.DELETE or _mode == Mode.REMOVE_STOCKPILE or _mode == Mode.REMOVE_ROOM:
+		elif _mode == Mode.FORBIDDEN_ZONE:
+			fill = FORBIDDEN_PREVIEW_FILL
+			border = FORBIDDEN_PREVIEW_BORDER
+		elif _mode == Mode.DELETE or _mode == Mode.REMOVE_STOCKPILE or _mode == Mode.REMOVE_ROOM \
+				or _mode == Mode.REMOVE_FORBIDDEN_ZONE:
 			fill = DELETE_PREVIEW_FILL
 			border = DELETE_PREVIEW_BORDER
 		draw_rect(r, fill)

@@ -31,6 +31,7 @@ enum Id {
 	SMALL_LIGHT_DEVICE,
 	LARGE_LIGHT_DEVICE,
 	FABRICATOR_ADVANCED,    ## new — displayed as "fabricator"; outputs advanced parts.
+	FLOOR,                  ## places a basic floor tile; requires Basic Flooring tech.
 }
 
 const WALL_COLOR := Color(0.55, 0.55, 0.58, 0.55)
@@ -95,6 +96,8 @@ static func display_name(id: int) -> String:
 			return "large light device"
 		Id.FABRICATOR_ADVANCED:
 			return "fabricator"
+		Id.FLOOR:
+			return "floor"
 		_:
 			return "unknown"
 
@@ -139,6 +142,8 @@ static func description(id: int) -> String:
 			return "Large crafted work light with wider coverage."
 		Id.FABRICATOR_ADVANCED:
 			return "Worker-operated fabricator that assembles datacores, charge cells, and rudimentary sensors."
+		Id.FLOOR:
+			return "Places a basic floor tile. Requires Basic Flooring technology."
 		_:
 			return ""
 
@@ -227,6 +232,8 @@ static func ingredients(id: int) -> Dictionary:
 			return {Item.Kind.SMALL_LIGHT_DEVICE: 1}
 		Id.LARGE_LIGHT_DEVICE:
 			return {Item.Kind.LARGE_LIGHT_DEVICE: 1}
+		Id.FLOOR:
+			return {Item.Kind.SCRAP: 1}
 		_:
 			return {}
 
@@ -298,7 +305,7 @@ static func ghost_color(id: int) -> Color:
 
 
 static func produces_tile(id: int) -> bool:
-	return id == Id.WALL
+	return id == Id.WALL or id == Id.FLOOR
 
 
 static func production_interval(id: int) -> float:

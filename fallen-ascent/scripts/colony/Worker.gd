@@ -35,6 +35,8 @@ enum State {
 	MOVING_TO_MEDITATE,
 	MEDITATING,
 	FIGHTING,
+	MOVING_TO_DISMANTLE,
+	DISMANTLING,
 	# Rescue states: a non-downed worker carries a downed worker to an outlet
 	# or repair bench. MOVING_TO_SAVE = walking to the downed body;
 	# CARRYING_WORKER = downed has been picked up; MOVING_TO_DELIVER = the
@@ -204,7 +206,7 @@ const MOVING_STATES: Array[int] = [
 	State.MOVING_FREEFORM, State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING,
 	State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE,
 	State.MOVING_TO_MEDITATE, State.MOVING_TO_SAVE, State.CARRYING_WORKER,
-	State.MOVING_TO_DELIVER
+	State.MOVING_TO_DELIVER, State.MOVING_TO_DISMANTLE
 ]
 
 var _personality: int = Personality.DUTIFUL
@@ -339,6 +341,11 @@ var _colony_site: Node
 var _fog: FogOfWar
 var _structure_manager: StructureManager
 var _room_manager: Node = null
+var _forbidden_zone_manager: ForbiddenZoneManager = null
+## Set when the most recent completed job came from _direct_order_queue.
+## Causes _finish_job() to apply a short idle cooldown (2-3 s) so the player
+## has time to issue follow-up manual orders.
+var _last_job_was_manual: bool = false
 
 
 func setup(
@@ -351,6 +358,7 @@ func setup(
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
 	room_manager: Node = null,
+	forbidden_zone_manager: ForbiddenZoneManager = null,
 ) -> void:
 	_job_board = job_board
 	_pathfinder = pathfinder
@@ -361,6 +369,7 @@ func setup(
 	_fog = fog
 	_structure_manager = structure_manager
 	_room_manager = room_manager
+	_forbidden_zone_manager = forbidden_zone_manager
 
 
 func _ready() -> void:
@@ -1311,6 +1320,17 @@ func _process(delta: float) -> void:
 			if _advance_path(delta):
 				_state = State.IDLE
 				_idle_cooldown = 0.0
+		State.MOVING_TO_DISMANTLE:
+			if _advance_path(delta):
+				_state = State.DISMANTLING
+		State.DISMANTLING:
+			var dismantle := _job as DismantleJob
+			if dismantle == null:
+				_abandon_job()
+				return
+			dismantle.progress += delta * _light_speed_multiplier() * _work_speed_mult
+			if dismantle.progress >= DismantleJob.DURATION:
+				_complete_dismantle(dismantle)
 		State.ROAMING, State.WANDERING:
 			if _advance_path(delta):
 				_state = State.IDLE
@@ -1719,6 +1739,8 @@ func _try_claim_job() -> bool:
 			_begin_haul(job as HaulJob)
 		elif job is BuildJob:
 			_begin_build(job as BuildJob)
+		elif job is DismantleJob:
+			_begin_dismantle(job as DismantleJob)
 		elif job is CraftJob:
 			_begin_craft(job as CraftJob)
 		elif job is OperateStructureJob:
@@ -1746,11 +1768,12 @@ func _try_claim_job() -> bool:
 func _try_start_next_direct_order() -> bool:
 	if _direct_order_queue.is_empty():
 		return false
-		
+
 	# Peek at the command instead of popping it immediately
 	var order: Dictionary = _direct_order_queue[0]
 	if _start_direct_order(order):
 		_direct_order_queue.pop_front() # Remove only when successfully initiated
+		_last_job_was_manual = true
 		return true
 	else:
 		# The step failed. Clear queue to prevent out-of-order execution and notify player.
@@ -2010,6 +2033,8 @@ func _random_idle_target(frontier: bool) -> Vector2i:
 		# Wandering is leisure — never pick a cell that bites back.
 		if _is_acid_tile_at(candidate):
 			continue
+		if _forbidden_zone_manager != null and _forbidden_zone_manager.is_forbidden(candidate):
+			continue
 		if candidate == current_grid():
 			continue
 		if _route_exists(current_grid(), candidate, true):
@@ -2023,6 +2048,8 @@ func _random_walkable_near(origin: Vector2i, radius: int) -> Vector2i:
 		if not _chunk_manager.is_walkable(candidate):
 			continue
 		if _is_acid_tile_at(candidate):
+			continue
+		if _forbidden_zone_manager != null and _forbidden_zone_manager.is_forbidden(candidate):
 			continue
 		if _route_exists(origin, candidate, true):
 			return candidate
@@ -2340,7 +2367,9 @@ func _grid_from_waypoint(point: Vector2) -> Vector2i:
 
 
 func _begin_mine(job: MineJob) -> void:
-	if not _is_mineable_target(job.target):
+	# If the tile is explored and already confirmed non-mineable, cancel immediately.
+	var is_explored: bool = _fog == null or _fog.is_explored(job.target)
+	if is_explored and not _is_mineable_target(job.target):
 		_cancel_mine_job(job)
 		return
 	var stand: Vector2i = _mine_stand_for(job.target)
@@ -2348,7 +2377,12 @@ func _begin_mine(job: MineJob) -> void:
 		job.block_briefly()
 		_release_and_idle()
 		return
-	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
+	# For unexplored tiles allow pathing through unexplored space.
+	var path: PackedVector2Array
+	if is_explored:
+		path = _find_explored_path(current_grid(), stand)
+	else:
+		path = _route_path(_route_between(current_grid(), stand, false))
 	if path.is_empty() and current_grid() != stand:
 		job.block_briefly()
 		_release_and_idle()
@@ -2396,6 +2430,29 @@ func _begin_scrape_biomass(job: Job) -> void:
 	_state = State.MOVING_TO_WORK
 
 
+func _begin_dismantle(job: DismantleJob) -> void:
+	if _structure_manager == null or _structure_manager.structure_at(job.anchor).is_empty():
+		if _job_board != null:
+			_job_board.cancel_dismantle_at(job.anchor)
+		_job = null
+		_state = State.IDLE
+		return
+	var stand: Vector2i = _structure_manager.interaction_cell_for(job.anchor)
+	if stand == Pathfinder.UNREACHABLE:
+		job.block_briefly(2.0)
+		_release_and_idle()
+		return
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		job.block_briefly(2.0)
+		_mark_job_failed(job)
+		_release_and_idle()
+		return
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_DISMANTLE
+
+
 func _begin_haul(job: HaulJob) -> void:
 	if job.item == null or not is_instance_valid(job.item):
 		_finish_job()
@@ -2416,9 +2473,36 @@ func _begin_haul(job: HaulJob) -> void:
 	_state = State.MOVING_TO_PICKUP
 
 
+func _build_stand_for(job: BuildJob) -> Vector2i:
+	# Find a walkable cell adjacent to any footprint cell that is NOT itself
+	# part of the footprint. This prevents workers from pathing into the
+	# structure's own tiles and getting stuck.
+	var fp_set: Dictionary = {}
+	for c in job.footprint:
+		fp_set[c] = true
+	const OFFSETS: Array[Vector2i] = [
+		Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0),
+		Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1),
+	]
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_dist: int = 0x7fffffff
+	for fp_cell in job.footprint:
+		for off in OFFSETS:
+			var candidate: Vector2i = fp_cell + off
+			if fp_set.has(candidate):
+				continue
+			if not _chunk_manager.is_walkable(candidate):
+				continue
+			var d: int = maxi(absi(candidate.x - current_grid().x), absi(candidate.y - current_grid().y))
+			if d < best_dist:
+				best = candidate
+				best_dist = d
+	return best
+
+
 func _begin_build(job: BuildJob) -> void:
 	if job.has_all_materials():
-		var stand_ready: Vector2i = _pathfinder.walkable_neighbor_of(job.anchor)
+		var stand_ready: Vector2i = _build_stand_for(job)
 		if stand_ready == Pathfinder.UNREACHABLE:
 			job.block_briefly(2.0)
 			_mark_job_failed(job)
@@ -2701,8 +2785,8 @@ func _pickup_for_build() -> void:
 		_stockpile_manager.on_item_spawned(remainder)
 		item.count = 1
 	_take_into_hand(item)
-	# Phase 2: walk adjacent to the build anchor.
-	var stand: Vector2i = _pathfinder.walkable_neighbor_of(build.anchor)
+	# Phase 2: walk adjacent to the build anchor (outside the footprint).
+	var stand: Vector2i = _build_stand_for(build)
 	if stand == Pathfinder.UNREACHABLE:
 		_drop_in_place()
 		return
@@ -2937,6 +3021,11 @@ func _drop_in_place() -> void:
 
 
 func _complete_mine(mine: MineJob) -> void:
+	# If the tile arrived at isn't actually mineable (e.g. was fog-of-war when
+	# designated but turned out to be floor), cancel silently.
+	if not _is_mineable_target(mine.target) and not _has_mineable_static_prop(mine.target):
+		_cancel_mine_job(mine)
+		return
 	if _has_mineable_static_prop(mine.target):
 		if _colony_site != null and _colony_site.has_method("mine_static_prop_at"):
 			var rewards: Dictionary = _colony_site.call("mine_static_prop_at", mine.target) as Dictionary
@@ -3001,6 +3090,8 @@ func _complete_build(build: BuildJob) -> void:
 		_carried = null
 	if build.blueprint_id == BuildBlueprint.Id.WALL:
 		_chunk_manager.set_tile_at(build.anchor, TerrainGenerator.TILE_WALL)
+	elif build.blueprint_id == BuildBlueprint.Id.FLOOR:
+		_chunk_manager.set_tile_at(build.anchor, TerrainGenerator.TILE_FLOOR)
 	elif _colony_site != null and _colony_site.has_method("build_structure"):
 		_colony_site.call("build_structure", build.blueprint_id, build.anchor, build.rotation)
 	_remember("built %s at %d,%d" % [
@@ -3039,6 +3130,23 @@ func _complete_operation(op: OperateStructureJob) -> void:
 	_finish_job()
 
 
+func _complete_dismantle(dismantle: DismantleJob) -> void:
+	if _structure_manager == null or \
+			not _structure_manager.has_method("complete_dismantle_at"):
+		_finish_job()
+		return
+	var ok: bool = bool(_structure_manager.call("complete_dismantle_at", dismantle.anchor))
+	if not ok:
+		_finish_job()
+		return
+	_remember("dismantled %s at %d,%d" % [
+		BuildBlueprint.display_name(dismantle.structure_id),
+		dismantle.anchor.x,
+		dismantle.anchor.y,
+	])
+	_finish_job()
+
+
 func _finish_job() -> void:
 	_release_charge_reservation()
 	if _job != null and _job_board != null:
@@ -3047,7 +3155,12 @@ func _finish_job() -> void:
 	_path = PackedVector2Array()
 	_path_index = 0
 	_state = State.IDLE
-	_idle_cooldown = 0.0
+	if _last_job_was_manual and _direct_order_queue.is_empty():
+		# Brief pause so the player can issue follow-up manual orders.
+		_idle_cooldown = randf_range(2.0, 3.0)
+	else:
+		_idle_cooldown = 0.0
+	_last_job_was_manual = false
 	_clear_activity()
 	_clear_resume()
 
@@ -3241,7 +3354,7 @@ func _replan() -> void:
 		State.CARRYING, State.MOVING_TO_DROP:
 			target_grid = (_job as HaulJob).dropoff
 		State.MOVING_TO_BUILD_SITE:
-			var b_stand: Vector2i = _pathfinder.walkable_neighbor_of((_job as BuildJob).anchor)
+			var b_stand: Vector2i = _build_stand_for(_job as BuildJob)
 			if b_stand == Pathfinder.UNREACHABLE:
 				if _carried != null:
 					_drop_in_place()
@@ -3335,6 +3448,8 @@ func _is_mineable_target(target: Vector2i) -> bool:
 	if _has_mineable_static_prop(target):
 		return true
 	var tile: int = _chunk_manager.get_tile_at(target)
+	if tile == TerrainGenerator.TILE_DEBRIS:
+		return TechManager != null and TechManager.is_unlocked(TechDatabase.DEBRIS_CLEARANCE)
 	return tile == TerrainGenerator.TILE_WALL \
 		or tile == TerrainGenerator.TILE_SERVICE_CORE \
 		or tile == TerrainGenerator.TILE_RICH_WALL

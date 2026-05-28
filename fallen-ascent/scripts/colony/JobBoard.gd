@@ -12,8 +12,9 @@ signal job_completed(job: Job)
 signal job_cancelled(job: Job)
 
 var pending: Array[Job] = []
-var _mine_targets: Dictionary = {}   ## Vector2i -> MineJob, for fast cancel/dedup
-var _build_targets: Dictionary = {}  ## Vector2i footprint cell -> BuildJob
+var _mine_targets: Dictionary = {}      ## Vector2i -> MineJob, for fast cancel/dedup
+var _build_targets: Dictionary = {}     ## Vector2i footprint cell -> BuildJob
+var _dismantle_targets: Dictionary = {} ## Vector2i anchor -> DismantleJob
 var _scrape_targets: Dictionary = {} ## Vector2i -> Job
 var _scrape_biomass_targets: Dictionary = {} ## Vector2i -> Job
 var _operation_targets: Dictionary = {} ## Vector2i -> OperateStructureJob
@@ -30,6 +31,31 @@ const OPERATE_STRUCTURE_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/
 ## Chunk-radius scanned by claim_next_for before it falls back to the
 ## global pending list. 1 means worker chunk + 8 neighbors (3x3).
 const NEAR_CHUNK_RADIUS: int = 1
+
+
+func add_dismantle_job(anchor: Vector2i, structure_id: int) -> DismantleJob:
+	if _dismantle_targets.has(anchor):
+		return _dismantle_targets[anchor] as DismantleJob
+	var job := DismantleJob.new(anchor, structure_id)
+	pending.append(job)
+	_dismantle_targets[anchor] = job
+	_index_job(job)
+	job_added.emit(job)
+	return job
+
+
+func cancel_dismantle_at(anchor: Vector2i) -> void:
+	if not _dismantle_targets.has(anchor):
+		return
+	var job: DismantleJob = _dismantle_targets[anchor]
+	_dismantle_targets.erase(anchor)
+	pending.erase(job)
+	_unindex_job(job)
+	job_cancelled.emit(job)
+
+
+func has_dismantle_at(anchor: Vector2i) -> bool:
+	return _dismantle_targets.has(anchor)
 
 
 func add_mine_job(target: Vector2i) -> MineJob:
@@ -363,6 +389,8 @@ func complete(job: Job) -> void:
 	elif job is BuildJob:
 		for cell in (job as BuildJob).footprint:
 			_build_targets.erase(cell)
+	elif job is DismantleJob:
+		_dismantle_targets.erase((job as DismantleJob).anchor)
 	elif job.kind == Job.Kind.SCRAPE_RUST:
 		_scrape_targets.erase(job.get("target") as Vector2i)
 	elif job.kind == Job.Kind.SCRAPE_BIOMASS:
@@ -388,6 +416,8 @@ func cancel_job(job: Job) -> bool:
 	elif job is BuildJob:
 		for cell in (job as BuildJob).footprint:
 			_build_targets.erase(cell)
+	elif job is DismantleJob:
+		_dismantle_targets.erase((job as DismantleJob).anchor)
 	elif job is OperateStructureJob:
 		_operation_targets.erase((job as OperateStructureJob).anchor)
 	elif job is HaulJob:
@@ -428,6 +458,9 @@ static func describe_job(job: Job) -> String:
 	if job is CraftJob:
 		var c := job as CraftJob
 		return "Craft %s @ (%d,%d)" % [Item.kind_name(c.object_kind), c.station_anchor.x, c.station_anchor.y]
+	if job is DismantleJob:
+		var dm := job as DismantleJob
+		return "Dismantle %s (%d,%d)" % [BuildBlueprint.display_name(dm.structure_id), dm.anchor.x, dm.anchor.y]
 	if job is OperateStructureJob:
 		var o := job as OperateStructureJob
 		return "Operate %s (%d,%d)" % [BuildBlueprint.display_name(o.structure_id), o.anchor.x, o.anchor.y]
@@ -513,6 +546,8 @@ static func _target_grid_of(job: Job) -> Vector2i:
 		return (job as MineJob).target
 	if job is BuildJob:
 		return (job as BuildJob).anchor
+	if job is DismantleJob:
+		return (job as DismantleJob).anchor
 	if job is HaulJob:
 		var h := job as HaulJob
 		if h.item != null and h.item.has_method("get_grid"):
@@ -534,6 +569,8 @@ static func _priority_of(job: Job) -> int:
 		return 4
 	if job is BuildJob:
 		return 8
+	if job is DismantleJob:
+		return 10
 	if job is OperateStructureJob:
 		return 12
 	if job is MineJob:

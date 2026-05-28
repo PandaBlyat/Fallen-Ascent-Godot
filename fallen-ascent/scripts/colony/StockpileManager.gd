@@ -19,12 +19,19 @@ signal stockpile_changed()
 @export var items_root_path: NodePath
 @export var max_pending_haul_jobs: int = 96
 
+## How long (ms) an item that failed delivery is skipped before a fresh haul is
+## posted. Read by Worker when it drops an undeliverable carry.
+const HAUL_RETRY_COOLDOWN_MS: int = 4000
+
 var _job_board: JobBoard
 var _chunk_manager: ChunkManager
 var _items_root: Node2D
 var zones: Array[StockpileZone] = []
 var _rematch_queued: bool = false
 var _pending_haul_jobs: int = 0
+## True while a delayed rematch timer is pending, so cooldown'd items get one
+## retry pass without scheduling a timer per skipped item.
+var _delayed_match_pending: bool = false
 ## Chunk-coord -> Array[Item]. Indexes loose items so _match_loose_items
 ## doesn't have to walk the full _items_root every cycle.
 var _items_by_chunk: Dictionary = {}
@@ -57,6 +64,31 @@ func create_zone(rect_cells: Array[Vector2i]) -> void:
 	zone.setup(walkable)
 	zones.append(zone)
 	zone_added.emit(zone)
+	stockpile_changed.emit()
+	_schedule_match_loose_items()
+
+
+func capture_save() -> Dictionary:
+	var out: Array = []
+	for z in zones:
+		out.append(z.capture_save())
+	return {"zones": out}
+
+
+## Recreate zones and their stored stacks. Bypasses the walkable / overlap
+## filtering in create_zone because the saved cells were already valid (terrain
+## diffs are replayed before this runs).
+func restore_save(data: Dictionary) -> void:
+	var make_item := func(cell: Vector2i, kind: int, count: int) -> Item:
+		var item := Item.new()
+		item.setup(cell, kind, count)
+		return item
+	for zdata in data.get("zones", []) as Array:
+		var zone := StockpileZone.new()
+		add_child(zone)
+		zone.restore_save(zdata, make_item)
+		zones.append(zone)
+		zone_added.emit(zone)
 	stockpile_changed.emit()
 	_schedule_match_loose_items()
 
@@ -139,6 +171,8 @@ func _match_loose_items() -> void:
 	# Iterate from the index keys; copy so the inner loop can mutate the index
 	# (a successful match calls _try_post_haul_for → reserve(), which doesn't
 	# touch _items_by_chunk, but worker pickup later will).
+	var now: int = Time.get_ticks_msec()
+	var has_cooldown_items: bool = false
 	for chunk in _items_by_chunk.keys():
 		var bucket: Array = _items_by_chunk[chunk] as Array
 		for item in bucket.duplicate():
@@ -146,7 +180,14 @@ func _match_loose_items() -> void:
 				return
 			if item == null or not is_instance_valid(item) or item.reserved_by != null:
 				continue
+			if item.haul_blocked_until_msec > now:
+				has_cooldown_items = true
+				continue
 			_try_post_haul_for(item)
+	# Guarantee a retry pass once the cooldown lapses, in case nothing else
+	# triggers a rematch in the meantime.
+	if has_cooldown_items:
+		_schedule_delayed_match()
 
 
 func on_item_spawned(item: Item) -> void:
@@ -191,6 +232,11 @@ func _on_item_exiting_root(node: Node) -> void:
 func _try_post_haul_for(item: Item) -> void:
 	if item == null or not is_instance_valid(item) or item.reserved_by != null:
 		return
+	if item.haul_blocked_until_msec > Time.get_ticks_msec():
+		# Recently failed delivery; let the cooldown lapse before retrying so we
+		# don't loop a worker on an unreachable / full destination.
+		_schedule_delayed_match()
+		return
 	if _pending_haul_count() >= max_pending_haul_jobs:
 		_schedule_match_loose_items()
 		return
@@ -230,6 +276,21 @@ func _schedule_match_loose_items() -> void:
 		return
 	_rematch_queued = true
 	call_deferred("_match_loose_items")
+
+
+## Re-run the loose-item match once the haul cooldown window elapses. Uses a
+## wall-clock SceneTreeTimer so the retry cadence matches the wall-clock
+## `haul_blocked_until_msec` stamps regardless of game speed / pause.
+func _schedule_delayed_match() -> void:
+	if _delayed_match_pending:
+		return
+	_delayed_match_pending = true
+	var timer: SceneTreeTimer = get_tree().create_timer(
+		float(HAUL_RETRY_COOLDOWN_MS) / 1000.0 + 0.2, true, false, true)
+	timer.timeout.connect(func() -> void:
+		_delayed_match_pending = false
+		_match_loose_items()
+	)
 
 
 func _on_job_changed(job: Job) -> void:

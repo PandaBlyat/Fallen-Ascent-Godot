@@ -378,3 +378,25 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       session length, tech costs, and this rate together once a real
       colony loop is on the floor — the existing "Tune the wisdom curve"
       to-do above still applies.
+
+## Save/load + highlighter + AI fixes (this session)
+
+- [ ] **Save system fidelity gaps.** `SaveManager` (autoload) +
+      per-system `capture_save`/`restore_save` snapshot a full colony, but
+      some state is intentionally dropped on load and may want restoring
+      later: in-flight worker jobs/paths/combat targets (bots reload IDLE;
+      carried stacks re-drop as loose items), build/craft/operate progress
+      (jobs come back fresh), pending haul jobs (regenerate from restored
+      items+stockpiles), door/delete-overlay/structure timers beyond the
+      raw `timer`, and HostileSpawner wave cadence (live hostiles restored
+      by pos+hp). `SaveManager.SAVE_VERSION` is written but not validated —
+      add migration when the schema changes. Diff replay assumes
+      `preload_entire_map` (all chunks loaded); streaming maps would need
+      lazy per-chunk diff application.
+- [ ] **Spatial nearest-job index for huge designations.**
+      `JobBoard.claim_next_for` now blocks unreachable jobs board-wide on a
+      failed path (`Worker._mark_job_failed` → `Job.block_briefly`), caps
+      per-tick claim attempts, and the global fallback scans only the
+      nearest non-empty chunk cluster instead of every job. This is a big
+      win but still O(jobs nearby); a per-chunk "closest claimable job"
+      cache would scale further for thousand-tile mining orders.

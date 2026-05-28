@@ -5,12 +5,28 @@ extends Node
 ## `wisdom` for the resource strip and calls `try_unlock` from the tech
 ## panel.
 ##
-## Save layer: state is intentionally NOT persisted yet — when the save
-## system lands, snapshot `wisdom` and `unlocked` (see to-do-list.md).
+## Save layer: `capture_save` / `restore_save` snapshot `wisdom` and the
+## `unlocked` set (the colony save system calls these).
 ##
 
 var wisdom: float = 0.0
 var unlocked: Dictionary = {}                       ## StringName -> true
+
+
+func capture_save() -> Dictionary:
+	var ids: Array = []
+	for id in unlocked:
+		ids.append(String(id))
+	return {"wisdom": wisdom, "unlocked": ids}
+
+
+func restore_save(data: Dictionary) -> void:
+	wisdom = float(data.get("wisdom", 0.0))
+	unlocked.clear()
+	unlocked[TechDatabase.AWAKENING] = true
+	for id in data.get("unlocked", []) as Array:
+		unlocked[StringName(id)] = true
+	EventBus.wisdom_changed.emit(wisdom)
 
 
 func _ready() -> void:

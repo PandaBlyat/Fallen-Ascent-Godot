@@ -20,15 +20,32 @@ const DEFAULT_MAP_SIZE_INDEX: int = 2
 @onready var _settings_button: Button = %SettingsButton
 @onready var _quit_button: Button = %QuitButton
 @onready var _background: TextureRect = $Background
+@onready var _buttons: VBoxContainer = $Buttons
 
 
 func _ready() -> void:
 	_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_background.stretch_mode = TextureRect.STRETCH_SCALE
+	_add_continue_button()
 	_new_game_button.pressed.connect(_on_new_game_pressed)
 	_settings_button.pressed.connect(_on_settings_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
 	MenuMusicPlayer.play_once_from_start()
+
+
+## Adds a Continue button at the top of the menu when a colony save exists, so
+## the player can resume directly without opening Settings.
+func _add_continue_button() -> void:
+	if not SaveManager.has_save():
+		return
+	var button := Button.new()
+	button.text = "Continue"
+	button.custom_minimum_size = Vector2(0, 44)
+	button.add_theme_font_size_override("font_size", 16)
+	_buttons.add_child(button)
+	_buttons.move_child(button, 0)
+	button.pressed.connect(AudioManager.play_button_press)
+	button.pressed.connect(func() -> void: SaveManager.begin_load())
 
 func _on_new_game_pressed() -> void:
 	if has_node("NewGameDialog"):

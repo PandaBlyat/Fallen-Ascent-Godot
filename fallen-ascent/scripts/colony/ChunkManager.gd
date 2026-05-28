@@ -200,6 +200,36 @@ func loaded_chunk_coords() -> Array[Vector2i]:
 	return out
 
 
+## Save layer: only player-modified tiles (the diff over deterministic procgen)
+## and the set of player-blocked teleporters need persisting; the base map
+## regenerates from the seed.
+func capture_save() -> Dictionary:
+	var diffs: Array = []
+	for coord in _diffs:
+		var per_chunk: Dictionary = _diffs[coord]
+		for local in per_chunk:
+			diffs.append([coord, local, int(per_chunk[local])])
+	var blocked: Array = []
+	for cell in _blocked_teleporters:
+		blocked.append(cell)
+	return {"tile_diffs": diffs, "blocked_teleporters": blocked}
+
+
+## Replay saved tile edits onto the freshly-seeded map. Routes through
+## set_tile_at so outlet / rust / teleporter bookkeeping and grass masks stay
+## consistent, exactly as if the player had re-mined them.
+func restore_save(data: Dictionary) -> void:
+	for entry in data.get("tile_diffs", []) as Array:
+		var coord: Vector2i = entry[0]
+		var local: Vector2i = entry[1]
+		var grid := Vector2i(coord.x * Chunk.SIZE + local.x, coord.y * Chunk.SIZE + local.y)
+		set_tile_at(grid, int(entry[2]))
+	for cell in data.get("blocked_teleporters", []) as Array:
+		var c: Vector2i = cell
+		if not _blocked_teleporters.has(c) and get_tile_at(c) == TerrainGenerator.TILE_TELEPORTER:
+			toggle_teleporter_block(c)
+
+
 func outlet_count() -> int:
 	return _outlets.size()
 

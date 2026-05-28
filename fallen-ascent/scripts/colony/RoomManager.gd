@@ -147,6 +147,26 @@ func rooms() -> Array[Dictionary]:
 	return _rooms
 
 
+func capture_save() -> Dictionary:
+	var out: Array = []
+	for room in _rooms:
+		var cells: Array = []
+		for c in (room["cells"] as Array):
+			cells.append(c)
+		out.append({"kind": int(room["kind"]), "cells": cells})
+	return {"rooms": out}
+
+
+func restore_save(data: Dictionary) -> void:
+	# Worker dock assignments (`assigned_to`) are transient — bots re-claim a
+	# dock room on their own after load.
+	for rdata in data.get("rooms", []) as Array:
+		var cells: Array[Vector2i] = []
+		for c in (rdata["cells"] as Array):
+			cells.append(c as Vector2i)
+		_create_room(int(rdata["kind"]), cells)
+
+
 func valid_rooms_for_kind(kind: int) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for room in _rooms:

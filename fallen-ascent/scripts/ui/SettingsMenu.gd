@@ -84,10 +84,11 @@ func _ready() -> void:
 
 	var in_game := _is_in_game()
 	_main_menu_button.visible = in_game
+	# Saving needs a running colony; loading works from the main menu too so the
+	# player can resume a saved colony without starting a new game first.
 	_save_button.visible = in_game
-	_load_button.visible = in_game
-	if in_game:
-		_load_button.disabled = not _save_exists()
+	_load_button.visible = true
+	_load_button.disabled = not _save_exists()
 
 	# Grab focus on the first element to support controller and keyboard navigation
 	_display_mode_button.grab_focus()
@@ -359,15 +360,26 @@ func _update_pan_speed_label(value: float) -> void:
 
 
 func _on_save_pressed() -> void:
-	pass  # TODO: wire up when save system is implemented
+	if SaveManager.save_current_game():
+		_save_button.text = "Saved!"
+		_load_button.disabled = not _save_exists()
+		# Restore the label after a moment so repeated saves still read clearly.
+		get_tree().create_timer(1.2, true, false, true).timeout.connect(func() -> void:
+			if is_instance_valid(_save_button):
+				_save_button.text = "Save"
+		)
+	else:
+		_save_button.text = "Save failed"
 
 
 func _on_load_pressed() -> void:
-	pass  # TODO: wire up when save system is implemented
+	# begin_load swaps to the colony scene, which frees this menu.
+	if not SaveManager.begin_load():
+		_load_button.text = "No save"
 
 
 func _save_exists() -> bool:
-	return FileAccess.file_exists(SAVE_PATH)
+	return SaveManager.has_save()
 
 
 func _on_main_menu_pressed() -> void:

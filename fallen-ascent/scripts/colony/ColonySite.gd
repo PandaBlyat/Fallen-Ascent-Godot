@@ -27,6 +27,9 @@ const HOSTILE_FOV_CHECK_SEC: float = 1.5
 @onready var fog_of_war: FogOfWar = $FogOfWar
 @onready var room_manager: RoomManager = $RoomManager
 
+const HOSTILE_BOT_SCRIPT: Script = preload("res://scripts/colony/HostileBot.gd")
+const WORKER_SCRIPT: Script = preload("res://scripts/colony/Worker.gd")
+
 var _site_seed: int = 0
 var _loading_overlay: Control = null
 var _loading_bar: ProgressBar = null
@@ -35,10 +38,16 @@ var _spawned_initial_workers: bool = false
 var _alert_system: Node = null
 ## Tracks which hostile nodes have already triggered a "spotted" alert.
 var _spotted_hostiles: Dictionary = {}
+## Snapshot to restore instead of fresh-spawning, set when the colony scene is
+## entered via SaveManager.begin_load. Empty for a brand-new game.
+var _pending_load: Dictionary = {}
+## Wall-clock msec of the last autosave; 0 until the first interval elapses.
+var _last_autosave_msec: int = 0
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_pending_load = SaveManager.consume_pending_load()
 	var site: SiteData = GameState.selected_site as SiteData
 	# Fallback for running ColonySite.tscn directly from the editor.
 	if site == null:
@@ -75,6 +84,10 @@ func _spawn_initial_workers() -> void:
 	_spawned_initial_workers = true
 	if static_prop_manager != null and static_prop_manager.has_method("generate_now_at"):
 		static_prop_manager.call("generate_now_at", Vector2i.ZERO)
+	if not _pending_load.is_empty():
+		_restore_from_save(_pending_load)
+		_pending_load = {}
+		return
 	var spawn_cells: Array[Vector2i] = WorkerSpawner.spawn(
 		WorkerSpawner.INITIAL_WORKERS,
 		Vector2i.ZERO,
@@ -214,6 +227,150 @@ func _spawn_neutral_bots(count: int) -> void:
 		spawned += 1
 
 
+## ---- Save / load ------------------------------------------------------------
+
+## Build a full plain-data snapshot of the colony. Called by SaveManager.
+func capture_save() -> Dictionary:
+	var site: SiteData = GameState.selected_site as SiteData
+	return {
+		"world_seed": GameState.world_seed,
+		"site_seed": _site_seed,
+		"biome": int(site.biome) if site != null else 0,
+		"map_size_chunks": chunk_manager.map_size_chunks,
+		"game_speed": GameState.game_speed,
+		"camera_pos": camera.position,
+		"camera_zoom": camera.zoom,
+		"chunks": chunk_manager.capture_save(),
+		"stockpiles": stockpile_manager.capture_save(),
+		"structures": structure_manager.capture_save(),
+		"static_props": static_prop_manager.call("capture_save") if static_prop_manager.has_method("capture_save") else {},
+		"rooms": room_manager.capture_save(),
+		"fog": fog_of_war.capture_save(),
+		"tech": TechManager.capture_save(),
+		"jobs": job_board.capture_save(),
+		"workers": _capture_workers(),
+		"items": _capture_loose_items(),
+		"neutrals": _capture_bots(neutrals_root),
+		"hostiles": _capture_bots(hostiles_root),
+	}
+
+
+## Rebuild the colony from a snapshot. Ordering matters: tiles first (so terrain
+## queries are correct), then stockpiles (storage-bin structures register into
+## them), structures, world objects, then live agents, then fog + designations.
+func _restore_from_save(data: Dictionary) -> void:
+	if static_prop_manager != null and static_prop_manager.has_method("generate_all_pending_now"):
+		static_prop_manager.call("generate_all_pending_now")
+	chunk_manager.restore_save(data.get("chunks", {}) as Dictionary)
+	if static_prop_manager != null and static_prop_manager.has_method("restore_save"):
+		static_prop_manager.call("restore_save", data.get("static_props", {}) as Dictionary)
+	stockpile_manager.restore_save(data.get("stockpiles", {}) as Dictionary)
+	structure_manager.restore_save(data.get("structures", {}) as Dictionary)
+	_restore_loose_items(data.get("items", []) as Array)
+	room_manager.restore_save(data.get("rooms", {}) as Dictionary)
+	TechManager.restore_save(data.get("tech", {}) as Dictionary)
+	_restore_workers(data.get("workers", []) as Array)
+	_restore_bots(neutrals_root, data.get("neutrals", []) as Array, NEUTRAL_BOT_SCRIPT, "Neutral")
+	_restore_bots(hostiles_root, data.get("hostiles", []) as Array, HOSTILE_BOT_SCRIPT, "Hostile")
+	fog_of_war.restore_save(data.get("fog", {}) as Dictionary)
+	job_board.restore_save(data.get("jobs", {}) as Dictionary)
+	camera.zoom = data.get("camera_zoom", camera.zoom) as Vector2
+	camera.position = data.get("camera_pos", camera.position) as Vector2
+	EventBus.camera_moved.emit(camera.position, camera.zoom)
+	EventBus.outlet_count_changed.emit(chunk_manager.outlet_count())
+	stockpile_manager.stockpile_changed.emit()
+
+
+func _capture_workers() -> Array:
+	var out: Array = []
+	for child in workers_root.get_children():
+		var w := child as Worker
+		if w != null and is_instance_valid(w):
+			out.append(w.capture_save())
+	return out
+
+
+func _restore_workers(arr: Array) -> void:
+	for raw in arr:
+		var d: Dictionary = raw
+		var w := WORKER_SCRIPT.new() as Worker
+		w.name = str(d.get("name", "bot"))
+		w.setup(
+			job_board, pathfinder, chunk_manager, stockpile_manager,
+			items_root, self, fog_of_war, structure_manager, room_manager,
+		)
+		w.position = d.get("pos", Vector2.ZERO) as Vector2
+		workers_root.add_child(w)
+		w.restore_save(d)
+		var carried: Dictionary = d.get("carried", {}) as Dictionary
+		if not carried.is_empty():
+			spawn_item_at(w.current_grid(), int(carried["kind"]), int(carried["count"]))
+
+
+func _capture_loose_items() -> Array:
+	var out: Array = []
+	for child in items_root.get_children():
+		var it := child as Item
+		if it != null and is_instance_valid(it):
+			out.append([it.grid, int(it.kind), int(it.count)])
+	return out
+
+
+func _restore_loose_items(arr: Array) -> void:
+	for raw in arr:
+		var e: Array = raw
+		spawn_item_at(e[0] as Vector2i, int(e[1]), int(e[2]))
+
+
+func _capture_bots(root: Node2D) -> Array:
+	var out: Array = []
+	if root == null:
+		return out
+	for child in root.get_children():
+		if not is_instance_valid(child) or not (child is Node2D):
+			continue
+		if child.has_method("is_alive") and not bool(child.call("is_alive")):
+			continue
+		var hp: float = 0.0
+		if child.has_method("combat_stats"):
+			var st: Object = child.call("combat_stats")
+			if st != null:
+				hp = float(st.get("hp"))
+		out.append([(child as Node2D).position, hp])
+	return out
+
+
+func _restore_bots(root: Node2D, arr: Array, script: Script, prefix: String) -> void:
+	if root == null:
+		return
+	var i: int = 0
+	for raw in arr:
+		var e: Array = raw
+		var bot: Node2D = script.new() as Node2D
+		bot.name = "%s_%03d" % [prefix, i]
+		if bot.has_method("setup"):
+			bot.call("setup", chunk_manager, pathfinder, fog_of_war)
+		bot.position = e[0] as Vector2
+		root.add_child(bot)
+		if bot.has_method("combat_stats"):
+			var st: Object = bot.call("combat_stats")
+			if st != null:
+				st.set("hp", float(e[1]))
+		i += 1
+
+
+func _maybe_autosave(now_msec: int) -> void:
+	var interval: int = SettingsManager.autosave_interval
+	if interval <= 0:
+		return
+	if _last_autosave_msec == 0:
+		_last_autosave_msec = now_msec
+		return
+	if now_msec - _last_autosave_msec >= interval * 1000:
+		_last_autosave_msec = now_msec
+		SaveManager.save_current_game()
+
+
 ## Called by Workers after they finish a mine: spawn one piece of scrap on
 ## the now-floor tile, then offer it to the stockpile system.
 func spawn_item_at(grid: Vector2i, kind: int = Item.Kind.SCRAP, count: int = 1) -> void:
@@ -301,6 +458,7 @@ func _process(_delta: float) -> void:
 	if now - _hostile_fov_real_msec >= int(HOSTILE_FOV_CHECK_SEC * 1000.0):
 		_hostile_fov_real_msec = now
 		_check_hostile_fov()
+	_maybe_autosave(now)
 
 
 func _check_hostile_fov() -> void:

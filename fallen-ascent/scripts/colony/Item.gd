@@ -61,6 +61,10 @@ var kind: int = Kind.SCRAP
 var grid: Vector2i = Vector2i.ZERO
 var count: int = 1
 var reserved_by: Node = null
+## Wall-clock msec before which the StockpileManager will not post a fresh haul
+## job for this item. Set when a worker drops it after failing to deliver, so
+## an unreachable / full destination doesn't trigger an instant pickup/drop loop.
+var haul_blocked_until_msec: int = 0
 var _atlas: Texture2D = null
 var _object_atlas: Texture2D = null
 

@@ -2949,6 +2949,7 @@ func _complete_mine(mine: MineJob) -> void:
 		return
 	var mined_tile: int = _chunk_manager.get_tile_at(mine.target)
 	_chunk_manager.set_tile_at(mine.target, TerrainGenerator.TILE_FLOOR)
+	EventBus.player_wall_mined.emit()
 	if _colony_site != null and _colony_site.has_method("spawn_item_at"):
 		if randf() < 0.55:
 			_colony_site.call("spawn_item_at", mine.target, Item.Kind.SCRAP)

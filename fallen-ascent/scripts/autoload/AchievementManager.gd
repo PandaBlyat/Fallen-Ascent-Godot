@@ -56,7 +56,7 @@ func _ready() -> void:
 
 
 func _connect_signals() -> void:
-	EventBus.tile_changed.connect(_on_tile_changed)
+	EventBus.player_wall_mined.connect(_on_player_wall_mined)
 	EventBus.player_structure_placed.connect(_on_player_structure_placed)
 	EventBus.combatant_died.connect(_on_combatant_died)
 	EventBus.tech_unlocked.connect(_on_tech_unlocked)
@@ -192,9 +192,8 @@ func on_new_game_started() -> void:
 	unlock(&"first_embark")
 
 
-func _on_tile_changed(_grid: Vector2i, new_tile: int) -> void:
-	if new_tile == TerrainGenerator.TILE_FLOOR:
-		unlock(&"first_mine")
+func _on_player_wall_mined() -> void:
+	unlock(&"first_mine")
 
 
 func _on_player_structure_placed() -> void:

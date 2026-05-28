@@ -81,6 +81,10 @@ extends Node
 ##   player_structure_placed()        - emitted by StructureManager only when the
 ##                                      player directly places a structure (not for
 ##                                      auto-generated world lights or removals).
+##   player_wall_mined()              - emitted by Worker only when a worker
+##                                      completes a player-issued mine job on a
+##                                      wall tile (not rust scraping or prop
+##                                      removal, which also touch floor tiles).
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -118,4 +122,5 @@ signal worker_low_condition(worker: Node, ratio: float)
 signal hostile_spotted(hostile: Node, spotter: Node)
 signal achievement_unlocked(id: StringName)
 signal player_structure_placed()
+signal player_wall_mined()
 @warning_ignore_restore("unused_signal")

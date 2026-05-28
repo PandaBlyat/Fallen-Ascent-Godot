@@ -1,7 +1,7 @@
 class_name FpsOverlay
 extends CanvasLayer
-## A self-contained utility that draws a styled FPS counter in the top-right corner.
-## To use: Instantiate this class and add it as a child to your main scene.
+## A self-contained utility that draws a styled FPS counter in the top-left corner.
+## To use: Add as a CanvasLayer node in your scene with this script attached.
 
 var _label: Label
 

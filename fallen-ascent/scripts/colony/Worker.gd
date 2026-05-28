@@ -2437,11 +2437,27 @@ func _pickup_for_haul() -> void:
 		_finish_job()
 		return
 	var item := haul.item as Item
-	haul.item = _take_stack_for_haul(item)
+	# Check path to dropoff BEFORE picking up the item. If we pick up first and
+	# then find no path, we drop-in-place which immediately re-posts a haul job,
+	# causing a pick-up-and-drop loop.
 	var path: PackedVector2Array = _find_explored_path(current_grid(), haul.dropoff)
 	if path.is_empty() and current_grid() != haul.dropoff:
-		_drop_in_place()
+		# Block the job so no worker retries immediately, then release WITHOUT
+		# clearing item.reserved_by — keeping the reservation prevents
+		# StockpileManager from posting a duplicate haul job to the same cell.
+		haul.block_briefly(5.0)
+		_mark_job_failed(haul)
+		if _job_board != null and _job_board.is_active(_job):
+			_job_board.release(_job)
+		_job = null
+		_path = PackedVector2Array()
+		_path_index = 0
+		_state = State.IDLE
+		_idle_cooldown = IDLE_FALLBACK_RETRY_SECONDS
+		_clear_activity()
+		_clear_resume()
 		return
+	haul.item = _take_stack_for_haul(item)
 	_path = path
 	_path_index = 0
 	_state = State.MOVING_TO_DROP
@@ -3977,16 +3993,36 @@ func _highlight_cell() -> int:
 	return -1
 
 
+## Returns the local-space offset from the worker to where the highlight should
+## be drawn — i.e. the destination tile or combat target in local coordinates.
+func _highlight_dest_local() -> Vector2:
+	match _state:
+		State.MOVING_FREEFORM:
+			if not _path.is_empty():
+				return _path[_path.size() - 1] - position
+		State.MOVING_TO_CHARGE:
+			if _charge_target != Vector2i.ZERO:
+				return Chunk.grid_to_pixel_center(_charge_target) - position
+		State.MOVING_TO_REPAIR:
+			if _activity_target != Vector2i.ZERO:
+				return Chunk.grid_to_pixel_center(_activity_target) - position
+		State.FIGHTING:
+			if _combat_target != null and is_instance_valid(_combat_target):
+				return (_combat_target as Node2D).position - position
+	return Vector2.ZERO
+
+
 func _draw() -> void:
 	_draw_action_bubble()
-	# Draw order highlight beneath the worker sprite.
+	# Draw order highlight on the destination tile, not on the worker.
 	if _highlighter_atlas != null:
 		var cell: int = _highlight_cell()
 		if cell >= 0:
 			var src := Rect2(Vector2(cell * 32.0, 0.0), Vector2(32.0, 32.0))
+			var dest_local: Vector2 = _highlight_dest_local()
 			draw_texture_rect_region(
 				_highlighter_atlas,
-				Rect2(-Vector2(16.0, 16.0), Vector2(32.0, 32.0)),
+				Rect2(dest_local - Vector2(16.0, 16.0), Vector2(32.0, 32.0)),
 				src,
 			)
 	if _selected:

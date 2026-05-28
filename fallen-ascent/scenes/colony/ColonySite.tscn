@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://bfa_colony_0001"]
+[gd_scene load_steps=25 format=3 uid="uid://bfa_colony_0001"]
 
 [ext_resource type="Script" path="res://scripts/colony/ColonySite.gd" id="1_colony"]
 [ext_resource type="Script" path="res://scripts/colony/ChunkManager.gd" id="2_chunks"]
@@ -201,12 +201,5 @@ grow_vertical = 1
 alignment = 1
 script = ExtResource("4_speed")
 
-[node name="FpsCounter" type="Control" parent="HUD"]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
+[node name="FpsOverlay" type="CanvasLayer" parent="."]
 script = ExtResource("22_fps")

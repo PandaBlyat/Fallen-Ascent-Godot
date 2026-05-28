@@ -158,6 +158,71 @@ From RimWorld / Dwarf Fortress angle, this economy says:
 - Service structures carry a lot of weight. This is a robot colony, so colony
   health is energy, condition, limb repair, and mental tiredness, not hunger.
 
+## Meta-Progression: Achievements, Embark, and Worker Builds
+
+This layer sits *outside* a single colony. It is how the player's account grows
+across playthroughs and how each new colony's starting crew is assembled.
+
+### Achievement points (AP)
+
+`AchievementManager` (autoload) persists unlocked achievements **and** an AP
+wallet to `user://achievements.cfg`. Each achievement grants a fixed point
+value (5–40); the registry is `AchievementManager.ACHIEVEMENTS`. AP is a
+**persistent currency** spent — permanently — on the embark screen:
+
+| Sink | Cost (AP) | Effect |
+| --- | --- | --- |
+| Unlock Tier 2 / 3 / 4 / 5 | 10 / 25 / 50 / 90 | Makes that part tier buyable in embark (still costs pool points to equip) |
+| Add worker slot (×3) | 15 / 30 / 50 | One more starting worker (base 3 → max 6) |
+
+`available_points = total_earned − spent`. A brand-new account has 0 AP, so it
+can only field 3 workers with Tier-1 parts; AP earned from achievements unlocks
+deeper builds and bigger crews over time. The Achievements menu shows each
+entry's icon (placeholder atlas `resources/ui/achievements_atlas.png`), point
+value, and the running wallet.
+
+### Embark: pool points + Cogmind-style parts
+
+The embark screen is the per-run loadout shop. It draws worker **names** from
+`WorkerSpawner.BOT_NAMES` and **personalities** from `Worker.Personality` — the
+same systems gameplay uses, so there is no separate "embark identity" anymore.
+
+Each worker is a **shell**: a slow walking chassis with low bash, tiny carry,
+and a thin battery (`PartDatabase.SHELL`). Parts slot into five categories
+(Power, Propulsion, Manipulation, Utility, Weapon; `PartDatabase.SLOT_LAYOUT`
+exposes 1/2/2/2/1 slots) to build it up. Parts span Tiers 1–5; only tiers the
+account has unlocked appear. Equipping spends from a per-embark **pool**
+(`POOL_PER_WORKER × crew size`, currently 12 each), forcing trade-offs between
+"everyone gets a basic kit" and "one elite specialist."
+
+Stat keys parts contribute (see `PartDatabase`): `move_speed`, `work_speed`,
+`mine_speed`, `build_speed`, `carry`, `max_hp`, `armor`, `bash_min/max`,
+`sight`, `energy_recharge`, `energy_drain`, `wisdom`, `dodge`, `mood`.
+
+### Worker skills and personalities now matter
+
+- **Skills** (`WorkerLoadout.SKILL_KEYS`): Mining, Construction, Hauling,
+  Combat, Research. Levels 0–5 sharpen the matching work rate / carry / bash /
+  wisdom. The embark **specialty** dropdown (Generalist, Miner, Builder, Hauler,
+  Guard, Researcher) seeds a skill spread.
+- **Personalities** previously only flavoured dialogue. They now apply real
+  modifiers (`WorkerLoadout.PERSONALITY_MODS`): e.g. Grumpy hits harder but is
+  perpetually low-mood, Cheerful has a high resilient mood, Philosophical
+  researches fast but works slowly, Competitive is fast but power-hungry. The
+  enum was expanded from 6 to 9 (adding Nostalgic, Competitive, Glitchy) to
+  match the dialogue buckets `WorkerLines` already shipped.
+
+### How it flows together
+
+`WorkerLoadout.derive()` folds parts + skills + personality into one flat stats
+dict. `Worker.apply_loadout()` pushes it onto a live worker (move speed, work
+rates, carry, HP, bash, armor, sight, energy economy, mood baseline/recovery).
+The embark screen emits an `Array[WorkerLoadout]`; `GameState.embark_loadouts`
+carries it to `ColonySite`, which hands it to `WorkerSpawner.spawn` (one worker
+per loadout). Workers spawned **without** a loadout (Replication Cradle, legacy
+saves) keep the original pre-parts balance, so nothing regresses. Loadouts are
+saved/restored per worker, so a customized crew survives reload.
+
 ## Naming And Logic Notes
 
 These are player-facing observations, not code changes.

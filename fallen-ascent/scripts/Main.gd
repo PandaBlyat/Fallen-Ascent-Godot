@@ -80,8 +80,10 @@ func _open_embark_screen() -> void:
 	var embark: Control = EMBARK_SCREEN_SCRIPT.new() as Control
 	embark.name = "EmbarkScreen"
 	add_child(embark)
-	# EmbarkScreen calls queue_free on itself; we just open the next dialog.
-	embark.embark_confirmed.connect(func(_workers: Array) -> void:
+	# EmbarkScreen calls queue_free on itself; we stash the chosen crew builds on
+	# GameState (consumed by WorkerSpawner) and open the next dialog.
+	embark.embark_confirmed.connect(func(loadouts: Array) -> void:
+		GameState.embark_loadouts = loadouts
 		if not has_node("NewGameDialog"):
 			add_child(_build_new_game_dialog())
 	)
@@ -294,6 +296,25 @@ func _build_achievement_panel() -> Control:
 	title.add_theme_color_override("font_color", Color(0.95, 0.97, 0.96))
 	vbox.add_child(title)
 
+	# Achievement-point wallet: earned lifetime, minus what's been permanently
+	# spent on tier / crew unlocks in the embark screen.
+	var points_row := Label.new()
+	points_row.text = "Achievement Points: %d available  ·  %d earned  ·  %d spent" % [
+		AchievementManager.available_points(),
+		AchievementManager.total_points(),
+		AchievementManager.spent_points(),
+	]
+	points_row.add_theme_font_size_override("font_size", 12)
+	points_row.add_theme_color_override("font_color", Color(0.84, 0.78, 0.46))
+	vbox.add_child(points_row)
+
+	var hint := Label.new()
+	hint.text = "Spend points on the Embark screen to unlock higher part tiers and extra workers."
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.add_theme_color_override("font_color", Color(0.56, 0.62, 0.66))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vbox.add_child(hint)
+
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.custom_minimum_size = Vector2(0, 340)
@@ -307,12 +328,12 @@ func _build_achievement_panel() -> Control:
 	var achievements: Array = AchievementManager.all_achievements()
 
 	var unlocked_count: int = 0
-	for ach_raw in achievements:
-		var ach: Dictionary = ach_raw as Dictionary
+	for i in achievements.size():
+		var ach: Dictionary = achievements[i] as Dictionary
 		var is_unlocked: bool = bool(ach.get("unlocked", false))
 		if is_unlocked:
 			unlocked_count += 1
-		var row := _build_achievement_row(ach, is_unlocked)
+		var row := _build_achievement_row(ach, is_unlocked, i)
 		list.add_child(row)
 
 	var summary := Label.new()
@@ -332,15 +353,31 @@ func _build_achievement_panel() -> Control:
 	return overlay
 
 
-static func _build_achievement_row(ach: Dictionary, unlocked: bool) -> Control:
+const ACHIEVEMENT_ICON_ATLAS: String = "res://resources/ui/achievements_atlas.png"
+const ACHIEVEMENT_ICON_CELL: int = 32
+
+
+static func _build_achievement_row(ach: Dictionary, unlocked: bool, index: int) -> Control:
 	var hbox := HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", 10)
 
-	var icon := ColorRect.new()
-	icon.custom_minimum_size = Vector2(16, 16)
-	icon.color = Color(0.32, 0.85, 0.48, 1.0) if unlocked else Color(0.28, 0.30, 0.32, 1.0)
-	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hbox.add_child(icon)
+	# Placeholder per-achievement art from the icon atlas; locked entries are
+	# dimmed. Falls back to a colored chip if the atlas isn't present.
+	var icon_tex: Texture2D = _achievement_icon(index)
+	if icon_tex != null:
+		var icon_rect := TextureRect.new()
+		icon_rect.texture = icon_tex
+		icon_rect.custom_minimum_size = Vector2(28, 28)
+		icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		icon_rect.modulate = Color.WHITE if unlocked else Color(0.30, 0.32, 0.34, 0.85)
+		hbox.add_child(icon_rect)
+	else:
+		var icon := ColorRect.new()
+		icon.custom_minimum_size = Vector2(16, 16)
+		icon.color = Color(0.32, 0.85, 0.48, 1.0) if unlocked else Color(0.28, 0.30, 0.32, 1.0)
+		icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		hbox.add_child(icon)
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 1)
@@ -361,4 +398,30 @@ static func _build_achievement_row(ach: Dictionary, unlocked: bool) -> Control:
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(desc_lbl)
 
+	var points_lbl := Label.new()
+	points_lbl.text = "+%d AP" % int(ach.get("points", 0))
+	points_lbl.add_theme_font_size_override("font_size", 11)
+	points_lbl.add_theme_color_override("font_color",
+		Color(0.84, 0.78, 0.46) if unlocked else Color(0.42, 0.44, 0.40))
+	points_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hbox.add_child(points_lbl)
+
 	return hbox
+
+
+## One 32x32 cell from the achievement icon atlas, indexed left-to-right.
+## Returns null if the atlas is missing so the caller can fall back.
+static func _achievement_icon(index: int) -> Texture2D:
+	if not ResourceLoader.exists(ACHIEVEMENT_ICON_ATLAS):
+		return null
+	var tex: Texture2D = load(ACHIEVEMENT_ICON_ATLAS) as Texture2D
+	if tex == null:
+		return null
+	var cols: int = maxi(1, int(tex.get_width() / ACHIEVEMENT_ICON_CELL))
+	var atlas := AtlasTexture.new()
+	atlas.atlas = tex
+	atlas.region = Rect2(
+		(index % cols) * ACHIEVEMENT_ICON_CELL,
+		int(index / cols) * ACHIEVEMENT_ICON_CELL,
+		ACHIEVEMENT_ICON_CELL, ACHIEVEMENT_ICON_CELL)
+	return atlas

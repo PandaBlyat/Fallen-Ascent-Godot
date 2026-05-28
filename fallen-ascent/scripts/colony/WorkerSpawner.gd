@@ -42,6 +42,10 @@ const BOT_NAMES: Array[String] = [
 ]
 
 
+## Spawns the starting crew. When `loadouts` is non-empty (the embark screen
+## chose them), one worker is spawned and configured per loadout; otherwise
+## `count` random default bots are spawned. Names always come from BOT_NAMES —
+## the embark screen draws from this same pool, so there is one source of truth.
 static func spawn(
 	count: int,
 	origin: Vector2i,
@@ -55,9 +59,11 @@ static func spawn(
 	fog: FogOfWar = null,
 	structure_manager: StructureManager = null,
 	room_manager: Node = null,
+	loadouts: Array = [],
 ) -> Array[Vector2i]:
+	var target_count: int = loadouts.size() if not loadouts.is_empty() else count
 	var used: Array[Vector2i] = []
-	for cell in _walkable_cells_near(origin, count, chunk_manager):
+	for cell in _walkable_cells_near(origin, target_count, chunk_manager):
 		var index: int = workers_root.get_child_count() + used.size()
 		var worker: Worker = _make_worker(
 			cell, index, chunk_manager, job_board, pathfinder,
@@ -65,8 +71,13 @@ static func spawn(
 			structure_manager, room_manager,
 		)
 		workers_root.add_child(worker)
+		# apply_loadout runs AFTER add_child so the worker's _ready has built its
+		# CombatStats, which the loadout then overwrites.
+		var slot: int = used.size()
+		if slot < loadouts.size() and loadouts[slot] is WorkerLoadout:
+			worker.apply_loadout(loadouts[slot] as WorkerLoadout)
 		used.append(cell)
-		if used.size() >= count:
+		if used.size() >= target_count:
 			break
 	return used
 

@@ -24,6 +24,8 @@ var _showing: bool = false
 var _show_start_msec: int = 0
 ## Active modal panel (freed on dismiss).
 var _modal: Control = null
+## Current border-pulse tween; killed and replaced on each new modal.
+var _border_tween: Tween = null
 
 
 func _ready() -> void:
@@ -32,6 +34,20 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 600
 	EventBus.achievement_unlocked.connect(_on_achievement_unlocked)
+
+
+## Handles click-to-dismiss at the input level, bypassing GUI filter hierarchy.
+## Using gui_input on the overlay doesn't work because inner Controls (labels,
+## panel) have MOUSE_FILTER_STOP by default and absorb clicks before they reach
+## the overlay's gui_input handler.
+func _input(event: InputEvent) -> void:
+	if not _showing:
+		return
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	accept_event()
+	_dismiss()
 
 
 func _on_achievement_unlocked(id: StringName) -> void:
@@ -82,6 +98,9 @@ func _process(_delta: float) -> void:
 
 
 func _dismiss() -> void:
+	if _border_tween != null:
+		_border_tween.kill()
+		_border_tween = null
 	if _modal == null or not is_instance_valid(_modal):
 		_modal = null
 		_showing = false
@@ -210,30 +229,21 @@ func _build_modal(ach: Dictionary, index: int) -> Control:
 	# Golden border pulse animation driven by a tween looping on the panel.
 	_start_border_pulse(panel, style)
 
-	# Click anywhere on the overlay to dismiss.
-	overlay.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
-			get_viewport().set_input_as_handled()
-			_dismiss()
-	)
-
 	return overlay
 
 
 func _start_border_pulse(panel: PanelContainer, style: StyleBoxFlat) -> void:
-	var tween := create_tween()
-	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
-	tween.set_loops()
-	tween.tween_method(func(v: float) -> void:
-		if not is_instance_valid(panel):
-			return
+	if _border_tween != null:
+		_border_tween.kill()
+	_border_tween = create_tween()
+	_border_tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
+	_border_tween.set_loops()
+	_border_tween.tween_method(func(v: float) -> void:
 		style.shadow_color = Color(0.90, 0.76, 0.22, v)
 		style.shadow_size = int(14.0 + 10.0 * v)
 		style.border_color = Color(0.90 + 0.10 * v, 0.76 + 0.14 * v, 0.22, 1.0)
 	, 0.3, 1.0, 0.7).set_ease(Tween.EASE_IN_OUT)
-	tween.tween_method(func(v: float) -> void:
-		if not is_instance_valid(panel):
-			return
+	_border_tween.tween_method(func(v: float) -> void:
 		style.shadow_color = Color(0.90, 0.76, 0.22, v)
 		style.shadow_size = int(14.0 + 10.0 * v)
 		style.border_color = Color(0.90 + 0.10 * v, 0.76 + 0.14 * v, 0.22, 1.0)

@@ -25,7 +25,12 @@ var _pending_load: Dictionary = {}
 
 func has_save(path: String = "") -> bool:
 	if path.is_empty():
-		return FileAccess.file_exists(SAVE_PATH) or FileAccess.file_exists(SAVE_LEGACY_PATH)
+		if FileAccess.file_exists(SAVE_LEGACY_PATH):
+			return true
+		for i in SAVE_SLOT_COUNT:
+			if FileAccess.file_exists(_slot_path(i)):
+				return true
+		return false
 	return FileAccess.file_exists(path)
 
 

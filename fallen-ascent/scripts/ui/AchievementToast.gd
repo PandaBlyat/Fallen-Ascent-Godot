@@ -1,10 +1,9 @@
 class_name AchievementToast
 extends Control
 ##
-## Full-screen achievement unlock modal. Pauses the game while displaying,
-## then resumes when the player clicks or the display timer expires.
-## Multiple unlocks are queued and shown one at a time.
-## PROCESS_MODE_ALWAYS so it runs during pause.
+## Full-screen achievement unlock notification. Shows on top of gameplay without
+## pausing — click or wait 4.5 s to dismiss. Multiple unlocks are queued and
+## shown one at a time. PROCESS_MODE_ALWAYS so it runs during pause.
 ##
 
 const ORBITRON: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
@@ -44,7 +43,6 @@ func _on_achievement_unlocked(id: StringName) -> void:
 
 func _show_next() -> void:
 	if _queue.is_empty():
-		_resume_game()
 		return
 	var id: StringName = _queue.pop_front()
 	var ach_index: int = -1
@@ -60,7 +58,6 @@ func _show_next() -> void:
 		return
 
 	_showing = true
-	_pause_game()
 	_modal = _build_modal(ach, ach_index)
 	add_child(_modal)
 	_animate_in(_modal)

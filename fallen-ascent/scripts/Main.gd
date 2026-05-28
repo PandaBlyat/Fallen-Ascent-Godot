@@ -64,13 +64,14 @@ func _add_continue_button() -> void:
 	)
 
 
-## Adds an Achievements button below the main menu buttons.
+## Adds an Achievements button above the Quit button.
 func _add_achievements_button() -> void:
 	var button := Button.new()
 	button.text = "Achievements"
 	button.custom_minimum_size = Vector2(0, 40)
 	button.add_theme_font_size_override("font_size", 14)
 	_buttons.add_child(button)
+	_buttons.move_child(button, _quit_button.get_index())
 	button.pressed.connect(AudioManager.play_button_press)
 	button.pressed.connect(_on_achievements_pressed)
 

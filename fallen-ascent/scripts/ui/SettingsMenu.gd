@@ -383,16 +383,11 @@ func _on_load_pressed() -> void:
 	if not SaveManager.has_save():
 		_load_button.text = "No save"
 		return
-	# Show a save-list panel rather than loading immediately.
-	var tree: SceneTree = get_tree()
-	if tree == null:
-		return
-	var root: Window = tree.root
-	if root.has_node("SaveListPanel"):
+	if has_node("SaveListPanel"):
 		return
 	var panel: Control = _build_save_list_panel()
 	panel.name = "SaveListPanel"
-	root.add_child(panel)
+	add_child(panel)
 
 
 func _save_exists() -> bool:

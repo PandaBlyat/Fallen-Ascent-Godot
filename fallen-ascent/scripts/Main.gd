@@ -21,7 +21,7 @@ const DEFAULT_MAP_SIZE_INDEX: int = 2
 @onready var _new_game_button: Button = %NewGameButton
 @onready var _settings_button: Button = %SettingsButton
 @onready var _quit_button: Button = %QuitButton
-@onready var _background: TextureRect = $Background
+@onready var _background: Control = $Background
 @onready var _buttons: VBoxContainer = $Buttons
 
 
@@ -29,8 +29,6 @@ func _ready() -> void:
 	# Skin every button below this root with the shared worker-card texture so the
 	# main menu (and its dialogs) match the rest of the game's UI chrome.
 	theme = UiStyle.button_theme()
-	_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_background.stretch_mode = TextureRect.STRETCH_SCALE
 	_add_continue_button()
 	_add_achievements_button()
 	_new_game_button.pressed.connect(_on_new_game_pressed)

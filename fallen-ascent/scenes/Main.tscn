@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://dwgclexpywp83"]
 
 [ext_resource type="Script" uid="uid://bxy5hal7yjk5p" path="res://scripts/Main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/ui/PixelSimulationBackground.gd" id="2_bg"]
+[ext_resource type="Script" uid="uid://dmunfb33g6wxo" path="res://scripts/ui/PixelSimulationBackground.gd" id="2_bg"]
 
 [node name="Main" type="Control"]
 layout_mode = 3

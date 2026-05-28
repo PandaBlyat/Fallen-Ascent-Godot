@@ -38,9 +38,26 @@ func _ready() -> void:
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_quit_button.pressed.connect(AudioManager.play_button_press)
 	MenuMusicPlayer.play_once_from_start()
+	
 	var _toast := ACHIEVEMENT_TOAST_SCRIPT.new() as Control
 	_toast.name = "AchievementToast"
 	add_child(_toast)
+
+	# Configure the button container fade-in effect to coordinate with the title formation
+	_buttons.modulate.a = 0.0
+	if _background.has_signal("title_formed"):
+		_background.connect("title_formed", _on_title_formed)
+	else:
+		# Fallback: instantly show buttons if the custom simulation script is not present
+		_buttons.modulate.a = 1.0
+
+
+## Handles the smooth fade-in of the menu buttons once the simulation title forms.
+func _on_title_formed() -> void:
+	var tween := create_tween()
+	tween.tween_property(_buttons, "modulate:a", 1.0, 1.2)\
+		.set_trans(Tween.TRANS_SINE)\
+		.set_ease(Tween.EASE_OUT)
 
 
 ## Adds a Continue button at the top of the menu when a colony save exists, so

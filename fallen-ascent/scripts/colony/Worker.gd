@@ -72,10 +72,10 @@ const KNOCKBACK_DURATION: float = 0.12
 const FACTION_COLONY: int = 0
 
 const MOVE_SPEED_PX_PER_SEC: float = 68.0
-const WATER_SHALLOW_SPEED_MULT: float = 0.5
-const WATER_PUDDLE_SPEED_MULT: float = 0.85
-const ACID_SHALLOW_SPEED_MULT: float = 0.4
-const ACID_PUDDLE_SPEED_MULT: float = 0.75
+const WATER_SHALLOW_SPEED_MULT: float = 0.3
+const WATER_PUDDLE_SPEED_MULT: float = 0.55
+const ACID_SHALLOW_SPEED_MULT: float = 0.3
+const ACID_PUDDLE_SPEED_MULT: float = 0.2
 const ACID_SHALLOW_DPS: float = 2.0
 const ACID_PUDDLE_DPS: float = 0.5
 const ACID_DEEP_DPS: float = 6.0

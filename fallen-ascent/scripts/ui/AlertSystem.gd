@@ -52,13 +52,22 @@ func _ready() -> void:
 	add_child(anchor)
 
 	_container = VBoxContainer.new()
+	# Align to the middle-right edge
 	_container.anchor_left = 1.0
 	_container.anchor_right = 1.0
-	_container.anchor_top = 0.0
-	_container.anchor_bottom = 0.0
+	_container.anchor_top = 0.5
+	_container.anchor_bottom = 0.5
+	
+	# Enable bidirectional vertical growth to keep the container centered
+	_container.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_container.grow_vertical = Control.GROW_DIRECTION_BOTH
+	
+	# Define margins/offsets relative to the center-right anchor points
 	_container.offset_left = -(CARD_WIDTH + 12.0)
-	_container.offset_right = -8.0
-	_container.offset_top = 12.0
+	_container.offset_right = -12.0
+	_container.offset_top = 0.0
+	_container.offset_bottom = 0.0
+	
 	_container.add_theme_constant_override("separation", int(CARD_SPACING))
 	_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	anchor.add_child(_container)

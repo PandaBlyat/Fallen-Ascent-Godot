@@ -29,6 +29,7 @@ const HOSTILE_FOV_CHECK_SEC: float = 1.5
 
 const HOSTILE_BOT_SCRIPT: Script = preload("res://scripts/colony/HostileBot.gd")
 const WORKER_SCRIPT: Script = preload("res://scripts/colony/Worker.gd")
+const ACHIEVEMENT_TOAST_SCRIPT: Script = preload("res://scripts/ui/AchievementToast.gd")
 
 var _site_seed: int = 0
 var _loading_overlay: Control = null
@@ -68,6 +69,10 @@ func _ready() -> void:
 	_alert_system = ALERT_SYSTEM_SCRIPT.new() as Node
 	_alert_system.name = "AlertSystem"
 	$HUD.add_child(_alert_system)
+
+	var achievement_toast := ACHIEVEMENT_TOAST_SCRIPT.new() as Control
+	achievement_toast.name = "AchievementToast"
+	$HUD.add_child(achievement_toast)
 	if _alert_system.has_method("set_camera"):
 		_alert_system.call("set_camera", camera)
 

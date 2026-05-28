@@ -115,7 +115,12 @@ const BATTERY_BG := Color(0.05, 0.05, 0.06, 0.9)
 const BATTERY_GOOD := Color(0.3, 0.9, 0.55)
 const BATTERY_LOW := Color(1.0, 0.78, 0.2)
 const ACTION_FONT_SIZE: int = 12
+const SPEECH_FONT_SIZE: int = 10
 const NAME_FONT_SIZE: int = 11
+## Chance per state transition of triggering a personality dialogue line.
+const SPEECH_CHANCE: float = 0.22
+## How long a speech bubble stays visible (seconds of game time).
+const SPEECH_DISPLAY_SECONDS: float = 4.5
 const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
 const HIGHLIGHTER_ATLAS_PATH := "res://resources/entities/Highlighters.png"
 const ACTION_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
@@ -235,6 +240,9 @@ var _manual_charging: bool = false
 var _action_text: String = ""
 var _action_text_size := Vector2.ZERO
 var _name_text_size := Vector2.ZERO
+var _speech_text: String = ""
+var _speech_text_size := Vector2.ZERO
+var _speech_timer: float = 0.0
 var _blocked_action_text: String = ""
 var _blocked_action_timer: float = 0.0
 var _condition: float = CONDITION_MAX
@@ -374,10 +382,22 @@ func _ready() -> void:
 		if _job_board.has_signal("job_added"):
 			_job_board.job_added.connect(_on_job_added)
 	EventBus.tile_changed.connect(_on_tile_changed)
+	EventBus.camera_moved.connect(func(_p: Vector2, _z: Vector2) -> void: queue_redraw())
 	EntityGrid.register(self, FACTION_COLONY, current_grid())
 	tree_exiting.connect(_on_tree_exiting)
 	_setup_audio_players()
 	_remember("online at %d,%d" % [current_grid().x, current_grid().y])
+	# 40% chance to say a spawn line so not every bot speaks at once on embark.
+	if randf() < 0.40:
+		var spawn_line: String = WorkerLines.get_line(_personality, WorkerLines.ACTION_SPAWN)
+		if not spawn_line.is_empty():
+			if spawn_line.length() > 48:
+				spawn_line = spawn_line.left(45) + "..."
+			_speech_text = spawn_line
+			_speech_timer = SPEECH_DISPLAY_SECONDS
+			if ACTION_FONT != null:
+				_speech_text_size = ACTION_FONT.get_string_size(
+					_speech_text, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_FONT_SIZE)
 
 
 func _on_tree_exiting() -> void:
@@ -458,9 +478,11 @@ func _check_energy_alerts() -> void:
 	if ratio <= 0.25 and not _energy_alert_25_sent:
 		_energy_alert_25_sent = true
 		EventBus.worker_low_energy.emit(self, ratio)
+		_say_line(WorkerLines.ACTION_LOW_ENERGY)
 	elif ratio <= 0.10 and not _energy_alert_10_sent:
 		_energy_alert_10_sent = true
 		EventBus.worker_low_energy.emit(self, ratio)
+		_say_line(WorkerLines.ACTION_LOW_ENERGY)
 
 
 func _check_condition_alerts() -> void:
@@ -474,9 +496,11 @@ func _check_condition_alerts() -> void:
 	if ratio <= 0.25 and not _condition_alert_25_sent:
 		_condition_alert_25_sent = true
 		EventBus.worker_low_condition.emit(self, ratio)
+		_say_line(WorkerLines.ACTION_LOW_COND)
 	elif ratio <= 0.10 and not _condition_alert_10_sent:
 		_condition_alert_10_sent = true
 		EventBus.worker_low_condition.emit(self, ratio)
+		_say_line(WorkerLines.ACTION_LOW_COND)
 
 
 func _is_moving_sound_state(s: int) -> bool:
@@ -707,6 +731,13 @@ func apply_loadout(loadout: WorkerLoadout) -> void:
 	_init_part_conditions()
 	_apply_derived_stats(loadout.derive())
 	_update_name_text_size()
+	# Regenerate spawn line with the now-correct personality, replacing any that
+	# _ready() may have set with the pre-loadout random personality.
+	if _speech_timer > 0.0:
+		_speech_text = ""
+		_speech_timer = 0.0
+	if randf() < 0.40:
+		_say_line(WorkerLines.ACTION_SPAWN)
 
 
 ## Seed full condition for every equipped part slot. Called when a loadout is
@@ -834,6 +865,8 @@ func restore_save(data: Dictionary) -> void:
 	_history_index = int(data.get("history_index", _action_history.size()))
 	_state = State.IDLE
 	_idle_cooldown = 0.0
+	_speech_text = ""
+	_speech_timer = 0.0
 	_update_name_text_size()
 	queue_redraw()
 
@@ -1160,7 +1193,12 @@ func _process(delta: float) -> void:
 		_blocked_action_timer = maxf(0.0, _blocked_action_timer - delta)
 		if _blocked_action_timer == 0.0:
 			_refresh_action_text()
-			
+	if _speech_timer > 0.0:
+		_speech_timer = maxf(0.0, _speech_timer - delta)
+		if _speech_timer == 0.0:
+			_speech_text = ""
+		queue_redraw()
+
 	if _no_repair_bench_complaint_timer > 0.0:
 		_no_repair_bench_complaint_timer = maxf(0.0, _no_repair_bench_complaint_timer - delta)
 	if _research_urge_cooldown > 0.0:
@@ -1394,6 +1432,7 @@ func _process(delta: float) -> void:
 		_last_action_state = _state
 		_last_action_job = _job
 		_refresh_action_text()
+		_try_say_personality_line()
 		
 	if _state != _last_sound_state or _job != _last_sound_job:
 		_last_sound_state = _state
@@ -3594,10 +3633,7 @@ func _advance_path(delta: float) -> bool:
 			position += to_target / dist * step
 			step = 0.0
 			
-	# Redraw on movement only if selection circles or order highlighters need to follow the worker
-	if _selected or _highlight_cell() >= 0:
-		queue_redraw()
-		
+	queue_redraw()
 	return _path_index >= _path.size()
 
 
@@ -4231,6 +4267,65 @@ func _draw() -> void:
 		draw_rect(Rect2(hp_pos, Vector2(bar_size.x * stats.hp_ratio(), bar_size.y)), Color(0.95, 0.30, 0.30))
 
 
+## Maps the current state to the relevant WorkerLines action key.
+## Returns empty string for pure movement/transit states that don't warrant dialogue.
+func _state_to_dialogue_action() -> StringName:
+	match _state:
+		State.WORKING:
+			if _job is BuildJob or _job is CraftJob or _job is OperateStructureJob:
+				return WorkerLines.ACTION_BUILD
+			return WorkerLines.ACTION_MINE
+		State.BUILDING:
+			return WorkerLines.ACTION_BUILD
+		State.CRAFTING:
+			return WorkerLines.ACTION_BUILD
+		State.CARRYING, State.MOVING_TO_PICKUP, State.MOVING_TO_DROP:
+			return WorkerLines.ACTION_HAUL
+		State.CHARGING:
+			return WorkerLines.ACTION_CHARGE
+		State.REPAIRING:
+			return WorkerLines.ACTION_REPAIR
+		State.IDLE:
+			return WorkerLines.ACTION_IDLE
+		State.SOCIALIZING:
+			return WorkerLines.ACTION_SOCIALIZE
+		State.MEDITATING:
+			return WorkerLines.ACTION_MEDITATE
+		State.FIGHTING:
+			return WorkerLines.ACTION_FIGHT
+		State.REBOOTING:
+			return WorkerLines.ACTION_ATTACKED
+	return &""
+
+
+## Unconditionally shows a personality line for the given action.
+## Used for guaranteed triggers like low-energy and low-condition alerts.
+func _say_line(action: StringName) -> void:
+	var line: String = WorkerLines.get_line(_personality, action)
+	if line.is_empty():
+		return
+	if line.length() > 48:
+		line = line.left(45) + "..."
+	_speech_text = line
+	_speech_timer = SPEECH_DISPLAY_SECONDS
+	if ACTION_FONT != null:
+		_speech_text_size = ACTION_FONT.get_string_size(
+			_speech_text, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_FONT_SIZE)
+	queue_redraw()
+
+
+## Rolls a chance to show a personality dialogue line for the current state.
+## Idle has a reduced probability to avoid spam during the frequent idle ticks.
+func _try_say_personality_line() -> void:
+	var action: StringName = _state_to_dialogue_action()
+	if action.is_empty():
+		return
+	var chance: float = SPEECH_CHANCE * 0.3 if action == WorkerLines.ACTION_IDLE else SPEECH_CHANCE
+	if randf() > chance:
+		return
+	_say_line(action)
+
+
 func _draw_action_bubble() -> void:
 	var font: Font = ACTION_FONT
 	var screen_scale: Vector2 = get_global_transform_with_canvas().get_scale()
@@ -4256,6 +4351,29 @@ func _draw_action_bubble() -> void:
 		draw_string(font, origin + Vector2(pad.x, text_size.y + pad.y - 1.0),
 			_action_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ACTION_FONT_SIZE, Color.WHITE)
 		top_y = origin.y
+	# Personality speech bubble: appears above the action box, fades in/out.
+	if not _speech_text.is_empty() and _speech_timer > 0.0:
+		var speech_alpha: float
+		if _speech_timer >= SPEECH_DISPLAY_SECONDS - 0.3:
+			speech_alpha = (SPEECH_DISPLAY_SECONDS - _speech_timer) / 0.3
+		elif _speech_timer <= 1.0:
+			speech_alpha = _speech_timer
+		else:
+			speech_alpha = 1.0
+		speech_alpha = clampf(speech_alpha, 0.0, 1.0)
+		var speech_size := _speech_text_size
+		var spad := Vector2(5, 3)
+		var s_origin := Vector2(
+			roundf(anchor.x - speech_size.x * 0.5 - spad.x),
+			roundf(top_y - speech_size.y - spad.y - 3.0),
+		)
+		var s_rect := Rect2(s_origin, speech_size + spad * 2.0)
+		draw_rect(s_rect, Color(0.08, 0.05, 0.14, 0.88 * speech_alpha))
+		draw_rect(s_rect, Color(0.70, 0.55, 1.0, 0.70 * speech_alpha), false, 1.0)
+		draw_string(font, s_origin + Vector2(spad.x, speech_size.y + spad.y - 1.0),
+			_speech_text, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_FONT_SIZE,
+			Color(0.92, 0.86, 1.0, speech_alpha))
+		top_y = s_origin.y
 	var name_text: String = display_name()
 	if not name_text.is_empty():
 		var name_size := _name_text_size

@@ -46,18 +46,22 @@ func _ready() -> void:
 
 
 ## Adds a Continue button at the top of the menu when a colony save exists, so
-## the player can resume directly without opening Settings.
+## the player can open the save list panel and resume or delete saves.
 func _add_continue_button() -> void:
 	if not SaveManager.has_save():
 		return
 	var button := Button.new()
-	button.text = "Continue"
+	button.text = "Load Save"
 	button.custom_minimum_size = Vector2(0, 44)
 	button.add_theme_font_size_override("font_size", 16)
 	_buttons.add_child(button)
 	_buttons.move_child(button, 0)
 	button.pressed.connect(AudioManager.play_button_press)
-	button.pressed.connect(func() -> void: SaveManager.begin_load())
+	button.pressed.connect(func() -> void:
+		if has_node("SaveListPanel"):
+			return
+		add_child(_build_save_list_panel())
+	)
 
 
 ## Adds an Achievements button below the main menu buttons.
@@ -259,6 +263,180 @@ static func _dialog_spacer() -> Control:
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	return spacer
+
+
+## Builds the save-file list panel so the player can resume or delete saves.
+func _build_save_list_panel() -> Control:
+	var overlay := Control.new()
+	overlay.name = "SaveListPanel"
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 100
+
+	var dimmer := ColorRect.new()
+	dimmer.color = Color(0, 0, 0, 0.55)
+	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(dimmer)
+
+	var panel := PanelContainer.new()
+	panel.anchor_left = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -280.0
+	panel.offset_top = -240.0
+	panel.offset_right = 280.0
+	panel.offset_bottom = 240.0
+	panel.add_theme_stylebox_override("panel", _dialog_style())
+	overlay.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_bottom", 20)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+	margin.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Load Save"
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(0.95, 0.97, 0.96, 1.0))
+	vbox.add_child(title)
+
+	var saves: Array[Dictionary] = SaveManager.list_saves()
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, 280)
+	vbox.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 8)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+
+	if saves.is_empty():
+		var empty_lbl := Label.new()
+		empty_lbl.text = "No save files found."
+		empty_lbl.add_theme_font_size_override("font_size", 13)
+		empty_lbl.add_theme_color_override("font_color", Color(0.55, 0.60, 0.63))
+		list.add_child(empty_lbl)
+	else:
+		for entry in saves:
+			var row := _build_save_row(entry, overlay)
+			list.add_child(row)
+
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(btn_row)
+
+	var spacer_ctrl := Control.new()
+	spacer_ctrl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_row.add_child(spacer_ctrl)
+
+	var close_btn := Button.new()
+	close_btn.text = "Cancel"
+	close_btn.custom_minimum_size = Vector2(110, 36)
+	close_btn.pressed.connect(AudioManager.play_button_press)
+	close_btn.pressed.connect(overlay.queue_free)
+	btn_row.add_child(close_btn)
+
+	return overlay
+
+
+func _build_save_row(entry: Dictionary, overlay: Control) -> Control:
+	var path: String = str(entry.get("path", ""))
+	var modified: int = int(entry.get("modified_unix", 0))
+	var size_bytes: int = int(entry.get("size_bytes", 0))
+
+	var row_bg := PanelContainer.new()
+	var row_style := StyleBoxFlat.new()
+	row_style.bg_color = Color(0.10, 0.12, 0.14, 0.80)
+	row_style.set_border_width_all(1)
+	row_style.border_color = Color(0.22, 0.28, 0.32, 0.55)
+	row_style.set_corner_radius_all(4)
+	row_bg.add_theme_stylebox_override("panel", row_style)
+
+	var row_margin := MarginContainer.new()
+	row_margin.add_theme_constant_override("margin_left", 10)
+	row_margin.add_theme_constant_override("margin_top", 8)
+	row_margin.add_theme_constant_override("margin_right", 8)
+	row_margin.add_theme_constant_override("margin_bottom", 8)
+	row_bg.add_child(row_margin)
+
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 8)
+	row_margin.add_child(hbox)
+
+	var info_col := VBoxContainer.new()
+	info_col.add_theme_constant_override("separation", 2)
+	info_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(info_col)
+
+	var date_str: String = "Unknown date"
+	if modified > 0:
+		var dt: Dictionary = Time.get_datetime_dict_from_unix_time(modified)
+		date_str = "%04d-%02d-%02d  %02d:%02d" % [
+			int(dt.get("year", 0)), int(dt.get("month", 0)), int(dt.get("day", 0)),
+			int(dt.get("hour", 0)), int(dt.get("minute", 0))
+		]
+
+	var name_lbl := Label.new()
+	name_lbl.text = path.get_file().get_basename().replace("_", " ").capitalize()
+	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.add_theme_color_override("font_color", Color(0.90, 0.93, 0.95))
+	info_col.add_child(name_lbl)
+
+	var date_lbl := Label.new()
+	date_lbl.text = date_str
+	date_lbl.add_theme_font_size_override("font_size", 10)
+	date_lbl.add_theme_color_override("font_color", Color(0.56, 0.63, 0.68))
+	info_col.add_child(date_lbl)
+
+	var size_lbl := Label.new()
+	size_lbl.text = "%d KB" % (size_bytes / 1024)
+	size_lbl.add_theme_font_size_override("font_size", 10)
+	size_lbl.add_theme_color_override("font_color", Color(0.42, 0.48, 0.52))
+	info_col.add_child(size_lbl)
+
+	var resume_btn := Button.new()
+	resume_btn.text = "Resume"
+	resume_btn.custom_minimum_size = Vector2(80, 32)
+	resume_btn.pressed.connect(AudioManager.play_button_press)
+	resume_btn.pressed.connect(func() -> void:
+		overlay.queue_free()
+		SaveManager.begin_load(path)
+	)
+	hbox.add_child(resume_btn)
+
+	# Two-click delete: first click arms, second confirms.
+	var del_btn := Button.new()
+	del_btn.text = "Delete"
+	del_btn.custom_minimum_size = Vector2(70, 32)
+	del_btn.add_theme_color_override("font_color", Color(0.78, 0.38, 0.34))
+	del_btn.set_meta("armed", false)
+	del_btn.pressed.connect(func() -> void:
+		if not del_btn.get_meta("armed", false):
+			del_btn.set_meta("armed", true)
+			del_btn.text = "Sure?"
+			del_btn.add_theme_color_override("font_color", Color(1.0, 0.28, 0.22))
+			del_btn.get_tree().create_timer(2.5, false).timeout.connect(func() -> void:
+				if is_instance_valid(del_btn):
+					del_btn.set_meta("armed", false)
+					del_btn.text = "Delete"
+					del_btn.add_theme_color_override("font_color", Color(0.78, 0.38, 0.34))
+			)
+		else:
+			SaveManager.delete_save(path)
+			row_bg.queue_free()
+	)
+	hbox.add_child(del_btn)
+
+	return row_bg
 
 
 ## Builds the achievements panel overlay (shows unlocked/locked achievements).

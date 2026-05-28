@@ -118,7 +118,9 @@ const ACTION_FONT_SIZE: int = 12
 const SPEECH_FONT_SIZE: int = 10
 const NAME_FONT_SIZE: int = 11
 ## Chance per state transition of triggering a personality dialogue line.
-const SPEECH_CHANCE: float = 0.22
+const SPEECH_CHANCE: float = 0.10
+## Minimum seconds between any two personality speech bubbles for one worker.
+const SPEECH_COOLDOWN_SECONDS: float = 50.0
 ## How long a speech bubble stays visible (seconds of game time).
 const SPEECH_DISPLAY_SECONDS: float = 4.5
 const ENTITY_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
@@ -243,6 +245,7 @@ var _name_text_size := Vector2.ZERO
 var _speech_text: String = ""
 var _speech_text_size := Vector2.ZERO
 var _speech_timer: float = 0.0
+var _speech_cooldown: float = 0.0
 var _blocked_action_text: String = ""
 var _blocked_action_timer: float = 0.0
 var _condition: float = CONDITION_MAX
@@ -1198,6 +1201,8 @@ func _process(delta: float) -> void:
 		if _speech_timer == 0.0:
 			_speech_text = ""
 		queue_redraw()
+	if _speech_cooldown > 0.0:
+		_speech_cooldown = maxf(0.0, _speech_cooldown - delta)
 
 	if _no_repair_bench_complaint_timer > 0.0:
 		_no_repair_bench_complaint_timer = maxf(0.0, _no_repair_bench_complaint_timer - delta)
@@ -4317,6 +4322,8 @@ func _say_line(action: StringName) -> void:
 ## Rolls a chance to show a personality dialogue line for the current state.
 ## Idle has a reduced probability to avoid spam during the frequent idle ticks.
 func _try_say_personality_line() -> void:
+	if _speech_cooldown > 0.0:
+		return
 	var action: StringName = _state_to_dialogue_action()
 	if action.is_empty():
 		return
@@ -4324,6 +4331,7 @@ func _try_say_personality_line() -> void:
 	if randf() > chance:
 		return
 	_say_line(action)
+	_speech_cooldown = SPEECH_COOLDOWN_SECONDS
 
 
 func _draw_action_bubble() -> void:

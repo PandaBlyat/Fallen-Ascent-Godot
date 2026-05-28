@@ -1,145 +1,256 @@
 class_name AchievementToast
 extends Control
 ##
-## Screen-space achievement unlock toast. Attach to any scene or CanvasLayer.
-## Connects to EventBus.achievement_unlocked automatically on _ready.
-## PROCESS_MODE_ALWAYS so toasts display even when game speed is paused.
+## Full-screen achievement unlock modal. Pauses the game while displaying,
+## then resumes when the player clicks or the display timer expires.
+## Multiple unlocks are queued and shown one at a time.
+## PROCESS_MODE_ALWAYS so it runs during pause.
 ##
 
 const ORBITRON: Font = preload("res://resources/Orbitron-VariableFont_wght.ttf")
 const ICON_ATLAS_PATH: String = "res://resources/ui/achievements_atlas.png"
 const ICON_CELL: int = 32
 
-const DISPLAY_SECONDS: float = 5.0
-const SLIDE_IN_SECONDS: float = 0.38
-const FADE_OUT_SECONDS: float = 0.4
-const PANEL_WIDTH: float = 290.0
-const MARGIN: float = 14.0
-const STACK_GAP: float = 6.0
+const DISPLAY_SECONDS: float = 4.5
+const SCALE_IN_SECONDS: float = 0.32
+const FADE_OUT_SECONDS: float = 0.28
 
-## Tracks how many panels are currently alive so each new one stacks below.
-var _active_count: int = 0
+const PANEL_W: float = 380.0
+const PANEL_H: float = 160.0
+
+## Queued achievement ids waiting to be shown.
+var _queue: Array[StringName] = []
+## Whether we are currently showing a modal (and the game is paused).
+var _showing: bool = false
+## Speed the game was running at before we paused it.
+var _saved_speed: float = 1.0
+## Active modal panel (freed on dismiss).
+var _modal: Control = null
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	z_index = 500
+	z_index = 600
 	EventBus.achievement_unlocked.connect(_on_achievement_unlocked)
 
 
 func _on_achievement_unlocked(id: StringName) -> void:
+	_queue.append(id)
+	if not _showing:
+		_show_next()
+
+
+func _show_next() -> void:
+	if _queue.is_empty():
+		_resume_game()
+		return
+	var id: StringName = _queue.pop_front()
+	var ach_index: int = -1
+	var ach: Dictionary = {}
 	for i in AchievementManager.ACHIEVEMENTS.size():
-		var ach: Dictionary = AchievementManager.ACHIEVEMENTS[i] as Dictionary
-		if ach.get("id", &"") as StringName == id:
-			_spawn_toast(ach, i)
-			return
-
-
-func _spawn_toast(ach: Dictionary, index: int) -> void:
-	var panel := _build_panel(ach, index)
-	add_child(panel)
-
-	# Wait one frame for the panel to calculate its natural size.
-	await get_tree().process_frame
-	if not is_instance_valid(panel):
+		var a: Dictionary = AchievementManager.ACHIEVEMENTS[i] as Dictionary
+		if a.get("id", &"") as StringName == id:
+			ach = a
+			ach_index = i
+			break
+	if ach.is_empty():
+		_show_next()
 		return
 
-	var vp_size: Vector2 = get_viewport_rect().size
-	var panel_h: float = maxf(panel.size.y, 70.0)
-	var target_x: float = vp_size.x - PANEL_WIDTH - MARGIN
-	var start_x: float  = vp_size.x + 10.0
-	var y_pos: float    = MARGIN + float(_active_count) * (panel_h + STACK_GAP)
+	_showing = true
+	_pause_game()
+	_modal = _build_modal(ach, ach_index)
+	add_child(_modal)
+	_animate_in(_modal)
 
-	panel.position = Vector2(start_x, y_pos)
-	panel.custom_minimum_size.x = PANEL_WIDTH
 
-	_active_count += 1
+func _pause_game() -> void:
+	_saved_speed = GameState.game_speed if GameState != null else 1.0
+	if GameState != null:
+		GameState.set_game_speed(0.0)
 
+
+func _resume_game() -> void:
+	_showing = false
+	if GameState != null and GameState.game_speed == 0.0:
+		GameState.set_game_speed(_saved_speed if _saved_speed > 0.0 else 1.0)
+
+
+func _dismiss() -> void:
+	if _modal == null or not is_instance_valid(_modal):
+		_modal = null
+		_showing = false
+		_show_next()
+		return
 	var tween := create_tween()
 	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
-	tween.tween_property(panel, "position:x", target_x, SLIDE_IN_SECONDS) \
-		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
-	tween.tween_interval(DISPLAY_SECONDS)
-	tween.tween_property(panel, "modulate:a", 0.0, FADE_OUT_SECONDS).set_ease(Tween.EASE_IN)
+	tween.tween_property(_modal, "modulate:a", 0.0, FADE_OUT_SECONDS).set_ease(Tween.EASE_IN)
 	tween.tween_callback(func() -> void:
-		_active_count = maxi(0, _active_count - 1)
-		panel.queue_free()
+		if is_instance_valid(_modal):
+			_modal.queue_free()
+		_modal = null
+		_showing = false
+		_show_next()
 	)
 
 
-func _build_panel(ach: Dictionary, index: int) -> PanelContainer:
+func _animate_in(panel: Control) -> void:
+	panel.scale = Vector2(0.7, 0.7)
+	panel.modulate.a = 0.0
+	var tween := create_tween()
+	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
+	tween.set_parallel(true)
+	tween.tween_property(panel, "scale", Vector2.ONE, SCALE_IN_SECONDS) \
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(panel, "modulate:a", 1.0, SCALE_IN_SECONDS * 0.8) \
+		.set_ease(Tween.EASE_OUT)
+	tween.set_parallel(false)
+	tween.tween_interval(DISPLAY_SECONDS)
+	tween.tween_callback(_dismiss)
+
+
+func _build_modal(ach: Dictionary, index: int) -> Control:
+	var overlay := Control.new()
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.pivot_offset = get_viewport_rect().size * 0.5
+
+	# Semi-transparent background dimmer.
+	var dimmer := ColorRect.new()
+	dimmer.color = Color(0.0, 0.0, 0.0, 0.52)
+	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(dimmer)
+
+	# Centered panel.
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(PANEL_WIDTH, 0.0)
+	panel.custom_minimum_size = Vector2(PANEL_W, PANEL_H)
+	panel.anchor_left = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -PANEL_W * 0.5
+	panel.offset_top = -PANEL_H * 0.5
+	panel.offset_right = PANEL_W * 0.5
+	panel.offset_bottom = PANEL_H * 0.5
+	panel.pivot_offset = Vector2(PANEL_W * 0.5, PANEL_H * 0.5)
 
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.05, 0.055, 0.08, 0.97)
+	style.bg_color = Color(0.04, 0.045, 0.065, 0.98)
 	style.border_color = Color(0.90, 0.76, 0.22, 1.0)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(6)
-	style.shadow_color = Color(0.0, 0.0, 0.0, 0.55)
-	style.shadow_size = 8
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(10)
+	style.shadow_color = Color(0.90, 0.76, 0.22, 0.40)
+	style.shadow_size = 20
+	style.shadow_offset = Vector2.ZERO
 	panel.add_theme_stylebox_override("panel", style)
+	overlay.add_child(panel)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_top", 9)
-	margin.add_theme_constant_override("margin_right", 10)
-	margin.add_theme_constant_override("margin_bottom", 9)
+	margin.add_theme_constant_override("margin_left", 20)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_right", 20)
+	margin.add_theme_constant_override("margin_bottom", 18)
 	panel.add_child(margin)
 
-	var hbox := HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 10)
-	margin.add_child(hbox)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 6)
+	margin.add_child(vbox)
 
-	# --- Icon ---
+	# Header row: label + AP badge.
+	var header_row := HBoxContainer.new()
+	header_row.add_theme_constant_override("separation", 0)
+	vbox.add_child(header_row)
+
+	var header_lbl := Label.new()
+	header_lbl.text = "ACHIEVEMENT UNLOCKED"
+	header_lbl.add_theme_font_override("font", ORBITRON)
+	header_lbl.add_theme_font_size_override("font_size", 9)
+	header_lbl.add_theme_color_override("font_color", Color(0.90, 0.76, 0.22, 1.0))
+	header_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_row.add_child(header_lbl)
+
+	var pts_lbl := Label.new()
+	pts_lbl.text = "+%d AP" % int(ach.get("points", 0))
+	pts_lbl.add_theme_font_override("font", ORBITRON)
+	pts_lbl.add_theme_font_size_override("font_size", 14)
+	pts_lbl.add_theme_color_override("font_color", Color(0.96, 0.88, 0.40, 1.0))
+	header_row.add_child(pts_lbl)
+
+	# Icon + name row.
+	var body_row := HBoxContainer.new()
+	body_row.add_theme_constant_override("separation", 14)
+	vbox.add_child(body_row)
+
 	var icon_tex: Texture2D = _achievement_icon(index)
 	if icon_tex != null:
 		var icon_rect := TextureRect.new()
 		icon_rect.texture = icon_tex
-		icon_rect.custom_minimum_size = Vector2(38, 38)
+		icon_rect.custom_minimum_size = Vector2(54, 54)
 		icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon_rect.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		hbox.add_child(icon_rect)
+		body_row.add_child(icon_rect)
 
-	# --- Text column ---
-	var vbox := VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 2)
-	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hbox.add_child(vbox)
-
-	var header := Label.new()
-	header.text = "ACHIEVEMENT UNLOCKED"
-	header.add_theme_font_override("font", ORBITRON)
-	header.add_theme_font_size_override("font_size", 8)
-	header.add_theme_color_override("font_color", Color(0.90, 0.76, 0.22, 1.0))
-	vbox.add_child(header)
+	var text_col := VBoxContainer.new()
+	text_col.add_theme_constant_override("separation", 4)
+	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	body_row.add_child(text_col)
 
 	var name_lbl := Label.new()
 	name_lbl.text = str(ach.get("name", "???"))
 	name_lbl.add_theme_font_override("font", ORBITRON)
-	name_lbl.add_theme_font_size_override("font_size", 13)
+	name_lbl.add_theme_font_size_override("font_size", 22)
 	name_lbl.add_theme_color_override("font_color", Color(0.97, 0.98, 1.0))
-	vbox.add_child(name_lbl)
+	text_col.add_child(name_lbl)
 
 	var desc_lbl := Label.new()
 	desc_lbl.text = str(ach.get("desc", ""))
-	desc_lbl.add_theme_font_size_override("font_size", 9)
+	desc_lbl.add_theme_font_size_override("font_size", 11)
 	desc_lbl.add_theme_color_override("font_color", Color(0.62, 0.70, 0.76))
 	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vbox.add_child(desc_lbl)
+	text_col.add_child(desc_lbl)
 
-	# --- AP badge ---
-	var pts_lbl := Label.new()
-	pts_lbl.text = "+%d AP" % int(ach.get("points", 0))
-	pts_lbl.add_theme_font_override("font", ORBITRON)
-	pts_lbl.add_theme_font_size_override("font_size", 11)
-	pts_lbl.add_theme_color_override("font_color", Color(0.84, 0.78, 0.46))
-	pts_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hbox.add_child(pts_lbl)
+	# Dismiss hint.
+	var hint_lbl := Label.new()
+	hint_lbl.text = "Click to continue"
+	hint_lbl.add_theme_font_size_override("font_size", 9)
+	hint_lbl.add_theme_color_override("font_color", Color(0.45, 0.50, 0.54, 0.80))
+	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(hint_lbl)
 
-	return panel
+	# Golden border pulse animation driven by a tween looping on the panel.
+	_start_border_pulse(panel, style)
+
+	# Click anywhere on the overlay to dismiss.
+	overlay.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			get_viewport().set_input_as_handled()
+			_dismiss()
+	)
+
+	return overlay
+
+
+func _start_border_pulse(panel: PanelContainer, style: StyleBoxFlat) -> void:
+	var tween := create_tween()
+	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
+	tween.set_loops()
+	tween.tween_method(func(v: float) -> void:
+		if not is_instance_valid(panel):
+			return
+		style.shadow_color = Color(0.90, 0.76, 0.22, v)
+		style.shadow_size = int(14.0 + 10.0 * v)
+		style.border_color = Color(0.90 + 0.10 * v, 0.76 + 0.14 * v, 0.22, 1.0)
+	, 0.3, 1.0, 0.7).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_method(func(v: float) -> void:
+		if not is_instance_valid(panel):
+			return
+		style.shadow_color = Color(0.90, 0.76, 0.22, v)
+		style.shadow_size = int(14.0 + 10.0 * v)
+		style.border_color = Color(0.90 + 0.10 * v, 0.76 + 0.14 * v, 0.22, 1.0)
+	, 1.0, 0.3, 0.7).set_ease(Tween.EASE_IN_OUT)
 
 
 static func _achievement_icon(index: int) -> Texture2D:

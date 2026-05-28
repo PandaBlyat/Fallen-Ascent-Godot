@@ -75,18 +75,39 @@ Format: `[area] short description — why it matters / first hint at how`.
       lazy per-chunk diff application.
 ## Worker dialogue + achievement toasts + movement fixes session
 
+- [x] **Achievement modal redesign.** `AchievementToast` now shows a centered
+      full-screen modal (scale-in + gold border pulse) that pauses the game and
+      queues multiple unlocks. AP awarded is shown prominently. Click or wait 4.5s
+      to dismiss.
+- [x] **Worker speech cooldown.** `SPEECH_CHANCE` reduced 0.22→0.10 and a
+      50-second per-worker cooldown added (`_speech_cooldown`) so dialogue lines
+      fire at most once every ~50 game-seconds.
+- [x] **Smooth lighting transitions.** Lighting shader now blends `prev_light_mask`
+      → `light_mask` via `transition_t` over 0.35 s. `LightingOverlay` captures a
+      snapshot before each update and animates the blend with a Tween.
+- [x] **Save list panel.** "Load Save" opens a scrollable panel listing all
+      `user://save_*.sav` files with date, size, Resume and two-click Delete.
+      `SaveManager` now supports multi-slot paths (`save_0.sav` … `save_4.sav`)
+      with `list_saves()` and `delete_save()`.
+- [x] **Haul job priority fix.** `JobBoard._priority_of` changed so MineJob=15
+      and HaulJob=40, making mine/build/operate rank above hauling. Workers no
+      longer abandon nearby mine tasks to haul items.
+
 - [ ] **Speech bubble max-width / font tuning.** The personality speech bubble
       truncates at 48 chars but Orbitron is wide — at zoom-out some text may
       still be too wide. Consider switching to a narrower font or adding a
       draw_string `width` clip. Tune `SPEECH_FONT_SIZE` and `SPEECH_CHANCE`
       during playtest.
-- [ ] **Achievement toast sound effect.** `AchievementToast._spawn_toast` shows
-      a visual popup but plays no sound. Add a short chime via `AudioManager`
-      once a suitable SFX asset exists.
+- [ ] **Achievement toast sound effect.** `AchievementToast` shows a visual modal
+      but plays no sound. Add a short chime via `AudioManager` once a suitable
+      SFX asset exists.
 - [ ] **Worker name / action bubble GPU batching.** Each worker calls
       `queue_redraw()` every frame during movement (fixed for smooth scaling).
       For 100+ workers this adds draw-call overhead. Profile and consider a
       single `CanvasItem` overlay that draws all name bubbles in one pass.
+- [ ] **Save slot UI in settings.** SettingsMenu's Save button still always
+      writes to `save_0.sav`. Add a slot picker so the player can save to
+      different slots without overwriting the auto-save.
 
 - [ ] **Spatial nearest-job index for huge designations.**
       `JobBoard.claim_next_for` now blocks unreachable jobs board-wide on a

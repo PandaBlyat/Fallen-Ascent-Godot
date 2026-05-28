@@ -8,9 +8,9 @@ extends Node
 const HOSTILE_SCRIPT: Script = preload("res://scripts/colony/HostileBot.gd")
 
 const SPAWN_INTERVAL_SECONDS: float = 20.0
-const INITIAL_SPAWN_BURST: int = 6
-const MAX_ALIVE: int = 12
-const MIN_DISTANCE_FROM_COLONY_TILES: int = 30
+const INITIAL_SPAWN_BURST: int = 3
+const MAX_ALIVE: int = 7
+const MIN_DISTANCE_FROM_COLONY_TILES: int = 50
 const SPAWN_ATTEMPTS_PER_TICK: int = 48
 
 @export var chunk_manager_path: NodePath

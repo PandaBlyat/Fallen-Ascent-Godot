@@ -8,7 +8,7 @@ extends Node2D
 const ITEM_SCRIPT: Script = preload("res://scripts/colony/Item.gd")
 const NEUTRAL_BOT_SCRIPT: Script = preload("res://scripts/colony/NeutralBot.gd")
 const ALERT_SYSTEM_SCRIPT: Script = preload("res://scripts/ui/AlertSystem.gd")
-const INITIAL_NEUTRALS: int = 30
+const INITIAL_NEUTRALS: int = 0
 ## How often (seconds) to check if a hostile has entered any worker's FOV.
 const HOSTILE_FOV_CHECK_SEC: float = 1.5
 

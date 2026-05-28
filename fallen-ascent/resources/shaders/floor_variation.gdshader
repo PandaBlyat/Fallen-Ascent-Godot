@@ -184,6 +184,15 @@ void fragment() {
 
 		vec3 color = base.rgb * brightness + tint;
 
+		// Shift basic material style to differentiate adjacent tiles further
+		float material_seed = fract(tile_h.x * 3.41 + tile_h.z * 1.59);
+		if (material_seed < 0.12) {
+			color *= 0.78; // Dark metal/stone finish
+		} else if (material_seed > 0.88) {
+			color *= 1.12; // Polished/light finish
+			color += vec3(0.01, 0.02, 0.04);
+		}
+
 		vec2 local_pixel = mod(pixel_pos, tile_size);
 
 		// Check tile layout status
@@ -191,7 +200,72 @@ void fragment() {
 		bool is_grate = (!is_server) && (h_grate_seed < grate_chance);
 		bool is_hazard = (!is_server) && (!is_grate) && (h_hazard_seed < hazard_chance);
 		bool is_normal = (!is_server) && (!is_grate) && (!is_hazard);
-		bool apply_split = is_normal && (h_split_seed < split_chance);
+
+		// Structural Plate Layout Variables
+		int plate_layout = 0;
+		bool is_groove_pixel = false;
+		bool is_groove_left_top = false;
+		bool is_groove_right_bottom = false;
+
+		float half_tile = floor(tile_size * 0.5);
+		float border_w = pixel_size * 2.0;
+
+		if (is_normal && (h_split_seed < split_chance)) {
+			float layout_rand = fract(h_split_seed * 97.43);
+			plate_layout = 1 + int(layout_rand * 5.0); // Selected layout styles: 1 to 5
+		}
+
+		// Calculate layouts and structural grooves
+		if (plate_layout == 1) {
+			// Style 1: Vertical Split
+			is_groove_pixel = abs(local_pixel.x - half_tile) < pixel_size * 0.5;
+			is_groove_left_top = abs(local_pixel.x - (half_tile - pixel_size)) < pixel_size * 0.5;
+			is_groove_right_bottom = abs(local_pixel.x - (half_tile + pixel_size)) < pixel_size * 0.5;
+		} else if (plate_layout == 2) {
+			// Style 2: Horizontal Split
+			is_groove_pixel = abs(local_pixel.y - half_tile) < pixel_size * 0.5;
+			is_groove_left_top = abs(local_pixel.y - (half_tile - pixel_size)) < pixel_size * 0.5;
+			is_groove_right_bottom = abs(local_pixel.y - (half_tile + pixel_size)) < pixel_size * 0.5;
+		} else if (plate_layout == 3) {
+			// Style 3: 2x2 Subdivisions (Cross split)
+			bool is_split_x = abs(local_pixel.x - half_tile) < pixel_size * 0.5;
+			bool is_split_y = abs(local_pixel.y - half_tile) < pixel_size * 0.5;
+			is_groove_pixel = is_split_x || is_split_y;
+
+			is_groove_left_top = (abs(local_pixel.x - (half_tile - pixel_size)) < pixel_size * 0.5) ||
+								 (abs(local_pixel.y - (half_tile - pixel_size)) < pixel_size * 0.5);
+			is_groove_right_bottom = (abs(local_pixel.x - (half_tile + pixel_size)) < pixel_size * 0.5) ||
+									 (abs(local_pixel.y - (half_tile + pixel_size)) < pixel_size * 0.5);
+		} else if (plate_layout == 4) {
+			// Style 4: Framed Inset Panel
+			bool on_inner_border_x = abs(local_pixel.x - border_w) < pixel_size * 0.5 || abs(local_pixel.x - (tile_size - border_w - pixel_size)) < pixel_size * 0.5;
+			bool on_inner_border_y = abs(local_pixel.y - border_w) < pixel_size * 0.5 || abs(local_pixel.y - (tile_size - border_w - pixel_size)) < pixel_size * 0.5;
+
+			if (local_pixel.x > border_w && local_pixel.x < (tile_size - border_w) &&
+				local_pixel.y > border_w && local_pixel.y < (tile_size - border_w)) {
+				is_groove_pixel = on_inner_border_x || on_inner_border_y;
+			}
+		} else if (plate_layout == 5) {
+			// Style 5: Studded Corner Rivets
+			float offset = pixel_size * 3.0;
+			bool near_tl = (abs(local_pixel.x - offset) < pixel_size * 0.5) && (abs(local_pixel.y - offset) < pixel_size * 0.5);
+			bool near_tr = (abs(local_pixel.x - (tile_size - offset)) < pixel_size * 0.5) && (abs(local_pixel.y - offset) < pixel_size * 0.5);
+			bool near_bl = (abs(local_pixel.x - offset) < pixel_size * 0.5) && (abs(local_pixel.y - (tile_size - offset)) < pixel_size * 0.5);
+			bool near_br = (abs(local_pixel.x - (tile_size - offset)) < pixel_size * 0.5) && (abs(local_pixel.y - (tile_size - offset)) < pixel_size * 0.5);
+
+			if (near_tl || near_tr || near_bl || near_br) {
+				is_groove_pixel = true;
+			}
+
+			bool hl_tl = (abs(local_pixel.x - (offset + pixel_size)) < pixel_size * 0.5) && (abs(local_pixel.y - (offset + pixel_size)) < pixel_size * 0.5);
+			bool hl_tr = (abs(local_pixel.x - (tile_size - offset - pixel_size)) < pixel_size * 0.5) && (abs(local_pixel.y - (offset + pixel_size)) < pixel_size * 0.5);
+			bool hl_bl = (abs(local_pixel.x - (offset + pixel_size)) < pixel_size * 0.5) && (abs(local_pixel.y - (tile_size - offset - pixel_size)) < pixel_size * 0.5);
+			bool hl_br = (abs(local_pixel.x - (tile_size - offset - pixel_size)) < pixel_size * 0.5) && (abs(local_pixel.y - (tile_size - offset - pixel_size)) < pixel_size * 0.5);
+
+			if (hl_tl || hl_tr || hl_bl || hl_br) {
+				is_groove_right_bottom = true;
+			}
+		}
 
 		// 3. Base Color & Layout Calculations
 		if (is_server) {
@@ -230,12 +304,8 @@ void fragment() {
 			float stripe = mod(floor((local_pixel.x + local_pixel.y) / pixel_size), 8.0);
 			vec3 stripe_color = (stripe < 4.0) ? hazard_yellow.rgb : hazard_dark.rgb;
 			color = mix(color, stripe_color, 0.85);
-		} else if (apply_split) {
-			// Subdivided Panels (Draws partition grooves on the base plate)
-			float half_tile = floor(tile_size * 0.5);
-			bool is_split_x = abs(local_pixel.x - half_tile) < pixel_size * 0.5;
-			bool is_split_y = abs(local_pixel.y - half_tile) < pixel_size * 0.5;
-			if (is_split_x || is_split_y) {
+		} else if (plate_layout > 0) {
+			if (is_groove_pixel) {
 				color *= 1.0 - bevel_shadow;
 			}
 		}
@@ -246,12 +316,21 @@ void fragment() {
 		float right_edge = step(tile_size - pixel_size - 0.1, local_pixel.x);
 		float bottom_edge = step(tile_size - pixel_size - 0.1, local_pixel.y);
 
-		if (apply_split) {
-			float half_tile = floor(tile_size * 0.5);
-			left_edge = max(left_edge, step(abs(local_pixel.x - half_tile), 0.1));
-			right_edge = max(right_edge, step(abs(local_pixel.x - (half_tile + pixel_size)), 0.1));
-			top_edge = max(top_edge, step(abs(local_pixel.y - half_tile), 0.1));
-			bottom_edge = max(bottom_edge, step(abs(local_pixel.y - (half_tile + pixel_size)), 0.1));
+		if (plate_layout == 1 || plate_layout == 3) {
+			if (is_groove_left_top) {
+				right_edge = max(right_edge, 1.0);
+			}
+			if (is_groove_right_bottom) {
+				left_edge = max(left_edge, 1.0);
+			}
+		}
+		if (plate_layout == 2 || plate_layout == 3) {
+			if (is_groove_left_top) {
+				bottom_edge = max(bottom_edge, 1.0);
+			}
+			if (is_groove_right_bottom) {
+				top_edge = max(top_edge, 1.0);
+			}
 		}
 
 		vec2 edge_normal = vec2(right_edge - left_edge, bottom_edge - top_edge);
@@ -326,35 +405,44 @@ void fragment() {
 			}
 		}
 
-		// 9. Structured Cracks
+		// 9. Structured Cracks (Varying patterns)
 		if (h_crack_seed > 1.0 - crack_chance) {
+			int crack_type = int(fract(h_crack_seed * 123.45) * 4.0); // 4 distinct procedural styles
 			vec2 crack_origin = floor(vec2(
-				mod(h_crack_seed * 17.1, tile_size - (pixel_size * 4.0)) + (pixel_size * 2.0),
-				mod(h_crack_seed * 23.3, tile_size - (pixel_size * 4.0)) + (pixel_size * 2.0)
+				mod(h_crack_seed * 17.1, tile_size - (pixel_size * 8.0)) + (pixel_size * 4.0),
+				mod(h_crack_seed * 23.3, tile_size - (pixel_size * 8.0)) + (pixel_size * 4.0)
 			));
 
 			vec2 relative_pos = floor((local_pixel - crack_origin) / pixel_size);
 
 			bool is_crack_pixel = false;
-			if (relative_pos.y == 0.0) {
-				is_crack_pixel = (relative_pos.x == 0.0 || relative_pos.x == 1.0);
-			} else if (relative_pos.y == 1.0) {
-				is_crack_pixel = (relative_pos.x == 1.0);
+			bool is_crack_highlight = false;
+
+			if (crack_type == 0) {
+				// Style 0: Diagonal Fracture Line
+				is_crack_pixel = (relative_pos.x == -relative_pos.y && relative_pos.x >= -2.0 && relative_pos.x <= 2.0);
+				is_crack_highlight = (relative_pos.x == -relative_pos.y + 1.0 && relative_pos.x >= -1.0 && relative_pos.x <= 3.0);
+			} else if (crack_type == 1) {
+				// Style 1: Cross-Impact Fracture
+				is_crack_pixel = (relative_pos.x == 0.0 && abs(relative_pos.y) <= 2.0) || (relative_pos.y == 0.0 && abs(relative_pos.x) <= 2.0);
+				is_crack_highlight = (relative_pos.x == 1.0 && relative_pos.y >= -2.0 && relative_pos.y <= 2.0) || (relative_pos.y == 1.0 && relative_pos.x >= -2.0 && relative_pos.x <= 2.0);
+			} else if (crack_type == 2) {
+				// Style 2: Zigzag Fault Line
+				is_crack_pixel = (relative_pos.y == 0.0 && relative_pos.x >= -1.0 && relative_pos.x <= 1.0) ||
+								 (relative_pos.y == 1.0 && relative_pos.x >= 1.0 && relative_pos.x <= 3.0) ||
+								 (relative_pos.y == -1.0 && relative_pos.x >= -3.0 && relative_pos.x <= -1.0);
+				is_crack_highlight = (relative_pos.y == 1.0 && relative_pos.x >= -1.0 && relative_pos.x <= 0.0) ||
+									 (relative_pos.y == 2.0 && relative_pos.x >= 1.0 && relative_pos.x <= 3.0) ||
+									 (relative_pos.y == 0.0 && relative_pos.x >= -3.0 && relative_pos.x <= -2.0);
+			} else {
+				// Style 3: Surface Chip/Pitting
+				is_crack_pixel = (abs(relative_pos.x) <= 1.0 && abs(relative_pos.y) <= 1.0) && !(abs(relative_pos.x) == 1.0 && abs(relative_pos.y) == 1.0);
+				is_crack_highlight = (relative_pos.y == 1.0 && abs(relative_pos.x) <= 1.0) || (relative_pos.x == 1.0 && abs(relative_pos.y) <= 1.0);
 			}
 
 			if (is_crack_pixel) {
 				color *= 0.45; // Dark shadow inside crack
-			}
-
-			// Highlight edge below the crack to give it depth
-			bool is_crack_highlight = false;
-			if (relative_pos.y == 1.0) {
-				is_crack_highlight = (relative_pos.x == 0.0);
-			} else if (relative_pos.y == 2.0) {
-				is_crack_highlight = (relative_pos.x == 1.0 || relative_pos.x == 2.0);
-			}
-
-			if (is_crack_highlight && !is_crack_pixel) {
+			} else if (is_crack_highlight) {
 				color += vec3(bevel_highlight * 0.8);
 			}
 		}

@@ -1,7 +1,7 @@
-[gd_scene load_steps=3 format=3 uid="uid://bfa_main_0001"]
+[gd_scene load_steps=3 format=3 uid="uid://dwgclexpywp83"]
 
-[ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
-[ext_resource type="Texture2D" path="res://fallenascentwallpaper.png" id="2_wallpaper"]
+[ext_resource type="Script" uid="uid://bxy5hal7yjk5p" path="res://scripts/Main.gd" id="1_main"]
+[ext_resource type="Texture2D" uid="uid://rv2d815amibf" path="res://fallenascentwallpaper.png" id="2_wallpaper"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -19,10 +19,9 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+mouse_filter = 2
 texture = ExtResource("2_wallpaper")
 expand_mode = 1
-stretch_mode = 0
-mouse_filter = 2
 
 [node name="Buttons" type="VBoxContainer" parent="."]
 layout_mode = 1
@@ -42,20 +41,23 @@ theme_override_constants/separation = 14
 [node name="NewGameButton" type="Button" parent="Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 44)
-text = "New Game"
+layout_mode = 2
 theme_override_font_sizes/font_size = 16
+text = "New Game"
 
 [node name="SettingsButton" type="Button" parent="Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 44)
-text = "Settings"
+layout_mode = 2
 theme_override_font_sizes/font_size = 16
+text = "Settings"
 
 [node name="QuitButton" type="Button" parent="Buttons"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 44)
-text = "Quit"
+layout_mode = 2
 theme_override_font_sizes/font_size = 16
+text = "Quit"
 
 [node name="Version" type="Label" parent="."]
 layout_mode = 1
@@ -70,7 +72,7 @@ offset_right = -12.0
 offset_bottom = -10.0
 grow_horizontal = 0
 grow_vertical = 0
-text = "Prototype build - placeholder art"
-horizontal_alignment = 2
 theme_override_colors/font_color = Color(0.5, 0.55, 0.6, 1)
 theme_override_font_sizes/font_size = 11
+text = "Prototype build - placeholder art"
+horizontal_alignment = 2

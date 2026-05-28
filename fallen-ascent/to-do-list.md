@@ -32,10 +32,10 @@ Format: `[area] short description — why it matters / first hint at how`.
       Add per-part placeholder icons (an embark part atlas) and reflect a few
       parts on the worker sprite (legs/weapon) once art lands. Achievement
       icons are flat-color placeholders in `resources/ui/achievements_atlas.png`.
-- [ ] **Wire WorkerLines flavour to actions.** `WorkerLines.get_line()` is
-      fully populated (9 personalities) but never called — hook it into
-      `_remember` / action bubbles so personalities also *talk* differently,
-      not just stat-differ.
+- [x] **Wire WorkerLines flavour to actions.** `WorkerLines.get_line()` is
+      now called on state transitions (`_try_say_personality_line`) and for
+      guaranteed low-energy/low-condition alerts (`_say_line`). Speech appears
+      in a purple-tinted bubble above the action text, fades in/out over 4.5s.
 - [ ] **Balance pass on shell baseline vs part tiers.** `PartDatabase.SHELL`
       and the tier mod values are first-draft. Once playable, tune so a Tier-1
       full kit ≈ the old fixed worker and higher tiers feel worth the AP.
@@ -73,6 +73,21 @@ Format: `[area] short description — why it matters / first hint at how`.
       add migration when the schema changes. Diff replay assumes
       `preload_entire_map` (all chunks loaded); streaming maps would need
       lazy per-chunk diff application.
+## Worker dialogue + achievement toasts + movement fixes session
+
+- [ ] **Speech bubble max-width / font tuning.** The personality speech bubble
+      truncates at 48 chars but Orbitron is wide — at zoom-out some text may
+      still be too wide. Consider switching to a narrower font or adding a
+      draw_string `width` clip. Tune `SPEECH_FONT_SIZE` and `SPEECH_CHANCE`
+      during playtest.
+- [ ] **Achievement toast sound effect.** `AchievementToast._spawn_toast` shows
+      a visual popup but plays no sound. Add a short chime via `AudioManager`
+      once a suitable SFX asset exists.
+- [ ] **Worker name / action bubble GPU batching.** Each worker calls
+      `queue_redraw()` every frame during movement (fixed for smooth scaling).
+      For 100+ workers this adds draw-call overhead. Profile and consider a
+      single `CanvasItem` overlay that draws all name bubbles in one pass.
+
 - [ ] **Spatial nearest-job index for huge designations.**
       `JobBoard.claim_next_for` now blocks unreachable jobs board-wide on a
       failed path (`Worker._mark_job_failed` → `Job.block_briefly`), caps

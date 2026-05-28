@@ -240,6 +240,17 @@ func on_worker_count_changed(count: int) -> void:
 		unlock(&"workers_10")
 
 
+## Wipes all achievement progress and resets the AP economy. Irreversible.
+func reset_achievements() -> void:
+	_unlocked.clear()
+	_unlocked_tier = 1
+	_extra_worker_slots = 0
+	_spent_points = 0
+	_personality_unlocked = false
+	_save_achievements()
+	unlocks_changed.emit()
+
+
 func _load_achievements() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SAVE_PATH) != OK:

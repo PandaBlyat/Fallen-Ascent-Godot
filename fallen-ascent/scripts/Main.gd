@@ -7,6 +7,7 @@ extends Control
 
 const SETTINGS_MENU_SCENE: PackedScene = preload("res://scenes/ui/SettingsMenu.tscn")
 const EMBARK_SCREEN_SCRIPT: Script = preload("res://scripts/ui/EmbarkScreen.gd")
+const ACHIEVEMENT_TOAST_SCRIPT: Script = preload("res://scripts/ui/AchievementToast.gd")
 
 const MAP_SIZE_OPTIONS: Array = [
 	{"label": "Tiny",    "chunks": Vector2i(6, 6),   "hint": "fastest"},
@@ -39,6 +40,9 @@ func _ready() -> void:
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_quit_button.pressed.connect(AudioManager.play_button_press)
 	MenuMusicPlayer.play_once_from_start()
+	var _toast := ACHIEVEMENT_TOAST_SCRIPT.new() as Control
+	_toast.name = "AchievementToast"
+	add_child(_toast)
 
 
 ## Adds a Continue button at the top of the menu when a colony save exists, so
@@ -345,13 +349,46 @@ func _build_achievement_panel() -> Control:
 	summary.add_theme_color_override("font_color", Color(0.62, 0.70, 0.74))
 	vbox.add_child(summary)
 
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(btn_row)
+
+	# Spacer so reset sits on the left and close on the right.
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_row.add_child(spacer)
+
+	# Two-click confirmation: first press arms it; second press within 3s resets.
+	# State is stored on the button via metadata so the lambda captures it by ref.
+	var reset_btn := Button.new()
+	reset_btn.text = "Reset Achievements"
+	reset_btn.custom_minimum_size = Vector2(160, 36)
+	reset_btn.add_theme_color_override("font_color", Color(0.70, 0.40, 0.36))
+	reset_btn.set_meta("armed", false)
+	reset_btn.pressed.connect(func() -> void:
+		if not reset_btn.get_meta("armed", false):
+			reset_btn.set_meta("armed", true)
+			reset_btn.text = "Confirm reset? (click again)"
+			reset_btn.add_theme_color_override("font_color", Color(1.0, 0.30, 0.25))
+			var t: SceneTreeTimer = reset_btn.get_tree().create_timer(3.0, false)
+			t.timeout.connect(func() -> void:
+				if is_instance_valid(reset_btn):
+					reset_btn.set_meta("armed", false)
+					reset_btn.text = "Reset Achievements"
+					reset_btn.add_theme_color_override("font_color", Color(0.70, 0.40, 0.36))
+			)
+		else:
+			AchievementManager.reset_achievements()
+			overlay.queue_free()
+	)
+	btn_row.add_child(reset_btn)
+
 	var close_btn := Button.new()
 	close_btn.text = "Close"
 	close_btn.custom_minimum_size = Vector2(110, 36)
-	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 	close_btn.pressed.connect(AudioManager.play_button_press)
 	close_btn.pressed.connect(overlay.queue_free)
-	vbox.add_child(close_btn)
+	btn_row.add_child(close_btn)
 
 	return overlay
 

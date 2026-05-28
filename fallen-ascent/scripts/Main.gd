@@ -25,6 +25,9 @@ const DEFAULT_MAP_SIZE_INDEX: int = 2
 
 
 func _ready() -> void:
+	# Skin every button below this root with the shared worker-card texture so the
+	# main menu (and its dialogs) match the rest of the game's UI chrome.
+	theme = UiStyle.button_theme()
 	_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_background.stretch_mode = TextureRect.STRETCH_SCALE
 	_add_continue_button()

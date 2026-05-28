@@ -6,7 +6,7 @@ extends Node2D
 ##   - RESEARCH_ROOM     — must contain a Research Bench; offers a wisdom bonus
 ##                         (enum slot RESEARCH_ROOM replaces the legacy
 ##                         MEDITATION_CHAMBER name; mechanics are unchanged)
-##   - MECHANIC_ROOM     — must contain a Mechanic Dock; heals limbs faster
+##   - MECHANIC_ROOM     — must contain a Mechanic Dock; repairs damaged parts faster
 ##   - WORKSHOP_ROOM     — enclosed by walls + door, contains a light source and
 ##                         a workshop structure; gives a work-speed buff inside.
 ##
@@ -441,8 +441,8 @@ func _on_structure_built(_manager: Node) -> void:
 func _process_mechanic_heal(elapsed: float) -> void:
 	for room in valid_rooms_for_kind(Kind.MECHANIC_ROOM):
 		for worker in workers_in_room(room):
-			if worker.has_method("repair_limbs_external"):
-				worker.call("repair_limbs_external", MECHANIC_LIMB_REPAIR_PER_SEC * elapsed)
+			if worker.has_method("repair_parts_external"):
+				worker.call("repair_parts_external", MECHANIC_LIMB_REPAIR_PER_SEC * elapsed)
 
 
 func _draw() -> void:

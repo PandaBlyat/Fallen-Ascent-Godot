@@ -44,6 +44,21 @@ Format: `[area] short description — why it matters / first hint at how`.
       once real pixel-art tile art lands — values might need adjusting for
       smaller tiles.
 
+## Embark + worker-panel polish session
+
+- [ ] **Unify in-game HUD buttons with the worker-card button theme.** Main menu,
+      settings, and embark now skin buttons with `worker_card.png` via
+      `UiStyle.button_theme()`. The in-game `ColonyHud` buttons still use the
+      code-built flat `_button_style`. Consider routing them through the same
+      shared theme (or `UiStyle`) so the whole game's buttons match.
+- [ ] **Weight randomized part loadouts toward the chosen role.**
+      `EmbarkScreen._randomize_parts` picks affordable parts uniformly at random.
+      It could bias toward the worker's role (e.g. a Miner favours drill arms) so
+      "Randomize" produces coherent builds, not just legal ones.
+- [ ] **Per-part placeholder icons in the embark picker + panel.** Parts still
+      have no atlas art (see the older note below). The new per-part condition
+      bars and slot buttons would read better with icons.
+
 ## Save/load + highlighter + AI fixes (this session)
 
 - [ ] **Save system fidelity gaps.** `SaveManager` (autoload) +

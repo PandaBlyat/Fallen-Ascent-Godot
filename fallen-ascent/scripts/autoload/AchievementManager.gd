@@ -34,6 +34,9 @@ const TIER_UNLOCK_COSTS: Dictionary = {2: 10, 3: 25, 4: 50, 5: 90}
 ## AP cost for each extra starting-worker slot beyond the base count.
 const WORKER_SLOT_COSTS: Array[int] = [15, 30, 50]
 const BASE_WORKER_SLOTS: int = 3
+## One-time AP cost to unlock manual personality selection in the embark screen.
+## Until bought, each worker's personality is randomized and can only be rerolled.
+const PERSONALITY_UNLOCK_COST: int = 20
 
 ## Emitted whenever unlock state OR spend state changes, so menus refresh.
 signal unlocks_changed
@@ -44,6 +47,7 @@ var _unlocked: Dictionary = {}
 var _unlocked_tier: int = 1
 var _extra_worker_slots: int = 0
 var _spent_points: int = 0
+var _personality_unlocked: bool = false
 
 
 func _ready() -> void:
@@ -136,6 +140,29 @@ func next_worker_slot_cost() -> int:
 	return WORKER_SLOT_COSTS[_extra_worker_slots]
 
 
+## Whether the player may hand-pick worker personalities (vs. random + reroll).
+func personality_unlocked() -> bool:
+	return _personality_unlocked
+
+
+## AP cost to unlock manual personality choice, or -1 if already unlocked.
+func next_personality_unlock_cost() -> int:
+	return -1 if _personality_unlocked else PERSONALITY_UNLOCK_COST
+
+
+## Spend AP to permanently unlock manual personality choice. Returns true on success.
+func purchase_personality_unlock() -> bool:
+	if _personality_unlocked:
+		return false
+	if PERSONALITY_UNLOCK_COST > available_points():
+		return false
+	_personality_unlocked = true
+	_spent_points += PERSONALITY_UNLOCK_COST
+	_save_achievements()
+	unlocks_changed.emit()
+	return true
+
+
 ## Spend AP to unlock the next part tier. Returns true on success.
 func purchase_tier_unlock() -> bool:
 	var cost: int = next_tier_cost()
@@ -223,6 +250,7 @@ func _load_achievements() -> void:
 	_unlocked_tier = clampi(int(cfg.get_value("economy", "unlocked_tier", 1)), 1, PartDatabase.MAX_TIER)
 	_extra_worker_slots = maxi(0, int(cfg.get_value("economy", "extra_worker_slots", 0)))
 	_spent_points = maxi(0, int(cfg.get_value("economy", "spent_points", 0)))
+	_personality_unlocked = bool(cfg.get_value("economy", "personality_unlocked", false))
 
 
 func _save_achievements() -> void:
@@ -234,4 +262,5 @@ func _save_achievements() -> void:
 	cfg.set_value("economy", "unlocked_tier", _unlocked_tier)
 	cfg.set_value("economy", "extra_worker_slots", _extra_worker_slots)
 	cfg.set_value("economy", "spent_points", _spent_points)
+	cfg.set_value("economy", "personality_unlocked", _personality_unlocked)
 	cfg.save(SAVE_PATH)

@@ -43,7 +43,7 @@ func _ready() -> void:
 	# Setup the label text
 	_label = Label.new()
 	_label.text = "FPS: --"
-	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_label.horizontal_alignment = TextServer.HORIZONTAL_ALIGNMENT_CENTER
 	_label.add_theme_font_size_override("font_size", 11)
 	_label.add_theme_color_override("font_color", Color(0.42, 0.85, 0.92)) # Cyan accent
 	padding.add_child(_label)

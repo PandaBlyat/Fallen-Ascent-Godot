@@ -75,6 +75,9 @@ extends Node
 ##   hostile_spotted(hostile,spotter) - emitted when a hostile/neutral enters a
 ##                                      worker's sight radius for the first time.
 ##                                      Payload: Node (hostile), Node (worker).
+##   achievement_unlocked(id)         - emitted by AchievementManager when an
+##                                      achievement is unlocked for the first time.
+##                                      Payload: StringName achievement id.
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -110,4 +113,5 @@ signal outlet_count_changed(count: int)
 signal worker_low_energy(worker: Node, ratio: float)
 signal worker_low_condition(worker: Node, ratio: float)
 signal hostile_spotted(hostile: Node, spotter: Node)
+signal achievement_unlocked(id: StringName)
 @warning_ignore_restore("unused_signal")

@@ -25,8 +25,10 @@ const DRAG_FILL := Color(0.40, 0.78, 1.0, 0.22)
 const DRAG_BORDER := Color(0.75, 0.92, 1.0, 0.95)
 const DRAG_BORDER_PX: float = 2.0
 const ORDER_HIGHLIGHT_SECONDS: float = 1.2
-const ORDER_HIGHLIGHT_FILL := Color(1.0, 0.88, 0.25, 0.10)
-const ORDER_HIGHLIGHT_BORDER := Color(1.0, 0.92, 0.35, 0.55)
+const ORDER_HIGHLIGHT_FILL := Color(0.22, 0.88, 0.38, 0.12)
+const ORDER_HIGHLIGHT_BORDER := Color(0.32, 0.96, 0.48, 0.60)
+const ORDER_HIGHLIGHT_RED_FILL := Color(0.90, 0.20, 0.18, 0.12)
+const ORDER_HIGHLIGHT_RED_BORDER := Color(0.98, 0.32, 0.28, 0.60)
 const ATTACK_HOVER_FILL := Color(0.95, 0.25, 0.25, 0.08)
 const ATTACK_HOVER_BORDER := Color(1.0, 0.35, 0.30, 0.55)
 const HOVER_FILL := Color(0.35, 0.88, 1.0, 0.07)
@@ -59,6 +61,7 @@ var _drag_end_world: Vector2 = Vector2.ZERO
 var _order_highlight_grid: Vector2i = Pathfinder.UNREACHABLE
 var _order_highlight_timer: float = 0.0
 var _order_highlight_target: Node2D = null
+var _order_highlight_is_red: bool = false
 var _attack_hover_target: Node2D = null
 var _hover_entity: Node2D = null
 var _hover_cells: Array[Vector2i] = []
@@ -274,7 +277,7 @@ func _handle_right_click(shift_held: bool) -> void:
 				structure_scrapper.queue_command_mine(grid)
 			else:
 				structure_scrapper.command_mine(grid)
-			_show_order_highlight(grid)
+			_show_order_highlight(grid, true)
 		return
 	var tile: int = _chunk_manager.get_tile_at(grid)
 	if _static_prop_manager != null \
@@ -286,7 +289,7 @@ func _handle_right_click(shift_held: bool) -> void:
 				prop_miner.queue_command_mine(grid)
 			else:
 				prop_miner.command_mine(grid)
-			_show_order_highlight(grid)
+			_show_order_highlight(grid, true)
 		return
 	if tile == TerrainGenerator.TILE_WALL \
 			or tile == TerrainGenerator.TILE_SERVICE_CORE \
@@ -297,7 +300,7 @@ func _handle_right_click(shift_held: bool) -> void:
 				miner.queue_command_mine(grid)
 			else:
 				miner.command_mine(grid)
-			_show_order_highlight(grid)
+			_show_order_highlight(grid, true)
 		return
 	if tile == TerrainGenerator.TILE_RUST:
 		var scraper: Worker = selected_worker()
@@ -306,7 +309,7 @@ func _handle_right_click(shift_held: bool) -> void:
 				scraper.queue_command_scrape_rust(grid)
 			else:
 				scraper.command_scrape_rust(grid)
-			_show_order_highlight(grid)
+			_show_order_highlight(grid, true)
 		return
 	if _chunk_manager.has_grass(grid):
 		var biomass_scraper: Worker = selected_worker()
@@ -315,15 +318,14 @@ func _handle_right_click(shift_held: bool) -> void:
 				biomass_scraper.queue_command_scrape_biomass(grid)
 			else:
 				biomass_scraper.command_scrape_biomass(grid)
-			_show_order_highlight(grid)
+			_show_order_highlight(grid, true)
 		return
 	if tile == TerrainGenerator.TILE_OUTLET:
-		# Charging workers paint a green highlight on the outlet themselves.
 		if not _command_one_worker_to_charge(grid, shift_held):
 			_show_order_failed(grid, "Outlet unavailable")
 	elif _is_walkable_order_tile(tile):
-		# Moving workers paint a grey highlight on the destination themselves.
 		if _command_group_move(grid, shift_held):
+			_show_order_highlight(grid, false)
 			AudioManager.play_move_here()
 		else:
 			_show_order_failed(grid, "No path")
@@ -384,10 +386,11 @@ func _command_group_move(grid: Vector2i, append: bool = false) -> bool:
 	return not assigned.is_empty()
 
 
-func _show_order_highlight(grid: Vector2i) -> void:
+func _show_order_highlight(grid: Vector2i, is_red: bool = false) -> void:
 	_order_highlight_grid = grid
 	_order_highlight_target = null
 	_order_highlight_timer = ORDER_HIGHLIGHT_SECONDS
+	_order_highlight_is_red = is_red
 	queue_redraw()
 
 
@@ -828,10 +831,12 @@ func _draw() -> void:
 		_draw_entity_highlight(_order_highlight_target, ORDER_HIGHLIGHT_FILL, ORDER_HIGHLIGHT_BORDER, alpha_target)
 	if _order_highlight_grid != Pathfinder.UNREACHABLE:
 		var alpha: float = clampf(_order_highlight_timer / ORDER_HIGHLIGHT_SECONDS, 0.0, 1.0)
+		var hl_fill: Color = ORDER_HIGHLIGHT_RED_FILL if _order_highlight_is_red else ORDER_HIGHLIGHT_FILL
+		var hl_border: Color = ORDER_HIGHLIGHT_RED_BORDER if _order_highlight_is_red else ORDER_HIGHLIGHT_BORDER
 		var origin := Vector2(_order_highlight_grid.x * Chunk.TILE_PIXELS, _order_highlight_grid.y * Chunk.TILE_PIXELS)
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
-		draw_rect(rect, Color(ORDER_HIGHLIGHT_FILL.r, ORDER_HIGHLIGHT_FILL.g, ORDER_HIGHLIGHT_FILL.b, ORDER_HIGHLIGHT_FILL.a * alpha))
-		draw_rect(rect, Color(ORDER_HIGHLIGHT_BORDER.r, ORDER_HIGHLIGHT_BORDER.g, ORDER_HIGHLIGHT_BORDER.b, ORDER_HIGHLIGHT_BORDER.a * alpha), false, HIGHLIGHT_BORDER_PX)
+		draw_rect(rect, Color(hl_fill.r, hl_fill.g, hl_fill.b, hl_fill.a * alpha))
+		draw_rect(rect, Color(hl_border.r, hl_border.g, hl_border.b, hl_border.a * alpha), false, HIGHLIGHT_BORDER_PX)
 	if _dragging:
 		var is_box: bool = (_drag_end_screen - _drag_start_screen).length() >= DRAG_THRESHOLD_PX
 		if not is_box:

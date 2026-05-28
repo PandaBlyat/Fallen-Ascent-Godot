@@ -198,6 +198,10 @@ func _refresh_visibility(signature: PackedInt32Array = PackedInt32Array()) -> vo
 
 	_last_source_signature = signature
 	_visibility_dirty = false
+	# When any cell's visibility changes, light sources that gate on the
+	# worker being within FOV (requires_visible_source) need to repaint too.
+	if changed_bounds.size != Vector2i.ZERO:
+		_light_dirty = true
 	_rebuild_mask_textures()
 
 	if changed_bounds.size != Vector2i.ZERO or not signature.is_empty():

@@ -3,6 +3,9 @@ render_mode unshaded, blend_mix;
 
 uniform sampler2D visibility_mask : filter_linear, repeat_disable;
 uniform sampler2D light_mask : filter_linear, repeat_disable;
+// Previous light mask for smooth transitions; blended with light_mask via transition_t.
+uniform sampler2D prev_light_mask : filter_linear, repeat_disable;
+uniform float transition_t : hint_range(0.0, 1.0) = 1.0;
 
 uniform vec2 mask_origin_grid = vec2(0.0, 0.0);
 uniform vec2 mask_size_grid = vec2(1.0, 1.0);
@@ -14,13 +17,13 @@ uniform vec4 darkness_tint = vec4(0.010, 0.014, 0.018, 1.0);
 // Pixel-art lighting controls
 uniform float pixel_size = 4.0;
 // New uniform to control the scale of the dither pattern independently
-uniform float dither_pixel_size = 1.0; 
+uniform float dither_pixel_size = 1.0;
 uniform float dither_strength : hint_range(0.0, 1.0) = 0.55;
-uniform int light_bands = 3; 
+uniform int light_bands = 3;
 uniform bool use_screen_space_dither = true;
 
 // Camera and Window scaling values
-uniform float screen_scale_factor = 1.0; 
+uniform float screen_scale_factor = 1.0;
 uniform float camera_zoom = 1.0;
 uniform vec2 camera_position = vec2(0.0);
 
@@ -34,7 +37,7 @@ void vertex() {
 float get_bayer_threshold(vec2 pos) {
 	// Scale the dither pattern using the independent dither_pixel_size
 	float effective_pixel_size = max(1.0, dither_pixel_size * camera_zoom * screen_scale_factor);
-	
+
 	ivec2 p = ivec2(floor(pos / effective_pixel_size));
 	int x = p.x % 8;
 	if (x < 0) x += 8;
@@ -71,7 +74,8 @@ void fragment() {
 	}
 	float sight_power = clamp(visibility.g, 0.0, 1.0);
 
-	vec4 light_sample = texture(light_mask, uv);
+	// Blend between previous and current light mask for smooth transitions.
+	vec4 light_sample = mix(texture(prev_light_mask, uv), texture(light_mask, uv), transition_t);
 	float light_power = clamp(light_sample.a, 0.0, 1.0);
 
 	// Light Flicker
@@ -102,10 +106,10 @@ void fragment() {
 		float raw_band = light_power * float(light_bands - 1);
 		float band_floor = floor(raw_band);
 		float band_fraction = fract(raw_band);
-		
+
 		float band_threshold = mix(0.5, dither, dither_strength);
 		float transition = step(band_threshold, band_fraction);
-		
+
 		light_soft = (band_floor + transition) / float(light_bands - 1);
 	} else {
 		light_soft = clamp(light_power + (dither - 0.5) * dither_strength, 0.0, 1.0);

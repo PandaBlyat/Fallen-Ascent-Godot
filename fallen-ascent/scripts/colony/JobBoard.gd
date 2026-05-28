@@ -536,10 +536,10 @@ static func _priority_of(job: Job) -> int:
 		return 8
 	if job is OperateStructureJob:
 		return 12
-	if job is HaulJob:
-		return 16
 	if job is MineJob:
+		return 15
+	if job is HaulJob:
 		return 40
 	if job.kind == Job.Kind.SCRAPE_RUST or job.kind == Job.Kind.SCRAPE_BIOMASS:
-		return 100
+		return 60
 	return 50

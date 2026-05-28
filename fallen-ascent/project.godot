@@ -26,6 +26,7 @@ TechManager="*res://scripts/autoload/TechManager.gd"
 EntityGrid="*res://scripts/autoload/EntityGrid.gd"
 AIScheduler="*res://scripts/autoload/AIScheduler.gd"
 SaveManager="*res://scripts/autoload/SaveManager.gd"
+AchievementManager="*res://scripts/autoload/AchievementManager.gd"
 
 [display]
 

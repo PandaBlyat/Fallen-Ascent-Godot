@@ -1,11 +1,12 @@
 extends Control
 ##
-## Main menu. New Game pops up a small panel asking for seed (optional, blank
-## = random) and world size; the seed/size are stashed on GameState before the
-## Colony scene loads. World map selection is skipped.
+## Main menu. New Game opens the Embark screen, then the seed/size dialog;
+## both are stashed on GameState before the Colony scene loads.
+## World map selection is skipped.
 ##
 
 const SETTINGS_MENU_SCENE: PackedScene = preload("res://scenes/ui/SettingsMenu.tscn")
+const EMBARK_SCREEN_SCRIPT: Script = preload("res://scripts/ui/EmbarkScreen.gd")
 
 const MAP_SIZE_OPTIONS: Array = [
 	{"label": "Tiny",    "chunks": Vector2i(6, 6),   "hint": "fastest"},
@@ -27,9 +28,13 @@ func _ready() -> void:
 	_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_background.stretch_mode = TextureRect.STRETCH_SCALE
 	_add_continue_button()
+	_add_achievements_button()
 	_new_game_button.pressed.connect(_on_new_game_pressed)
+	_new_game_button.pressed.connect(AudioManager.play_button_press)
 	_settings_button.pressed.connect(_on_settings_pressed)
+	_settings_button.pressed.connect(AudioManager.play_button_press)
 	_quit_button.pressed.connect(_on_quit_pressed)
+	_quit_button.pressed.connect(AudioManager.play_button_press)
 	MenuMusicPlayer.play_once_from_start()
 
 
@@ -47,10 +52,39 @@ func _add_continue_button() -> void:
 	button.pressed.connect(AudioManager.play_button_press)
 	button.pressed.connect(func() -> void: SaveManager.begin_load())
 
-func _on_new_game_pressed() -> void:
-	if has_node("NewGameDialog"):
+
+## Adds an Achievements button below the main menu buttons.
+func _add_achievements_button() -> void:
+	var button := Button.new()
+	button.text = "Achievements"
+	button.custom_minimum_size = Vector2(0, 40)
+	button.add_theme_font_size_override("font_size", 14)
+	_buttons.add_child(button)
+	button.pressed.connect(AudioManager.play_button_press)
+	button.pressed.connect(_on_achievements_pressed)
+
+
+func _on_achievements_pressed() -> void:
+	if has_node("AchievementPanel"):
 		return
-	add_child(_build_new_game_dialog())
+	add_child(_build_achievement_panel())
+
+
+func _on_new_game_pressed() -> void:
+	if has_node("EmbarkScreen") or has_node("NewGameDialog"):
+		return
+	_open_embark_screen()
+
+
+func _open_embark_screen() -> void:
+	var embark: Control = EMBARK_SCREEN_SCRIPT.new() as Control
+	embark.name = "EmbarkScreen"
+	add_child(embark)
+	# EmbarkScreen calls queue_free on itself; we just open the next dialog.
+	embark.embark_confirmed.connect(func(_workers: Array) -> void:
+		if not has_node("NewGameDialog"):
+			add_child(_build_new_game_dialog())
+	)
 
 
 func _on_settings_pressed() -> void:
@@ -155,14 +189,16 @@ func _build_new_game_dialog() -> Control:
 	vbox.add_child(buttons)
 
 	var cancel := Button.new()
-	cancel.text = "Cancel"
+	cancel.text = "Back"
 	cancel.custom_minimum_size = Vector2(110, 36)
+	cancel.pressed.connect(AudioManager.play_button_press)
 	cancel.pressed.connect(overlay.queue_free)
 	buttons.add_child(cancel)
 
 	var start := Button.new()
 	start.text = "Start"
 	start.custom_minimum_size = Vector2(140, 36)
+	start.pressed.connect(AudioManager.play_button_press)
 	start.pressed.connect(func() -> void:
 		_start_game(seed_edit.text, size_options.get_selected_id())
 	)
@@ -183,6 +219,7 @@ func _start_game(seed_text: String, size_index: int) -> void:
 	site.grid_pos = Vector2i.ZERO
 	site.biome = SiteData.Biome.HABITAT
 	GameState.set_selected_site(site)
+	AchievementManager.on_new_game_started()
 	get_tree().change_scene_to_file("res://scenes/colony/ColonySite.tscn")
 
 
@@ -213,3 +250,115 @@ static func _dialog_spacer() -> Control:
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	return spacer
+
+
+## Builds the achievements panel overlay (shows unlocked/locked achievements).
+func _build_achievement_panel() -> Control:
+	var overlay := Control.new()
+	overlay.name = "AchievementPanel"
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.z_index = 100
+
+	var dimmer := ColorRect.new()
+	dimmer.color = Color(0, 0, 0, 0.55)
+	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(dimmer)
+
+	var panel := PanelContainer.new()
+	panel.anchor_left = 0.5
+	panel.anchor_top = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_bottom = 0.5
+	panel.offset_left = -300.0
+	panel.offset_top = -260.0
+	panel.offset_right = 300.0
+	panel.offset_bottom = 260.0
+	panel.add_theme_stylebox_override("panel", _dialog_style())
+	overlay.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_bottom", 20)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	margin.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Achievements"
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color(0.95, 0.97, 0.96))
+	vbox.add_child(title)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.custom_minimum_size = Vector2(0, 340)
+	vbox.add_child(scroll)
+
+	var list := VBoxContainer.new()
+	list.add_theme_constant_override("separation", 6)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+
+	var achievements: Array = AchievementManager.all_achievements()
+
+	var unlocked_count: int = 0
+	for ach_raw in achievements:
+		var ach: Dictionary = ach_raw as Dictionary
+		var is_unlocked: bool = bool(ach.get("unlocked", false))
+		if is_unlocked:
+			unlocked_count += 1
+		var row := _build_achievement_row(ach, is_unlocked)
+		list.add_child(row)
+
+	var summary := Label.new()
+	summary.text = "Unlocked: %d / %d" % [unlocked_count, achievements.size()]
+	summary.add_theme_font_size_override("font_size", 11)
+	summary.add_theme_color_override("font_color", Color(0.62, 0.70, 0.74))
+	vbox.add_child(summary)
+
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(110, 36)
+	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	close_btn.pressed.connect(AudioManager.play_button_press)
+	close_btn.pressed.connect(overlay.queue_free)
+	vbox.add_child(close_btn)
+
+	return overlay
+
+
+static func _build_achievement_row(ach: Dictionary, unlocked: bool) -> Control:
+	var hbox := HBoxContainer.new()
+	hbox.add_theme_constant_override("separation", 10)
+
+	var icon := ColorRect.new()
+	icon.custom_minimum_size = Vector2(16, 16)
+	icon.color = Color(0.32, 0.85, 0.48, 1.0) if unlocked else Color(0.28, 0.30, 0.32, 1.0)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hbox.add_child(icon)
+
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 1)
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hbox.add_child(col)
+
+	var name_lbl := Label.new()
+	name_lbl.text = str(ach.get("name", "???"))
+	name_lbl.add_theme_font_size_override("font_size", 12)
+	var name_color: Color = Color(0.90, 0.94, 0.92) if unlocked else Color(0.40, 0.44, 0.46)
+	name_lbl.add_theme_color_override("font_color", name_color)
+	col.add_child(name_lbl)
+
+	var desc_lbl := Label.new()
+	desc_lbl.text = str(ach.get("desc", "")) if unlocked else "???"
+	desc_lbl.add_theme_font_size_override("font_size", 10)
+	desc_lbl.add_theme_color_override("font_color", Color(0.52, 0.58, 0.62))
+	desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	col.add_child(desc_lbl)
+
+	return hbox

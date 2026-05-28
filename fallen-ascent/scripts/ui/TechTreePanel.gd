@@ -214,7 +214,9 @@ func _try_unlock(tech_id: StringName) -> void:
 	if TechManager.is_unlocked(tech_id):
 		return
 	if not TechManager.can_unlock(tech_id):
+		AudioManager.play_button_press()
 		return
+	AudioManager.play_button_press()
 	TechManager.try_unlock(tech_id)
 
 

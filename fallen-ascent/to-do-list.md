@@ -379,6 +379,27 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       colony loop is on the floor — the existing "Tune the wisdom curve"
       to-do above still applies.
 
+## Embark + achievements + lighting + highlighter session
+
+- [ ] **Embark screen worker data not wired to gameplay.** `EmbarkScreen.gd`
+      generates name/role/trait for each starting worker and emits them via
+      `embark_confirmed`. Currently the data is discarded — wire it into
+      `WorkerSpawner` so workers start with the chosen names and traits once
+      Worker has a `display_name` setter and trait system.
+- [ ] **Achievement hooks for non-signal events.** `AchievementManager` has
+      public methods (`on_stockpile_designated`, `on_room_designated`,
+      `on_workshop_placed`, `on_worker_saved`, `on_worker_count_changed`) but
+      they aren't yet called from `StockpileManager`, `RoomManager`,
+      `StructureManager`, or `SelectionController`. Wire them in to unlock
+      those achievements.
+- [ ] **Embark screen: future depth.** Limb selection, skill points,
+      personality buffs/debuffs, and achievement-point-based extra workers
+      are all stubbed. Add once the Worker trait system exists.
+- [ ] **Lighting shader pixel_size tuning.** `pixel_size = 4.0` gives chunky
+      4×4 dither blocks. Tune together with `dither_strength` and `light_bands`
+      once real pixel-art tile art lands — values might need adjusting for
+      smaller tiles.
+
 ## Save/load + highlighter + AI fixes (this session)
 
 - [ ] **Save system fidelity gaps.** `SaveManager` (autoload) +

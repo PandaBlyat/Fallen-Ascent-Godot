@@ -3311,6 +3311,7 @@ func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 	_path_index = 0
 	_state = State.MOVING_FREEFORM
 	_remember("ordered to move to %d,%d" % [target.x, target.y])
+	queue_redraw()
 	return true
 
 
@@ -4032,25 +4033,38 @@ func _refresh_action_text() -> void:
 
 
 func _highlight_cell() -> int:
-	# Red while attacking, green while heading to / using a charge or repair
-	# point, grey while moving on a direct player move order. Returns -1 (no
-	# highlight) in every other state. The highlight persists for as long as the
-	# worker stays in the matching state, i.e. until it reaches / finishes.
+	# Green for all player-issued orders (move, repair, build, recharge).
+	# Red for destructive orders (mine, scrape, salvage, attack).
+	# Returns -1 for autonomous AI behaviors (wandering, auto-charge, etc.)
 	match _state:
 		State.FIGHTING:
 			return HIGHLIGHT_CELL_RED
-		State.MOVING_TO_CHARGE, State.CHARGING, State.MOVING_TO_REPAIR, State.REPAIRING:
+		State.MOVING_TO_CHARGE, State.CHARGING:
+			return HIGHLIGHT_CELL_GREEN if _manual_charging else -1
+		State.MOVING_TO_REPAIR, State.REPAIRING:
 			return HIGHLIGHT_CELL_GREEN
 		State.MOVING_FREEFORM:
-			return HIGHLIGHT_CELL_GREY
+			return HIGHLIGHT_CELL_GREEN
+		State.MOVING_TO_BUILD_SITE, State.BUILDING:
+			return HIGHLIGHT_CELL_GREEN
+		State.MOVING_TO_WORK, State.WORKING:
+			if _job is MineJob or _is_scrape_job(_job):
+				return HIGHLIGHT_CELL_RED
 	return -1
 
 
 ## World-space position the order highlight should mark: the attack target, the
-## end of the active path, or the worker itself once it has arrived.
+## mine/scrape target, the end of the active path, or the worker once arrived.
 func _order_highlight_world_target() -> Vector2:
 	if _state == State.FIGHTING and _combat_target != null and is_instance_valid(_combat_target):
 		return (_combat_target as Node2D).position
+	if (_state == State.MOVING_TO_WORK or _state == State.WORKING) and _job != null:
+		if _job is MineJob:
+			return Chunk.grid_to_pixel_center((_job as MineJob).target)
+		if _job is ScrapeRustJob:
+			return Chunk.grid_to_pixel_center((_job as ScrapeRustJob).target)
+		if _job is ScrapeBiomassJob:
+			return Chunk.grid_to_pixel_center((_job as ScrapeBiomassJob).target)
 	if not _path.is_empty():
 		return _path[_path.size() - 1]
 	if (_state == State.MOVING_TO_CHARGE or _state == State.CHARGING) and _charge_target != Vector2i.ZERO:

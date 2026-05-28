@@ -1462,6 +1462,7 @@ func _add_worker_pause_button(parent: Control, worker: Worker) -> void:
 	button.add_theme_color_override("font_hover_color", COLOR_TEXT_LIGHT)
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 	button.toggled.connect(_on_worker_pause_toggled.bind(worker))
+	button.toggled.connect(func(_p: bool) -> void: AudioManager.play_button_press())
 	parent.add_child(button)
 
 

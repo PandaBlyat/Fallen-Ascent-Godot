@@ -100,28 +100,27 @@ func _animate_in(panel: Control) -> void:
 
 
 func _build_modal(ach: Dictionary, index: int) -> Control:
+	# Use explicit pixel sizes so positioning is correct immediately, without
+	# waiting for anchor-based layout to propagate (avoids top-left flash).
+	var vp_size: Vector2 = get_viewport_rect().size
+
 	var overlay := Control.new()
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.size = vp_size
+	overlay.position = Vector2.ZERO
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	overlay.pivot_offset = get_viewport_rect().size * 0.5
+	overlay.pivot_offset = vp_size * 0.5
 
 	# Semi-transparent background dimmer.
 	var dimmer := ColorRect.new()
 	dimmer.color = Color(0.0, 0.0, 0.0, 0.52)
-	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dimmer.size = vp_size
+	dimmer.position = Vector2.ZERO
 	overlay.add_child(dimmer)
 
-	# Centered panel.
+	# Centered panel — positioned explicitly so layout order doesn't matter.
 	var panel := PanelContainer.new()
 	panel.custom_minimum_size = Vector2(PANEL_W, PANEL_H)
-	panel.anchor_left = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_bottom = 0.5
-	panel.offset_left = -PANEL_W * 0.5
-	panel.offset_top = -PANEL_H * 0.5
-	panel.offset_right = PANEL_W * 0.5
-	panel.offset_bottom = PANEL_H * 0.5
+	panel.position = Vector2((vp_size.x - PANEL_W) * 0.5, (vp_size.y - PANEL_H) * 0.5)
 	panel.pivot_offset = Vector2(PANEL_W * 0.5, PANEL_H * 0.5)
 
 	var style := StyleBoxFlat.new()

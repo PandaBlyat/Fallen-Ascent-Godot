@@ -174,6 +174,7 @@ func can_place_blueprint(id: int, anchor: Vector2i, rotation: int = 0) -> bool:
 
 func build_structure(id: int, anchor: Vector2i, rotation: int = 0) -> void:
 	_add_structure(id, anchor, rotation, false)
+	EventBus.player_structure_placed.emit()
 
 
 func _add_structure(id: int, anchor: Vector2i, rotation: int = 0, generated: bool = false) -> void:

@@ -78,6 +78,9 @@ extends Node
 ##   achievement_unlocked(id)         - emitted by AchievementManager when an
 ##                                      achievement is unlocked for the first time.
 ##                                      Payload: StringName achievement id.
+##   player_structure_placed()        - emitted by StructureManager only when the
+##                                      player directly places a structure (not for
+##                                      auto-generated world lights or removals).
 ##
 ## Rules:
 ##   - No state, no logic. This file holds signal declarations only.
@@ -114,4 +117,5 @@ signal worker_low_energy(worker: Node, ratio: float)
 signal worker_low_condition(worker: Node, ratio: float)
 signal hostile_spotted(hostile: Node, spotter: Node)
 signal achievement_unlocked(id: StringName)
+signal player_structure_placed()
 @warning_ignore_restore("unused_signal")

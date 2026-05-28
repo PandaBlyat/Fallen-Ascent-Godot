@@ -14,6 +14,7 @@ const SECTION_DISPLAY := "display"
 const SECTION_AUDIO := "audio"
 const SECTION_INPUT := "input"
 const SECTION_GAMEPLAY := "gameplay"
+const SECTION_CAMERA := "camera"
 
 enum DisplayMode { WINDOWED, BORDERLESS, FULLSCREEN }
 enum VSyncMode { DISABLED, ENABLED, ADAPTIVE }
@@ -66,6 +67,12 @@ var swap_mouse_buttons: bool = false
 ## Multiplier applied on top of fog-of-war alpha. 1.0 = stock; 0.5 = half
 ## as dark; 1.5 = darker. Clamped to [0.0, 2.0].
 var overall_darkness: float = 1.0
+## Seconds between autosaves; 0 = disabled. Actual save is a no-op until
+## the save system is implemented.
+var autosave_interval: int = 300
+var edge_panning_enabled: bool = true
+## pixels/sec at zoom 1.0; mirrors CameraController.pan_speed.
+var camera_pan_speed: float = 600.0
 
 
 func _ready() -> void:
@@ -185,6 +192,31 @@ func set_overall_darkness(value: float) -> void:
 	settings_changed.emit()
 
 
+func set_autosave_interval(value: int) -> void:
+	if value == autosave_interval:
+		return
+	autosave_interval = value
+	save_to_disk()
+	settings_changed.emit()
+
+
+func set_edge_panning_enabled(value: bool) -> void:
+	if value == edge_panning_enabled:
+		return
+	edge_panning_enabled = value
+	save_to_disk()
+	settings_changed.emit()
+
+
+func set_camera_pan_speed(value: float) -> void:
+	value = clampf(value, 100.0, 2000.0)
+	if is_equal_approx(value, camera_pan_speed):
+		return
+	camera_pan_speed = value
+	save_to_disk()
+	settings_changed.emit()
+
+
 func apply() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, false)
@@ -283,6 +315,9 @@ func load_from_disk() -> void:
 	ambient_volume = clampf(float(cfg.get_value(SECTION_AUDIO, "ambient_volume", ambient_volume)), 0.0, 1.0)
 	swap_mouse_buttons = bool(cfg.get_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons))
 	overall_darkness = clampf(float(cfg.get_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)), 0.0, 2.0)
+	autosave_interval = int(cfg.get_value(SECTION_GAMEPLAY, "autosave_interval", autosave_interval))
+	edge_panning_enabled = bool(cfg.get_value(SECTION_CAMERA, "edge_panning_enabled", edge_panning_enabled))
+	camera_pan_speed = clampf(float(cfg.get_value(SECTION_CAMERA, "camera_pan_speed", camera_pan_speed)), 100.0, 2000.0)
 	_load_keybindings(cfg)
 
 
@@ -299,6 +334,9 @@ func save_to_disk() -> void:
 	cfg.set_value(SECTION_AUDIO, "ambient_volume", ambient_volume)
 	cfg.set_value(SECTION_GAMEPLAY, "swap_mouse_buttons", swap_mouse_buttons)
 	cfg.set_value(SECTION_GAMEPLAY, "overall_darkness", overall_darkness)
+	cfg.set_value(SECTION_GAMEPLAY, "autosave_interval", autosave_interval)
+	cfg.set_value(SECTION_CAMERA, "edge_panning_enabled", edge_panning_enabled)
+	cfg.set_value(SECTION_CAMERA, "camera_pan_speed", camera_pan_speed)
 	_save_keybindings(cfg)
 	cfg.save(CONFIG_PATH)
 

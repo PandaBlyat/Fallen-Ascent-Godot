@@ -13,6 +13,9 @@ const RESOLUTION_PRESETS: Array[Vector2i] = [
 	Vector2i(3440, 1440),
 ]
 const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
+const SAVE_PATH := "user://save.tres"
+const AUTOSAVE_PRESETS: Array[int] = [0, 60, 120, 300, 600]
+const AUTOSAVE_LABELS: Array[String] = ["Off", "1 min", "2 min", "5 min", "10 min"]
 
 @onready var _tabs: TabContainer = %Tabs
 @onready var _display_mode_button: OptionButton = %DisplayModeButton
@@ -37,6 +40,12 @@ const MAIN_MENU_SCENE_PATH := "res://scenes/Main.tscn"
 @onready var _close_button: Button = %CloseButton
 @onready var _main_menu_button: Button = %MainMenuButton
 @onready var _quit_button: Button = %QuitButton
+@onready var _autosave_button: OptionButton = %AutosaveButton
+@onready var _edge_panning_check: CheckButton = %EdgePanningCheck
+@onready var _pan_speed_slider: HSlider = %PanSpeedSlider
+@onready var _pan_speed_value: Label = %PanSpeedValue
+@onready var _save_button: Button = %SaveButton
+@onready var _load_button: Button = %LoadButton
 
 var _binding_action: StringName = &""
 
@@ -50,6 +59,8 @@ func _ready() -> void:
 			_tabs.set_tab_title(1, "Audio")
 		if _tabs.get_tab_count() > 2:
 			_tabs.set_tab_title(2, "Controls")
+		if _tabs.get_tab_count() > 3:
+			_tabs.set_tab_title(3, "Gameplay")
 
 	_initialize_display_mode()
 	_initialize_resolution()
@@ -60,6 +71,7 @@ func _ready() -> void:
 	_initialize_swap_mouse()
 	_initialize_audio()
 	_rebuild_controls()
+	_initialize_gameplay()
 
 	_close_button.pressed.connect(_close)
 	_close_button.pressed.connect(AudioManager.play_button_press)
@@ -67,7 +79,15 @@ func _ready() -> void:
 	_main_menu_button.pressed.connect(AudioManager.play_button_press)
 	_quit_button.pressed.connect(_on_quit_pressed)
 	_quit_button.pressed.connect(AudioManager.play_button_press)
-	_main_menu_button.visible = _is_in_game()
+	_save_button.pressed.connect(_on_save_pressed)
+	_load_button.pressed.connect(_on_load_pressed)
+
+	var in_game := _is_in_game()
+	_main_menu_button.visible = in_game
+	_save_button.visible = in_game
+	_load_button.visible = in_game
+	if in_game:
+		_load_button.disabled = not _save_exists()
 
 	# Grab focus on the first element to support controller and keyboard navigation
 	_display_mode_button.grab_focus()
@@ -296,6 +316,58 @@ func _update_darkness_label(value: float) -> void:
 	if _darkness_value == null:
 		return
 	_darkness_value.text = "%.2fx" % clampf(value, 0.0, 2.0)
+
+
+func _initialize_gameplay() -> void:
+	_autosave_button.clear()
+	for i in AUTOSAVE_PRESETS.size():
+		var lbl := AUTOSAVE_LABELS[i] if i < AUTOSAVE_LABELS.size() else str(AUTOSAVE_PRESETS[i])
+		_autosave_button.add_item(lbl, i)
+	var autosave_idx := AUTOSAVE_PRESETS.find(SettingsManager.autosave_interval)
+	_autosave_button.select(maxi(autosave_idx, 0))
+	_autosave_button.item_selected.connect(_on_autosave_selected)
+
+	_edge_panning_check.button_pressed = SettingsManager.edge_panning_enabled
+	_edge_panning_check.toggled.connect(_on_edge_panning_toggled)
+
+	_pan_speed_slider.min_value = 100.0
+	_pan_speed_slider.max_value = 2000.0
+	_pan_speed_slider.step = 50.0
+	_pan_speed_slider.value = SettingsManager.camera_pan_speed
+	_update_pan_speed_label(SettingsManager.camera_pan_speed)
+	_pan_speed_slider.value_changed.connect(_on_pan_speed_changed)
+
+
+func _on_autosave_selected(index: int) -> void:
+	if index < AUTOSAVE_PRESETS.size():
+		SettingsManager.set_autosave_interval(AUTOSAVE_PRESETS[index])
+
+
+func _on_edge_panning_toggled(pressed: bool) -> void:
+	SettingsManager.set_edge_panning_enabled(pressed)
+
+
+func _on_pan_speed_changed(value: float) -> void:
+	SettingsManager.set_camera_pan_speed(value)
+	_update_pan_speed_label(value)
+
+
+func _update_pan_speed_label(value: float) -> void:
+	if _pan_speed_value == null:
+		return
+	_pan_speed_value.text = "%d" % int(value)
+
+
+func _on_save_pressed() -> void:
+	pass  # TODO: wire up when save system is implemented
+
+
+func _on_load_pressed() -> void:
+	pass  # TODO: wire up when save system is implemented
+
+
+func _save_exists() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
 
 
 func _on_main_menu_pressed() -> void:

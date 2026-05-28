@@ -30,8 +30,9 @@ uniform float acid_glow_gain = 0.32;
 
 varying vec2 world_pos;
 
+// Slightly streamlined hash multiplier
 float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
 float noise(vec2 p) {
@@ -50,13 +51,18 @@ void vertex() {
 }
 
 void fragment() {
+	// Precompute reciprocals to eliminate division in hot paths
+	float inv_pixel_size = 1.0 / max(pixel_size, 0.001);
+	float inv_fps = 1.0 / max(animation_fps, 0.001);
+	float inv_bands_minus_one = 1.0 / max(float(color_bands - 1), 1.0);
+
 	// 1. Snap time to simulate a lower, stepped frame rate
-	float stepped_time = floor(TIME * animation_fps) / animation_fps;
+	float stepped_time = floor(TIME * animation_fps) * inv_fps;
 	float t = stepped_time * flow_speed;
 
 	// 2. Snap coordinates to virtual pixels for crisp art styling
-	vec2 snapped_world = floor(world_pos / pixel_size) * pixel_size;
-	vec2 p = snapped_world / 32.0;
+	vec2 snapped_world = floor(world_pos * inv_pixel_size) * pixel_size;
+	vec2 p = snapped_world * 0.03125; // Equivalent to / 32.0 (1.0 / 32.0 = 0.03125)
 
 	// Calculate noise coordinates
 	float wave = noise(p * 1.7 + vec2(t * 2.1, -t * 0.7));
@@ -72,6 +78,7 @@ void fragment() {
 	float oil_gain;
 	float alpha;
 	
+	// Uniform branching is generally well-handled, but structured simply
 	if (band == 0) {
 		low_color = deep_low;
 		high_color = deep_high;
@@ -115,7 +122,7 @@ void fragment() {
 
 	// 3. Posterize/Band the gradient mix for a hand-shaded look
 	float raw_mix = clamp(wave * 0.7 + ripple * ripple_gain, 0.0, 1.0);
-	float posterized_mix = floor(raw_mix * float(color_bands)) / float(color_bands - 1);
+	float posterized_mix = floor(raw_mix * float(color_bands)) * inv_bands_minus_one;
 	vec3 color = mix(low_color, high_color, posterized_mix);
 
 	// Calculate oil/sheen
@@ -138,18 +145,17 @@ void fragment() {
 		float cell_id = hash(floor(bubble_uv));
 		float pop_cycle = fract(stepped_time * 0.3 + cell_id);
 		
-		// Render sharp bubble dots if they pass a density threshold and aren't in their "popped" state
-		if (bubble_noise > 0.86 && pop_cycle < 0.75) {
-			color = mix(color, sheen_color, 0.85);
-		}
+		// Branchless bubble selection using step functions instead of an if-statement
+		float is_bubble = step(0.86, bubble_noise) * step(pop_cycle, 0.75);
+		color = mix(color, sheen_color, 0.85 * is_bubble);
 	}
 
 	// Apply grit/dirt texture to the color map
 	color *= 0.78 + grit * dirty_strength * 0.22;
 
 	// 5. Pixelated tile boundary dark seam
-	vec2 pixel_tile_uv = fract(snapped_world / 32.0);
-	vec2 edge_dist = min(pixel_tile_uv, vec2(1.0) - pixel_tile_uv) * 32.0;
+	vec2 pixel_tile_uv = fract(snapped_world * 0.03125); // Equivalent to / 32.0
+	vec2 edge_dist = min(pixel_tile_uv, 1.0 - pixel_tile_uv) * 32.0;
 	float min_dist = min(edge_dist.x, edge_dist.y);
 
 	// Create a sharp, pixel-aligned boundary shadow instead of a smooth blur

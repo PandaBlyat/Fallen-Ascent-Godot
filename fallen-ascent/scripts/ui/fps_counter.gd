@@ -1,7 +1,7 @@
 class_name FpsOverlay
-extends Control
-## A self-contained utility that draws a styled FPS counter in the top-left corner.
-## To use: Instantiate this class and add it as a child to your HUD/CanvasLayer.
+extends CanvasLayer
+## A self-contained utility that draws a styled FPS counter in the top-right corner.
+## To use: Instantiate this class and add it as a child to your main scene.
 
 var _label: Label
 

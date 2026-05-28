@@ -1,21 +1,18 @@
 class_name FpsOverlay
 extends Control
-## A self-contained utility that draws a styled FPS counter in the top-right corner.
-## To use: Instantiate this class and add it as a child to your main scene.
+## A self-contained utility that draws a styled FPS counter in the top-left corner.
+## To use: Instantiate this class and add it as a child to your HUD/CanvasLayer.
 
 var _label: Label
 
 func _ready() -> void:
-	# High layer value ensures this renders on top of standard game UI layers
-	layer = 128
-	
 	# Margin container for corner positioning
 	var margin_container := MarginContainer.new()
-	margin_container.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	margin_container.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	margin_container.offset_left = -120.0
+	margin_container.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	margin_container.grow_horizontal = Control.GROW_DIRECTION_END
+	margin_container.offset_left = 10.0
 	margin_container.offset_top = 10.0
-	margin_container.offset_right = -10.0
+	margin_container.offset_right = 120.0
 	margin_container.offset_bottom = 36.0
 	margin_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(margin_container)

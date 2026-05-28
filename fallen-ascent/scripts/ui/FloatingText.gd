@@ -9,10 +9,15 @@ const FLOATING_FONT: Font = preload("res://resources/Orbitron-VariableFont_wght.
 
 var _entries: Array[Dictionary] = []
 var _font: Font
+var _last_time_msec: float = 0.0
 
 
 func _ready() -> void:
+	# 1. Allow this node to process and draw even if get_tree().paused is true
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	
 	_font = FLOATING_FONT
+	_last_time_msec = Time.get_ticks_msec()
 	EventBus.combat_hit.connect(_on_combat_hit)
 	EventBus.combat_dodged.connect(_on_combat_dodged)
 	z_index = 1000
@@ -50,13 +55,18 @@ func _spawn(world_pos: Vector2, text: String, color: Color) -> void:
 	queue_redraw()
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
+	# 2. Calculate unscaled real-time delta
+	var current_time_msec = Time.get_ticks_msec()
+	var real_delta = (current_time_msec - _last_time_msec) / 1000.0
+	_last_time_msec = current_time_msec
+
 	if _entries.is_empty():
 		return
 		
 	var i: int = _entries.size() - 1
 	while i >= 0:
-		_entries[i]["age"] = float(_entries[i]["age"]) + delta
+		_entries[i]["age"] = float(_entries[i]["age"]) + real_delta
 		if float(_entries[i]["age"]) >= LIFETIME_SECONDS:
 			_entries.remove_at(i)
 		i -= 1

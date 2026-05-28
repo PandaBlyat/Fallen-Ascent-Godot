@@ -5,8 +5,8 @@ extends HBoxContainer
 ## The currently-active button is visually highlighted via `button_pressed`.
 ##
 
-const SPEEDS := [0.0, 1.0, 2.0, 3.0, 10.0]
-const LABELS := ["||", "1x", "2x", "3x", "10x"]
+const SPEEDS := [0.0, 1.0, 2.0, 3.0, 5.0]
+const LABELS := ["||", "1x", "2x", "3x", "5x"]
 const TOOLTIPS := [
 	"Pause\nKey: 0 or Space",
 	"Normal speed\nKey: 1",

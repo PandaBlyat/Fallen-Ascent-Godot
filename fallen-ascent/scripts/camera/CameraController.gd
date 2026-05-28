@@ -31,8 +31,15 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_last_real_usec = Time.get_ticks_usec()
 	make_current()
+	_apply_camera_settings()
+	SettingsManager.settings_changed.connect(_apply_camera_settings)
 	# Defer so ColonySite._ready (which sets up ChunkManager) runs first.
 	_emit_if_changed.call_deferred(true)
+
+
+func _apply_camera_settings() -> void:
+	pan_speed = SettingsManager.camera_pan_speed
+	edge_scroll_enabled = SettingsManager.edge_panning_enabled
 
 
 func _process(_delta: float) -> void:

@@ -664,6 +664,54 @@ func action_history() -> Array[String]:
 	return _action_history.duplicate()
 
 
+## Save layer: persist identity, position, and the persistent stats. Transient
+## state (current job, path, combat target, carried item) is dropped; the bot
+## resumes idle and re-claims work after load. A carried stack is reported so
+## the caller can re-drop it as a loose item.
+func capture_save() -> Dictionary:
+	var limbs: Dictionary = {}
+	for limb_name in _limbs:
+		limbs[limb_name] = float(_limbs[limb_name])
+	var d: Dictionary = {
+		"name": str(name),
+		"pos": position,
+		"personality": _personality,
+		"energy": _energy,
+		"condition": _condition,
+		"mental": _mental_tiredness,
+		"social": _social,
+		"mood": _mood,
+		"limbs": limbs,
+		"hp": stats.hp if stats != null else COMBAT_HP_MAX,
+		"history": _action_history.duplicate(),
+		"history_index": _history_index,
+	}
+	if _carried != null and is_instance_valid(_carried):
+		d["carried"] = {"kind": _carried.kind, "count": _carried.count}
+	return d
+
+
+func restore_save(data: Dictionary) -> void:
+	_personality = int(data.get("personality", _personality))
+	_energy = float(data.get("energy", ENERGY_MAX))
+	_condition = float(data.get("condition", CONDITION_MAX))
+	_mental_tiredness = float(data.get("mental", 0.0))
+	_social = float(data.get("social", 50.0))
+	_mood = float(data.get("mood", MOOD_BASELINE))
+	var limbs: Dictionary = data.get("limbs", {}) as Dictionary
+	for limb_name in limbs:
+		_limbs[limb_name] = float(limbs[limb_name])
+	if stats != null:
+		stats.hp = clampf(float(data.get("hp", stats.max_hp)), 0.0, stats.max_hp)
+	_action_history.clear()
+	for h in data.get("history", []) as Array:
+		_action_history.append(str(h))
+	_history_index = int(data.get("history_index", _action_history.size()))
+	_state = State.IDLE
+	_idle_cooldown = 0.0
+	queue_redraw()
+
+
 func energy_ratio() -> float:
 	return clampf(_energy / ENERGY_MAX, 0.0, 1.0)
 
@@ -1438,9 +1486,19 @@ func _process_fighting(delta: float) -> void:
 		_path_index = 0
 
 ## Registers a job as temporarily un-executable for this worker.
+## Seconds a job that a worker couldn't reach is skipped before anyone retries
+## it. Long enough that hundreds of unreachable jobs don't get re-pathed in a
+## tight loop, short enough that opening a wall makes the area workable soon.
+const FAILED_JOB_COOLDOWN_SECONDS: float = 8.0
+
+
 func _mark_job_failed(job: Job) -> void:
 	if job != null:
-		_failed_jobs_cooldowns[job] = _now_seconds() + 15.0
+		_failed_jobs_cooldowns[job] = _now_seconds() + FAILED_JOB_COOLDOWN_SECONDS
+		# Block at the board level too so neither this worker's claim loop nor
+		# any other idle worker keeps re-pathing the same unreachable job every
+		# tick — the dominant cost when a huge designation drops hundreds of jobs.
+		job.block_briefly(FAILED_JOB_COOLDOWN_SECONDS)
 
 
 func _try_claim_job() -> bool:
@@ -1458,8 +1516,10 @@ func _try_claim_job() -> bool:
 	
 	# Keep pulling jobs until one starts successfully. Failed claims are held
 	# until this tick ends so the board can offer another candidate.
-	# Includes a safety limit to prevent infinite loops if the board contains duplicate entries.
-	var safety_limit := 32
+	# Bounded attempts per tick: each iteration runs a board scan + a pathfind,
+	# so a high cap multiplies cost when hundreds of jobs exist. Failed jobs are
+	# blocked board-side (see _mark_job_failed), so a few attempts suffice.
+	var safety_limit := 6
 	while safety_limit > 0:
 		safety_limit -= 1
 		var job: Job = _job_board.claim_next_for(self, current_grid())
@@ -2696,9 +2756,13 @@ func _drop_in_place() -> void:
 		_carried.visible = true
 		_carried.set_grid(here)
 		_carried.reserved_by = null
+		# Briefly bar re-hauling so a failed delivery (unreachable / full
+		# stockpile) doesn't immediately re-post a haul and loop the worker
+		# through pick-up/drop on the same item.
+		_carried.haul_blocked_until_msec = Time.get_ticks_msec() + StockpileManager.HAUL_RETRY_COOLDOWN_MS
 		dropped = _carried
 	_carried = null
-	
+
 	if (_job is BuildJob) or (_job is CraftJob) or (_job is OperateStructureJob):
 		_release_and_idle()
 	else:
@@ -3968,25 +4032,45 @@ func _refresh_action_text() -> void:
 
 
 func _highlight_cell() -> int:
-	if _state == State.FIGHTING:
-		return HIGHLIGHT_CELL_RED
-	if _state == State.MOVING_TO_CHARGE or _state == State.MOVING_TO_REPAIR:
-		return HIGHLIGHT_CELL_GREEN
-	if _state == State.MOVING_FREEFORM:
-		return HIGHLIGHT_CELL_GREY
+	# Red while attacking, green while heading to / using a charge or repair
+	# point, grey while moving on a direct player move order. Returns -1 (no
+	# highlight) in every other state. The highlight persists for as long as the
+	# worker stays in the matching state, i.e. until it reaches / finishes.
+	match _state:
+		State.FIGHTING:
+			return HIGHLIGHT_CELL_RED
+		State.MOVING_TO_CHARGE, State.CHARGING, State.MOVING_TO_REPAIR, State.REPAIRING:
+			return HIGHLIGHT_CELL_GREEN
+		State.MOVING_FREEFORM:
+			return HIGHLIGHT_CELL_GREY
 	return -1
+
+
+## World-space position the order highlight should mark: the attack target, the
+## end of the active path, or the worker itself once it has arrived.
+func _order_highlight_world_target() -> Vector2:
+	if _state == State.FIGHTING and _combat_target != null and is_instance_valid(_combat_target):
+		return (_combat_target as Node2D).position
+	if not _path.is_empty():
+		return _path[_path.size() - 1]
+	if (_state == State.MOVING_TO_CHARGE or _state == State.CHARGING) and _charge_target != Vector2i.ZERO:
+		return Chunk.grid_to_pixel_center(_charge_target)
+	return position
 
 
 func _draw() -> void:
 	_draw_action_bubble()
-	# Draw order highlight beneath the worker sprite.
+	# Draw the 32x32 order highlight on the target tile (move destination, charge
+	# / repair point, or attack target) so it reads as a marker on the world,
+	# not hidden underneath the worker sprite.
 	if _highlighter_atlas != null:
 		var cell: int = _highlight_cell()
 		if cell >= 0:
+			var local_center: Vector2 = _order_highlight_world_target() - position
 			var src := Rect2(Vector2(cell * 32.0, 0.0), Vector2(32.0, 32.0))
 			draw_texture_rect_region(
 				_highlighter_atlas,
-				Rect2(-Vector2(16.0, 16.0), Vector2(32.0, 32.0)),
+				Rect2(local_center - Vector2(16.0, 16.0), Vector2(32.0, 32.0)),
 				src,
 			)
 	if _selected:

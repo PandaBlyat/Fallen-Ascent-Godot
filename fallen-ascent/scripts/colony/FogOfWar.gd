@@ -81,6 +81,24 @@ func is_explored(grid: Vector2i) -> bool:
 	return _explored.has(grid)
 
 
+func capture_save() -> Dictionary:
+	var cells: Array = []
+	for c in _explored:
+		cells.append(c)
+	return {"explored": cells}
+
+
+func restore_save(data: Dictionary) -> void:
+	for c in data.get("explored", []) as Array:
+		_explored[c as Vector2i] = true
+	_explored_cells_dirty = true
+	_visibility_dirty = true
+	# Force a full mask rebuild so memory-fog (explored-but-not-visible) cells
+	# repaint from the restored set, then recompute live visibility.
+	_visibility_image = null
+	call_deferred("_refresh_visibility")
+
+
 func is_cell_visible(grid: Vector2i) -> bool:
 	return _visible.has(grid)
 

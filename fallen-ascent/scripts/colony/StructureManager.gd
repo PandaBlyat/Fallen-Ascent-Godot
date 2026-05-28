@@ -204,6 +204,51 @@ func structure_at(grid: Vector2i) -> Dictionary:
 	return _cell_to_structure.get(grid, {})
 
 
+## Save layer: persist only player-built structures (world-generated lights
+## regenerate from the seed) plus the set of generated lights the player
+## scrapped, so those stay gone after a reload.
+func capture_save() -> Dictionary:
+	var built: Array = []
+	for s in _structures:
+		if bool(s.get("generated", false)):
+			continue
+		built.append({
+			"id": int(s["id"]),
+			"anchor": s["anchor"] as Vector2i,
+			"rotation": int(s.get("rotation", 0)),
+			"timer": float(s.get("timer", 0.0)),
+		})
+	var removed: Array = []
+	for anchor in _removed_generated_lights:
+		removed.append(anchor)
+	return {"structures": built, "removed_generated_lights": removed}
+
+
+func restore_save(data: Dictionary) -> void:
+	# Re-apply scrapped world lights: record them, then drop any that setup()
+	# already placed this session.
+	for anchor in data.get("removed_generated_lights", []) as Array:
+		_removed_generated_lights[anchor as Vector2i] = true
+	for s in _structures.duplicate():
+		if not bool(s.get("generated", false)):
+			continue
+		var ga: Vector2i = s["anchor"] as Vector2i
+		if _removed_generated_lights.has(ga):
+			_structures.erase(s)
+			for raw_cell in (s["cells"] as Array):
+				_cell_to_structure.erase(raw_cell as Vector2i)
+	# Rebuild player-placed structures (stockpile zones must already exist so
+	# storage bins can register their capacity bump).
+	for entry in data.get("structures", []) as Array:
+		var d: Dictionary = entry
+		var anchor: Vector2i = d["anchor"] as Vector2i
+		_add_structure(int(d["id"]), anchor, int(d.get("rotation", 0)), false)
+		var placed: Dictionary = structure_at(anchor)
+		if not placed.is_empty():
+			placed["timer"] = float(d.get("timer", 0.0))
+	queue_redraw()
+
+
 func structure_name_at(grid: Vector2i) -> String:
 	var structure: Dictionary = structure_at(grid)
 	if structure.is_empty() or not _is_structure_known(structure):

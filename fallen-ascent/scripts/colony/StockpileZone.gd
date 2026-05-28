@@ -45,6 +45,47 @@ func contains_cell(grid: Vector2i) -> bool:
 	return _cell_set.has(grid)
 
 
+## Save layer: cells, per-cell capacity bumps, and the placed stacks. Inbound
+## reservations are transient and intentionally dropped.
+func capture_save() -> Dictionary:
+	var cell_list: Array = []
+	for c in cells:
+		cell_list.append(c)
+	var cap: Array = []
+	for cell in _capacity_multipliers:
+		cap.append([cell, int(_capacity_multipliers[cell])])
+	var items: Array = []
+	for cell in occupant:
+		var v: Variant = occupant[cell]
+		var it: Item = null
+		if v is Item:
+			it = v as Item
+		elif v is Dictionary:
+			it = (v as Dictionary).get(R_EXISTING) as Item
+		if it != null and is_instance_valid(it) and it.count > 0:
+			items.append([cell, int(it.kind), int(it.count)])
+	return {"cells": cell_list, "capacity": cap, "items": items}
+
+
+## Rebuild a zone from saved data. `make_item` is a Callable returning a fresh
+## Item the zone takes ownership of (the manager supplies it so the zone has no
+## dependency on the item scene path).
+func restore_save(data: Dictionary, make_item: Callable) -> void:
+	var zone_cells: Array[Vector2i] = []
+	for c in (data.get("cells", []) as Array):
+		zone_cells.append(c as Vector2i)
+	setup(zone_cells)
+	for entry in data.get("capacity", []) as Array:
+		set_capacity_multiplier(entry[0] as Vector2i, int(entry[1]))
+	for entry in data.get("items", []) as Array:
+		var cell: Vector2i = entry[0] as Vector2i
+		var item: Item = make_item.call(cell, int(entry[1]), int(entry[2])) as Item
+		if item == null:
+			continue
+		add_child(item)
+		place(item, cell)
+
+
 ## Picks a cell that can accept `amount` of `kind`:
 ##   1. A same-kind stack/reservation with enough room.
 ##   2. An empty cell.

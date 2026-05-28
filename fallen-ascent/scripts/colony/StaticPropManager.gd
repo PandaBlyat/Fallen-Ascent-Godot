@@ -281,6 +281,7 @@ var _generation_queue: Array[Vector2i] = []
 var _generation_pending: Dictionary = {}        ## Vector2i -> true
 var _props: Dictionary = {}                     ## anchor -> prop Dictionary
 var _cell_to_anchor: Dictionary = {}            ## occupied cell -> anchor
+var _removed_props: Dictionary = {}             ## anchor -> true (player-mined; persisted)
 
 
 func _ready() -> void:
@@ -424,12 +425,39 @@ func mine_prop_at(grid: Vector2i) -> Dictionary:
 	var cells: Array = prop["cells"] as Array
 	var rewards: Dictionary = _roll_rewards(kind, anchor)
 	_props.erase(anchor)
+	_removed_props[anchor] = true
 	for raw_cell in cells:
 		var cell: Vector2i = raw_cell as Vector2i
 		_cell_to_anchor.erase(cell)
 		EventBus.tile_changed.emit(cell, _chunk_manager.get_tile_at(cell))
 	queue_redraw()
 	return rewards
+
+
+## Save layer: only the anchors of player-mined props need persisting; every
+## other prop regenerates deterministically from the seed.
+func capture_save() -> Dictionary:
+	var removed: Array = []
+	for anchor in _removed_props:
+		removed.append(anchor)
+	return {"removed_props": removed}
+
+
+## Drop props the player mined before saving. Call after props have been
+## generated for the loaded chunks (ColonySite forces generation first).
+func restore_save(data: Dictionary) -> void:
+	for anchor in data.get("removed_props", []) as Array:
+		var a: Vector2i = anchor
+		_removed_props[a] = true
+		if not _props.has(a):
+			continue
+		var prop: Dictionary = _props[a]
+		_props.erase(a)
+		for raw_cell in (prop["cells"] as Array):
+			var cell: Vector2i = raw_cell as Vector2i
+			_cell_to_anchor.erase(cell)
+			EventBus.tile_changed.emit(cell, _chunk_manager.get_tile_at(cell))
+	queue_redraw()
 
 
 func _on_chunk_loaded(chunk_coord: Vector2i) -> void:

@@ -245,8 +245,9 @@ func _handle_right_click(shift_held: bool) -> void:
 	# Attack any hostile/neutral under cursor (multi-bot via stand spreading).
 	var attack_target: Node2D = _attackable_under(world_pos)
 	if attack_target != null:
+		# Each commanded worker draws its own red highlight on the target while
+		# fighting (Worker._highlight_cell), so skip the yellow tile flash.
 		_command_group_attack(attack_target, shift_held)
-		_show_entity_order_highlight(attack_target)
 		return
 	var grid: Vector2i = Vector2i(
 		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
@@ -317,13 +318,12 @@ func _handle_right_click(shift_held: bool) -> void:
 			_show_order_highlight(grid)
 		return
 	if tile == TerrainGenerator.TILE_OUTLET:
-		if _command_one_worker_to_charge(grid, shift_held):
-			_show_order_highlight(grid)
-		else:
+		# Charging workers paint a green highlight on the outlet themselves.
+		if not _command_one_worker_to_charge(grid, shift_held):
 			_show_order_failed(grid, "Outlet unavailable")
 	elif _is_walkable_order_tile(tile):
+		# Moving workers paint a grey highlight on the destination themselves.
 		if _command_group_move(grid, shift_held):
-			_show_order_highlight(grid)
 			AudioManager.play_move_here()
 		else:
 			_show_order_failed(grid, "No path")
@@ -351,9 +351,8 @@ func _try_command_repair_bench(grid: Vector2i, _append: bool) -> bool:
 		if ok:
 			sent = true
 			break
-	if sent:
-		_show_order_highlight(grid)
-	else:
+	if not sent:
+		# Repairing workers paint a green highlight on the bench themselves.
 		_show_order_failed(grid, "Can't reach")
 	return true
 

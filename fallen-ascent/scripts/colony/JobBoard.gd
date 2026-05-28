@@ -299,20 +299,41 @@ func _best_job_in_neighborhood(worker_grid: Vector2i, now_msec: int) -> Job:
 	return best
 
 
+## Fallback when the 3x3 chunk neighborhood is empty. Instead of scanning every
+## pending job (O(jobs), which dominates frame time once a big designation drops
+## hundreds), find the nearest non-empty chunk via the chunk index and scan only
+## chunks within one ring of it. Cost is O(non-empty chunks + jobs in the nearest
+## cluster). Workers therefore prefer the closest cluster of work.
 func _best_job_global(worker_grid: Vector2i, now_msec: int) -> Job:
+	if _pending_by_chunk.is_empty():
+		return null
+	var worker_chunk: Vector2i = Chunk.grid_to_chunk(worker_grid)
+	var nearest_chunk_dist: int = 0x7fffffff
+	for key in _pending_by_chunk:
+		var cc: Vector2i = key
+		var cd: int = maxi(absi(cc.x - worker_chunk.x), absi(cc.y - worker_chunk.y))
+		if cd < nearest_chunk_dist:
+			nearest_chunk_dist = cd
+	# Include one extra ring so a job just across a chunk boundary isn't missed.
+	var max_chunk_dist: int = nearest_chunk_dist + 1
 	var best: Job = null
 	var best_dist: int = 0x7fffffff
 	var best_priority: int = 0x7fffffff
-	for job in pending:
-		if not _job_is_claimable(job, now_msec):
+	for key in _pending_by_chunk:
+		var cc: Vector2i = key
+		var cd: int = maxi(absi(cc.x - worker_chunk.x), absi(cc.y - worker_chunk.y))
+		if cd > max_chunk_dist:
 			continue
-		var t: Vector2i = _target_grid_of(job)
-		var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))
-		var priority: int = _priority_of(job)
-		if priority < best_priority or (priority == best_priority and d < best_dist):
-			best = job
-			best_dist = d
-			best_priority = priority
+		for job in _pending_by_chunk[key] as Array:
+			if not _job_is_claimable(job, now_msec):
+				continue
+			var t: Vector2i = _target_grid_of(job)
+			var d: int = maxi(absi(t.x - worker_grid.x), absi(t.y - worker_grid.y))
+			var priority: int = _priority_of(job)
+			if priority < best_priority or (priority == best_priority and d < best_dist):
+				best = job
+				best_dist = d
+				best_priority = priority
 	return best
 
 
@@ -417,6 +438,51 @@ static func describe_job(job: Job) -> String:
 		var tg: Vector2i = job.get("target") as Vector2i
 		return "Scrape biomass (%d,%d)" % [tg.x, tg.y]
 	return "Job"
+
+
+## Save layer: snapshot the player-issued designations (mine/build/scrape/craft).
+## Haul and operate jobs are intentionally omitted — they regenerate from the
+## restored loose items / stockpiles and the StructureManager production tick.
+## Claim ownership and in-progress timers are dropped; jobs come back fresh.
+func capture_save() -> Dictionary:
+	var mine: Array = []
+	var build: Array = []
+	var scrape_rust: Array = []
+	var scrape_biomass: Array = []
+	var craft: Array = []
+	for job in pending:
+		if job is MineJob:
+			mine.append((job as MineJob).target)
+		elif job is BuildJob:
+			var b := job as BuildJob
+			build.append([b.anchor, b.blueprint_id, b.rotation])
+		elif job is CraftJob:
+			var c := job as CraftJob
+			craft.append([c.station_anchor, c.object_kind])
+		elif job.kind == Job.Kind.SCRAPE_RUST:
+			scrape_rust.append(job.get("target") as Vector2i)
+		elif job.kind == Job.Kind.SCRAPE_BIOMASS:
+			scrape_biomass.append(job.get("target") as Vector2i)
+	return {
+		"mine": mine,
+		"build": build,
+		"scrape_rust": scrape_rust,
+		"scrape_biomass": scrape_biomass,
+		"craft": craft,
+	}
+
+
+func restore_save(data: Dictionary) -> void:
+	for t in data.get("mine", []) as Array:
+		add_mine_job(t as Vector2i)
+	for e in data.get("build", []) as Array:
+		add_build_job(e[0] as Vector2i, int(e[1]), int(e[2]))
+	for t in data.get("scrape_rust", []) as Array:
+		add_scrape_rust_job(t as Vector2i)
+	for t in data.get("scrape_biomass", []) as Array:
+		add_scrape_biomass_job(t as Vector2i)
+	for e in data.get("craft", []) as Array:
+		add_craft_job(e[0] as Vector2i, int(e[1]))
 
 
 func _index_job(job: Job) -> void:

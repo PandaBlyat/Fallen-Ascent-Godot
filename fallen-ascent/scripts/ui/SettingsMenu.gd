@@ -50,8 +50,15 @@ const AUTOSAVE_LABELS: Array[String] = ["Off", "1 min", "2 min", "5 min", "10 mi
 var _binding_action: StringName = &""
 
 
+@onready var _root_panel: PanelContainer = $Panel
+
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Skin the settings buttons with the shared worker-card texture (CanvasLayer
+	# can't hold a theme, so apply it to the root panel that holds the controls).
+	if _root_panel != null:
+		_root_panel.theme = UiStyle.button_theme()
 
 	if _tabs != null:
 		_tabs.set_tab_title(0, "Display")

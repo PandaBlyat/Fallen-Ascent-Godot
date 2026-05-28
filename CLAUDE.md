@@ -159,24 +159,35 @@ Weapon) across Tiers 1–5.
   `PARTS`; never reshuffle ids (saved loadouts resolve by id).
 - `scripts/colony/parts/WorkerLoadout.gd` — `Resource` holding name,
   personality, `part_ids` (parallel to `SLOT_LAYOUT`), `skills`, `specialty`.
-  `derive()` folds parts + skills + personality into one flat stats dict.
+  `derive()` folds parts + skills + a per-role `buff` + personality into one flat
+  stats dict. `SPECIALTIES` entries carry a `buff` (small role bonus added in
+  `derive()`) and a `desc` (shown as the embark role tooltip via `role_desc()`).
 - `Worker.apply_loadout(loadout)` pushes derived stats onto the live worker
   (move/work/carry/hp/bash/armor/sight/energy/mood). Workers spawned WITHOUT a
   loadout keep the original pre-parts balance, so cradle spawns and old saves
   don't regress. Loadouts are persisted in `capture_save`/`restore_save`.
+- **Body-part condition.** Each equipped part has its own condition (0..100),
+  tracked in `Worker._part_conditions` keyed by `SLOT_LAYOUT` index. Combat,
+  acid, and wear damage a random equipped part (`_damage_part`); Mechanic Docks
+  repair them (`repair_parts_external`). A part-less shell has no part conditions
+  and falls back to the overall `_condition` meter. The worker stat panel renders
+  one bar per part via `Worker.part_condition_entries()` (no more abstract limbs).
 
 Embark flow: `EmbarkScreen` (per-run pool points) → `embark_confirmed(Array[
 WorkerLoadout])` → `GameState.embark_loadouts` → `ColonySite` →
 `WorkerSpawner.spawn(..., loadouts)`. Achievement points
-(`AchievementManager`) permanently unlock higher part tiers and extra worker
-slots from the embark store. **Names** come from `WorkerSpawner.BOT_NAMES` (the
+(`AchievementManager`) permanently unlock higher part tiers, extra worker
+slots, and **manual personality choice** from the embark store. By default each
+worker's personality is randomized and can only be rerolled (per worker or via
+"Randomize All"); randomizing also rolls a budget-fitting random part loadout
+(parts start empty). **Names** come from `WorkerSpawner.BOT_NAMES` (the
 single source) and the embark screen draws from that same pool.
 
 `RoomManager` owns the list of player-designated rooms. Kinds:
 - `DOCK_ROOM` — 1×2+ area containing at least one Dock Bed (or Mechanic Dock).
   Assigned to a single worker via `ensure_dock_room_for`.
 - `RESEARCH_ROOM` — must contain a Research Bench (formerly Meditation Pad).
-- `MECHANIC_ROOM` — must contain a Mechanic Dock; heals limbs of occupants.
+- `MECHANIC_ROOM` — must contain a Mechanic Dock; repairs damaged body parts of occupants.
 - `WORKSHOP_ROOM` — must be enclosed by walls (or natural wall tiles) + at
   least one door on the perimeter, contain a placed light source object, and
   contain a workshop structure. Workshops inside a valid Workshop Room get a

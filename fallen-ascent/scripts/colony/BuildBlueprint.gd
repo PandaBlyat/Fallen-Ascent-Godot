@@ -120,7 +120,7 @@ static func description(id: int) -> String:
 		Id.PARTS_LOOM:
 			return "Worker-operated press that consumes raw scrap to make platings and mechanisms."
 		Id.MAINTENANCE_DOCK:
-			return "Heals limb damage when worker docks. Mechanic Room boosts efficiency."
+			return "Repairs damaged parts when worker docks. Mechanic Room boosts efficiency."
 		Id.MEDITATION_PAD:
 			return "Research bench: bots gather wisdom while seated. Place inside a Research Room for the bonus."
 		Id.SENTIENCE_CRADLE:

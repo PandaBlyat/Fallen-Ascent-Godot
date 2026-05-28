@@ -70,7 +70,7 @@ const COLOR_METER_GOOD := Color(0.3, 0.9, 0.55)
 const COLOR_METER_LOW := Color(1.0, 0.78, 0.2)
 const COLOR_FACTION_HOSTILE := Color(0.96, 0.36, 0.34, 1.0)
 const COLOR_FACTION_NEUTRAL := Color(0.97, 0.78, 0.32, 1.0)
-const HISTORY_VISIBLE_ROWS: int = 4
+const HISTORY_VISIBLE_ROWS: int = 7
 const WORKER_ATLAS_PATH := "res://resources/entities/worker_atlas.png"
 const BOTS_ATLAS_PATH := "res://resources/entities/bots_atlas.png"
 const WORKER_REGION_SIZE := Vector2(32, 32)
@@ -1442,9 +1442,15 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 		_add_section_label(right, "modifiers")
 		for modifier in modifiers:
 			_add_status_banner(right, modifier, COLOR_ACCENT_CYAN)
-	_add_history_panel(right, worker)
-	_add_limb_grid(right, worker)
+	_add_parts_condition_grid(right, worker)
 	_add_loadout_section(right, worker)
+
+	# Thought history sits isolated at the bottom, full-width, so it reads like a
+	# log rather than competing with the stat columns above it.
+	var divider := HSeparator.new()
+	divider.add_theme_stylebox_override("separator", _hsep_style())
+	card.add_child(divider)
+	_add_history_panel(card, worker)
 
 
 func _add_worker_pause_button(parent: Control, worker: Worker) -> void:
@@ -1579,34 +1585,24 @@ func _add_loadout_section(parent: Control, worker: Worker) -> void:
 		_add_status_banner(parent, ", ".join(skill_lines), COLOR_ACCENT_CYAN)
 
 
-func _add_limb_grid(parent: Control, worker: Worker) -> void:
-	_add_section_label(parent, "limbs")
-	var grid := GridContainer.new()
-	# Two columns of {name, %, bar} stacks. Bars make damaged limbs read at a
-	# glance instead of forcing the player to scan percent text.
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 4)
-	parent.add_child(grid)
-	var limb_lines: Array[String] = worker.limb_status_lines()
-	var limb_ratios: Array[float] = worker.limb_condition_ratios()
-	for i in limb_lines.size():
-		var limb_line: String = limb_lines[i]
-		var ratio: float = limb_ratios[i] if i < limb_ratios.size() else 1.0
-		var limb_name: String = limb_line
+## One labelled condition bar per equipped body part (replaces the old abstract
+## limb grid now that workers are built from defined parts). A part-less shell
+## shows a single "Chassis" entry.
+func _add_parts_condition_grid(parent: Control, worker: Worker) -> void:
+	_add_section_label(parent, "part condition")
+	var entries: Array[Dictionary] = worker.part_condition_entries()
+	for entry in entries:
+		var ratio: float = clampf(float(entry.get("ratio", 1.0)), 0.0, 1.0)
 		var pct: int = int(roundf(ratio * 100.0))
-		var split: int = limb_line.rfind(" ")
-		if split >= 0:
-			limb_name = limb_line.substr(0, split)
 		var color: Color = COLOR_METER_GOOD
 		if pct < 30:
 			color = Color(1.0, 0.42, 0.32)
 		elif pct < 70:
 			color = Color(0.98, 0.78, 0.32)
-		_add_limb_cell(grid, limb_name, pct, ratio, color)
+		_add_part_condition_cell(parent, str(entry.get("name", "?")), str(entry.get("slot", "")), pct, ratio, color)
 
 
-func _add_limb_cell(parent: Control, limb_name: String, pct: int, ratio: float, color: Color) -> void:
+func _add_part_condition_cell(parent: Control, part_name: String, slot_label: String, pct: int, ratio: float, color: Color) -> void:
 	var cell := VBoxContainer.new()
 	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cell.add_theme_constant_override("separation", 1)
@@ -1616,8 +1612,15 @@ func _add_limb_cell(parent: Control, limb_name: String, pct: int, ratio: float, 
 	row.add_theme_constant_override("separation", 4)
 	cell.add_child(row)
 
+	var slot_tag := Label.new()
+	slot_tag.text = slot_label
+	slot_tag.add_theme_font_size_override("font_size", 9)
+	slot_tag.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	slot_tag.custom_minimum_size = Vector2(58, 0)
+	row.add_child(slot_tag)
+
 	var name_label := Label.new()
-	name_label.text = limb_name
+	name_label.text = part_name
 	name_label.add_theme_font_size_override("font_size", 11)
 	name_label.add_theme_color_override("font_color", color)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1633,7 +1636,7 @@ func _add_limb_cell(parent: Control, limb_name: String, pct: int, ratio: float, 
 	var bar := ProgressBar.new()
 	bar.min_value = 0.0
 	bar.max_value = 1.0
-	bar.value = clampf(ratio, 0.0, 1.0)
+	bar.value = ratio
 	bar.show_percentage = false
 	bar.custom_minimum_size = Vector2(0, 4)
 	var bg := StyleBoxFlat.new()
@@ -1868,35 +1871,61 @@ func _add_meter(parent: Control, label_text: String, ratio: float, fill: Color) 
 
 func _add_history_panel(parent: Control, worker: Worker) -> void:
 	var title := Label.new()
-	title.text = "thought history"
+	title.text = "THOUGHT HISTORY"
 	title.add_theme_font_size_override("font_size", 11)
-	title.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+	title.add_theme_color_override("font_color", COLOR_ACCENT_AMBER)
 	parent.add_child(title)
 
+	# Wrap the log in its own panel chrome so it reads as a discrete section at the
+	# bottom of the card rather than blending into the stats above it.
+	var log_panel := PanelContainer.new()
+	log_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	log_panel.add_theme_stylebox_override("panel", _panel_textured_style("history_log", Color(0.05, 0.065, 0.08, 0.95), Color(0.24, 0.30, 0.33, 0.55), 4.0, false))
+	parent.add_child(log_panel)
+
+	var inner := MarginContainer.new()
+	inner.add_theme_constant_override("margin_left", 8)
+	inner.add_theme_constant_override("margin_top", 6)
+	inner.add_theme_constant_override("margin_right", 8)
+	inner.add_theme_constant_override("margin_bottom", 6)
+	log_panel.add_child(inner)
+
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(240.0, HISTORY_VISIBLE_ROWS * 16)
+	scroll.custom_minimum_size = Vector2(0.0, HISTORY_VISIBLE_ROWS * 16)
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	parent.add_child(scroll)
+	inner.add_child(scroll)
 
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(230.0, 0)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 2)
 	scroll.add_child(box)
 
 	var history: Array[String] = worker.action_history()
 	history.reverse()
+	if history.is_empty():
+		var empty := Label.new()
+		empty.text = "no thoughts yet"
+		empty.add_theme_font_size_override("font_size", 10)
+		empty.add_theme_color_override("font_color", COLOR_TEXT_MUTED)
+		box.add_child(empty)
 	for entry in history:
 		var label := Label.new()
 		label.text = entry
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.custom_minimum_size = Vector2(220.0, 0)
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		label.add_theme_font_size_override("font_size", 10)
 		label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
 		box.add_child(label)
+
+
+## Subtle horizontal divider used to isolate sections inside the worker card.
+func _hsep_style() -> StyleBoxLine:
+	var line := StyleBoxLine.new()
+	line.color = Color(0.30, 0.42, 0.46, 0.45)
+	line.thickness = 1
+	return line
 
 
 func _refresh_npc_strip() -> void:

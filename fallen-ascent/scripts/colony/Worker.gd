@@ -164,7 +164,6 @@ const ACTION_BUBBLE_SCREEN_OFFSET := Vector2(0.0, -34.0)
 const BLOCKED_ACTION_SECONDS: float = 2.0
 const CROWD_FRAME_META: StringName = &"fa_crowd_frame"
 const CROWD_CELLS_META: StringName = &"fa_crowd_cells"
-const LIMB_NAMES: Array[String] = ["head", "core", "left arm", "right arm", "left leg", "right leg"]
 const WISDOM_PER_SEC: float = 0.28
 const WISDOM_FOCUSED_MULTIPLIER: float = 1.25
 const ASSIGNED_DOCK_REST_MULTIPLIER: float = 1.6
@@ -237,7 +236,11 @@ var _facing: int = FACING_SOUTH
 var _action_history: Array[String] = []
 var _wisdom_carry: float = 0.0
 var _history_index: int = 0
-var _limbs: Dictionary = {}
+## Per-equipped-part condition, keyed by SLOT_LAYOUT index → 0..CONDITION_MAX.
+## Only equipped slots are tracked; a part-less shell has none (its overall
+## `_condition` meter covers wear instead). Combat/acid/wear damage a random
+## equipped part; docks repair them.
+var _part_conditions: Dictionary = {}
 var _teleport_cooldown: float = 0.0
 var _last_teleporter_grid: Vector2i = Pathfinder.UNREACHABLE
 var _resume_job: Job = null
@@ -339,7 +342,6 @@ func _ready() -> void:
 	_highlighter_atlas = load(HIGHLIGHTER_ATLAS_PATH) as Texture2D
 	_ai_decision_timer = randf_range(0.0, AI_DECISION_SECONDS)
 	_personality = randi() % PERSONALITY_LABELS.size()
-	_init_limbs()
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
 	stats.hp = COMBAT_HP_MAX
@@ -503,7 +505,7 @@ func take_damage(amount: float, attacker: Node) -> void:
 	# always lands for at least a sliver so heavy armor isn't full immunity.
 	var taken: float = maxf(0.5, amount - _armor)
 	stats.hp = maxf(0.0, stats.hp - taken)
-	_damage_limb(taken / 1.6)
+	_damage_part(taken / 1.6)
 	_last_combat_contact_at = _now_seconds()
 	if attacker is Node2D and is_instance_valid(attacker):
 		if _state != State.FIGHTING:
@@ -701,7 +703,19 @@ func apply_loadout(loadout: WorkerLoadout) -> void:
 		_display_name = loadout.display_name
 	_personality = clampi(loadout.personality, 0, PERSONALITY_LABELS.size() - 1)
 	_skills = loadout.skills.duplicate()
+	_init_part_conditions()
 	_apply_derived_stats(loadout.derive())
+
+
+## Seed full condition for every equipped part slot. Called when a loadout is
+## applied; restore_save overwrites these with saved values afterwards.
+func _init_part_conditions() -> void:
+	_part_conditions.clear()
+	if _loadout == null:
+		return
+	for i in _loadout.part_ids.size():
+		if PartDatabase.has_part(StringName(_loadout.part_ids[i])):
+			_part_conditions[i] = CONDITION_MAX
 
 
 ## Push a derived stats dict (see WorkerLoadout.derive / PartDatabase) onto the
@@ -770,9 +784,9 @@ func action_history() -> Array[String]:
 ## resumes idle and re-claims work after load. A carried stack is reported so
 ## the caller can re-drop it as a loose item.
 func capture_save() -> Dictionary:
-	var limbs: Dictionary = {}
-	for limb_name in _limbs:
-		limbs[limb_name] = float(_limbs[limb_name])
+	var part_conditions: Dictionary = {}
+	for slot_index in _part_conditions:
+		part_conditions[slot_index] = float(_part_conditions[slot_index])
 	var d: Dictionary = {
 		"name": str(name),
 		"pos": position,
@@ -782,7 +796,7 @@ func capture_save() -> Dictionary:
 		"mental": _mental_tiredness,
 		"social": _social,
 		"mood": _mood,
-		"limbs": limbs,
+		"part_conditions": part_conditions,
 		"hp": stats.hp if stats != null else COMBAT_HP_MAX,
 		"history": _action_history.duplicate(),
 		"history_index": _history_index,
@@ -807,9 +821,9 @@ func restore_save(data: Dictionary) -> void:
 	_mental_tiredness = float(data.get("mental", 0.0))
 	_social = float(data.get("social", 50.0))
 	_mood = float(data.get("mood", MOOD_BASELINE))
-	var limbs: Dictionary = data.get("limbs", {}) as Dictionary
-	for limb_name in limbs:
-		_limbs[limb_name] = float(limbs[limb_name])
+	var part_conditions: Dictionary = data.get("part_conditions", {}) as Dictionary
+	for slot_index in part_conditions:
+		_part_conditions[int(slot_index)] = float(part_conditions[slot_index])
 	if stats != null:
 		stats.hp = clampf(float(data.get("hp", stats.max_hp)), 0.0, stats.max_hp)
 	_action_history.clear()
@@ -880,21 +894,25 @@ func unsatisfied_needs() -> Array[String]:
 	return _unsatisfied_needs.duplicate()
 
 
-func limb_status_lines() -> Array[String]:
-	var lines: Array[String] = []
-	for limb_name in LIMB_NAMES:
-		var value: float = float(_limbs.get(limb_name, CONDITION_MAX))
-		lines.append("%s %d%%" % [limb_name, int(roundf(value))])
-	return lines
-
-
-## Per-limb condition as a 0..1 ratio in LIMB_NAMES order. Used by the worker
-## stat panel to render a small bar per limb.
-func limb_condition_ratios() -> Array[float]:
-	var out: Array[float] = []
-	for limb_name in LIMB_NAMES:
-		var value: float = float(_limbs.get(limb_name, CONDITION_MAX))
-		out.append(clampf(value / CONDITION_MAX, 0.0, 1.0))
+## Per-equipped-part condition for the worker stat panel. Each entry is
+## {name, slot, ratio}. A part-less shell reports a single "Chassis" entry that
+## mirrors the overall condition so the panel never renders empty.
+func part_condition_entries() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if _loadout != null:
+		for i in _loadout.part_ids.size():
+			var def: Dictionary = PartDatabase.part(StringName(_loadout.part_ids[i]))
+			if def.is_empty():
+				continue
+			var slot: int = PartDatabase.SLOT_LAYOUT[i] if i < PartDatabase.SLOT_LAYOUT.size() else 0
+			var cond: float = float(_part_conditions.get(i, CONDITION_MAX))
+			out.append({
+				"name": str(def["name"]),
+				"slot": PartDatabase.slot_label(slot),
+				"ratio": clampf(cond / CONDITION_MAX, 0.0, 1.0),
+			})
+	if out.is_empty():
+		out.append({"name": "Chassis", "slot": "Frame", "ratio": condition_ratio()})
 	return out
 
 
@@ -1277,7 +1295,7 @@ func _process(delta: float) -> void:
 		State.REPAIRING:
 			_activity_timer -= delta
 			_condition = minf(CONDITION_MAX, _condition + REPAIR_RECOVERY_PER_SEC * delta)
-			_repair_limbs(REPAIR_RECOVERY_PER_SEC * delta)
+			_repair_parts(REPAIR_RECOVERY_PER_SEC * delta)
 			if _activity_timer <= 0.0 or _condition >= CONDITION_MAX:
 				_state = State.IDLE
 				_idle_cooldown = randf_range(0.5, 1.5)
@@ -1552,7 +1570,7 @@ func _revive(condition_bonus: float, energy_bonus: float) -> void:
 	_energy = clampf(_energy + energy_bonus, 0.0, ENERGY_MAX)
 	# Repair limbs proportionally to the condition bonus so a rescued bot
 	# isn't immediately downed again from limb damage.
-	_repair_limbs(condition_bonus)
+	_repair_parts(condition_bonus)
 	
 	# Wake up only if both condition and energy are restored above minimums
 	if _condition > REBOOT_CONDITION_THRESHOLD and _energy > 0.0 and _state == State.REBOOTING:
@@ -1739,11 +1757,6 @@ func _remember(text: String) -> void:
 	_action_history.append("%03d  %s" % [_history_index, text])
 	if _action_history.size() > ACTION_HISTORY_LIMIT:
 		_action_history.pop_front()
-
-
-func _init_limbs() -> void:
-	for limb_name in LIMB_NAMES:
-		_limbs[limb_name] = CONDITION_MAX
 
 
 func _is_scrape_rust_job(job: Job) -> bool:
@@ -3630,8 +3643,8 @@ func _workshop_room_speed_multiplier(anchor: Vector2i) -> float:
 	return clampf(float(_room_manager.call("workshop_speed_multiplier_at", anchor)), 0.5, 1.5)
 
 
-## Drains limb integrity while standing on acid tiles. Damage is accumulated
-## so sub-HP-per-frame ticks don't get rounded away by `_damage_limb`.
+## Drains part integrity while standing on acid tiles. Damage is accumulated
+## so sub-HP-per-frame ticks don't get rounded away by `_damage_part`.
 func _tick_acid_damage(delta: float) -> void:
 	if _chunk_manager == null:
 		return
@@ -3657,7 +3670,7 @@ func _tick_acid_damage(delta: float) -> void:
 	if _acid_damage_accum >= 1.0:
 		var whole: float = floorf(_acid_damage_accum)
 		_acid_damage_accum -= whole
-		_damage_limb(whole)
+		_damage_part(whole)
 		# Spike mood every time acid burns enough to register HP loss.
 		_mood = maxf(0.0, _mood - ACID_MOOD_SPIKE_PER_HP * whole)
 
@@ -3808,7 +3821,7 @@ func _update_body_stats(delta: float) -> void:
 	if _chunk_manager != null and _chunk_manager.get_tile_at(current_grid()) == TerrainGenerator.TILE_RUST:
 		condition_decay *= RUST_CONDITION_DECAY_MULTIPLIER
 	_condition = maxf(0.0, _condition - condition_decay)
-	_damage_limb(condition_decay)
+	_damage_part(condition_decay)
 	_check_condition_alerts()
 
 
@@ -3846,22 +3859,23 @@ func _refresh_unsatisfied_needs() -> void:
 			_unsatisfied_needs.append("Needs dock room")
 
 
-func _damage_limb(amount: float) -> void:
-	if _limbs.is_empty():
+func _damage_part(amount: float) -> void:
+	if _part_conditions.is_empty():
 		return
-	var limb_name: String = LIMB_NAMES[randi() % LIMB_NAMES.size()]
-	_limbs[limb_name] = maxf(0.0, float(_limbs.get(limb_name, CONDITION_MAX)) - amount * 1.6)
+	var keys: Array = _part_conditions.keys()
+	var idx: int = int(keys[randi() % keys.size()])
+	_part_conditions[idx] = maxf(0.0, float(_part_conditions[idx]) - amount * 1.6)
 
 
-func _repair_limbs(amount: float) -> void:
-	for limb_name in LIMB_NAMES:
-		_limbs[limb_name] = minf(CONDITION_MAX, float(_limbs.get(limb_name, CONDITION_MAX)) + amount)
+func _repair_parts(amount: float) -> void:
+	for idx in _part_conditions:
+		_part_conditions[idx] = minf(CONDITION_MAX, float(_part_conditions[idx]) + amount)
 
 
-func repair_limbs_external(amount: float) -> void:
+func repair_parts_external(amount: float) -> void:
 	if amount <= 0.0:
 		return
-	_repair_limbs(amount)
+	_repair_parts(amount)
 	_condition = minf(CONDITION_MAX, _condition + amount * 0.35)
 
 

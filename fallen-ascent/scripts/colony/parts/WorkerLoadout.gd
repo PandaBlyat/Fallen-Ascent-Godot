@@ -33,15 +33,24 @@ const SKILL_LABELS: Dictionary = {
 	SKILL_RESEARCH: "Research",
 }
 
-## Specialty presets seed a skill spread. The embark screen cycles these so the
-## player picks a "kind" of worker without micro-managing five sliders.
+## Specialty presets seed a skill spread AND grant a small role buff on top, so
+## picking a role is a meaningful commitment, not just a skill preset. The embark
+## screen cycles these so the player picks a "kind" of worker without
+## micro-managing five sliders. `buff` is added onto the derived stats dict;
+## `desc` is shown as the role tooltip in the embark screen.
 const SPECIALTIES: Array[Dictionary] = [
-	{"name": "Generalist", "skills": {SKILL_MINING: 1, SKILL_CONSTRUCTION: 1, SKILL_HAULING: 1, SKILL_COMBAT: 1, SKILL_RESEARCH: 1}},
-	{"name": "Miner",      "skills": {SKILL_MINING: 4, SKILL_HAULING: 2}},
-	{"name": "Builder",    "skills": {SKILL_CONSTRUCTION: 4, SKILL_HAULING: 2}},
-	{"name": "Hauler",     "skills": {SKILL_HAULING: 4, SKILL_MINING: 1}},
-	{"name": "Guard",      "skills": {SKILL_COMBAT: 4, SKILL_HAULING: 1}},
-	{"name": "Researcher", "skills": {SKILL_RESEARCH: 4, SKILL_CONSTRUCTION: 1}},
+	{"name": "Generalist", "skills": {SKILL_MINING: 1, SKILL_CONSTRUCTION: 1, SKILL_HAULING: 1, SKILL_COMBAT: 1, SKILL_RESEARCH: 1},
+		"buff": {"work_speed": 0.08}, "desc": "Jack of all trades. +8% general work speed and a point in every skill."},
+	{"name": "Miner",      "skills": {SKILL_MINING: 4, SKILL_HAULING: 2},
+		"buff": {"mine_speed": 0.20}, "desc": "Rock-breaker. +20% mining speed on top of high Mining skill."},
+	{"name": "Builder",    "skills": {SKILL_CONSTRUCTION: 4, SKILL_HAULING: 2},
+		"buff": {"build_speed": 0.20}, "desc": "Fabricator. +20% build speed on top of high Construction skill."},
+	{"name": "Hauler",     "skills": {SKILL_HAULING: 4, SKILL_MINING: 1},
+		"buff": {"carry": 1, "move_speed": 6.0}, "desc": "Beast of burden. +1 carry and +6 move speed on top of high Hauling skill."},
+	{"name": "Guard",      "skills": {SKILL_COMBAT: 4, SKILL_HAULING: 1},
+		"buff": {"bash_min": 2.0, "bash_max": 3.0, "armor": 1.0}, "desc": "Sentinel. +2-3 bash and +1 armor on top of high Combat skill."},
+	{"name": "Researcher", "skills": {SKILL_RESEARCH: 4, SKILL_CONSTRUCTION: 1},
+		"buff": {"wisdom": 0.20}, "desc": "Analyst. +20% research yield on top of high Research skill."},
 ]
 
 ## Per-personality modifiers. `stats` are added onto the derived stats dict;
@@ -107,9 +116,30 @@ func set_specialty(spec_name: String) -> void:
 			return
 
 
+## Returns the specialty preset dict for `spec_name`, or an empty dict.
+static func specialty_def(spec_name: String) -> Dictionary:
+	for spec in SPECIALTIES:
+		if str(spec["name"]) == spec_name:
+			return spec
+	return {}
+
+
+## Human-readable description of the active role's buff, for tooltips.
+static func role_desc(spec_name: String) -> String:
+	var def: Dictionary = specialty_def(spec_name)
+	return str(def.get("desc", "")) if not def.is_empty() else ""
+
+
 ## Fold parts + skills + personality into a flat stats dict for the worker.
 func derive() -> Dictionary:
 	var stats: Dictionary = PartDatabase.accumulate(part_ids)
+
+	# Role buff: a small flat bonus to the role's signature stat(s).
+	var role_def: Dictionary = specialty_def(specialty)
+	if not role_def.is_empty():
+		var buff: Dictionary = role_def.get("buff", {}) as Dictionary
+		for key in buff:
+			stats[key] = stats.get(key, 0.0) + buff[key]
 
 	# Skills sharpen the relevant work, toughen combat, etc.
 	stats["mine_speed"] += 0.08 * skill_level(SKILL_MINING)

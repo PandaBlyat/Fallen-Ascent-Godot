@@ -5,7 +5,7 @@ extends Node
 ## ColonySite._ready after the first chunk load so the terrain query works.
 ##
 
-const INITIAL_WORKERS: int = 10
+const INITIAL_WORKERS: int = 3
 const MAX_SEARCH_RADIUS: int = 24
 const WORKER_SCRIPT: Script = preload("res://scripts/colony/Worker.gd")
 const BOT_NAMES: Array[String] = [

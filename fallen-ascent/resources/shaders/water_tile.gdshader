@@ -1,25 +1,15 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// Shared procedural-water/acid shader. Each chunk runs six sub-layers (one
-// per fluid band) and sets the `depth_band` uniform on the sub-layer's
-// material — this replaced an earlier attempt to recover the band from
-// `UV.y * 6.0`, which was unreliable in practice because Godot's
-// TileMapLayer UV semantics in canvas_item shaders meant adjacent rows
-// could bleed into a single tile. Routing the band as a per-material
-// uniform sidesteps the UV interpretation entirely.
-//
-//   depth_band == 0 -> deep water     (impassable)
-//   depth_band == 1 -> shallow water  (slower walking)
-//   depth_band == 2 -> water puddle   (slightly slower walking)
-//   depth_band == 3 -> deep acid      (impassable, caustic)
-//   depth_band == 4 -> shallow acid   (slow + damage)
-//   depth_band == 5 -> acid puddle    (slight damage)
-
 uniform int depth_band : hint_range(0, 5) = 0;
 
 uniform float dirty_strength = 0.55;
 uniform float flow_speed = 0.10;
+
+// Retro pixel-art configuration
+uniform float pixel_size = 2.0;       // Matches the virtual pixel size of the game
+uniform float animation_fps = 10.0;   // Restricts animation update speed for a retro feel
+uniform int color_bands = 4;          // Posterization levels for liquid transitions
 
 uniform vec3 deep_low   = vec3(0.03, 0.06, 0.14);
 uniform vec3 deep_high  = vec3(0.07, 0.14, 0.28);
@@ -60,8 +50,15 @@ void vertex() {
 }
 
 void fragment() {
-	vec2 p = world_pos / 32.0;
-	float t = TIME * flow_speed;
+	// 1. Snap time to simulate a lower, stepped frame rate
+	float stepped_time = floor(TIME * animation_fps) / animation_fps;
+	float t = stepped_time * flow_speed;
+
+	// 2. Snap coordinates to virtual pixels for crisp art styling
+	vec2 snapped_world = floor(world_pos / pixel_size) * pixel_size;
+	vec2 p = snapped_world / 32.0;
+
+	// Calculate noise coordinates
 	float wave = noise(p * 1.7 + vec2(t * 2.1, -t * 0.7));
 	float ripple = noise(p * 7.0 + vec2(-t * 8.0, t * 3.0));
 	float grit = noise(p * 17.0);
@@ -74,6 +71,7 @@ void fragment() {
 	float ripple_gain;
 	float oil_gain;
 	float alpha;
+	
 	if (band == 0) {
 		low_color = deep_low;
 		high_color = deep_high;
@@ -115,22 +113,49 @@ void fragment() {
 		alpha = 0.88;
 	}
 
-	vec3 color = mix(low_color, high_color, wave * 0.7 + ripple * ripple_gain);
+	// 3. Posterize/Band the gradient mix for a hand-shaded look
+	float raw_mix = clamp(wave * 0.7 + ripple * ripple_gain, 0.0, 1.0);
+	float posterized_mix = floor(raw_mix * float(color_bands)) / float(color_bands - 1);
+	vec3 color = mix(low_color, high_color, posterized_mix);
+
+	// Calculate oil/sheen
 	float oil = smoothstep(0.78, 0.96, noise(p * 3.1 + vec2(t * 4.0, t * 1.6)));
 	color = mix(color, sheen_color, oil * oil_gain);
+
+	// 4. Acid-specific glowing and bubbling effects
 	if (band >= 3) {
-		float pulse = 0.72 + 0.28 * sin(TIME * 2.4 + wave * 5.0);
+		// Pulsing glow
+		float pulse = 0.72 + 0.28 * sin(stepped_time * 2.4 + wave * 5.0);
 		float acid_glow = (0.18 + oil * 0.35 + ripple * 0.12) * pulse * acid_glow_gain;
 		color += sheen_color * acid_glow;
+
+		// Procedural pixelated bubbles rising upwards
+		float bubble_speed = 1.5;
+		vec2 bubble_uv = p * 16.0 + vec2(0.0, -stepped_time * bubble_speed);
+		float bubble_noise = noise(bubble_uv);
+		
+		// Use a local time-based offset so bubbles occasionally "pop" and disappear
+		float cell_id = hash(floor(bubble_uv));
+		float pop_cycle = fract(stepped_time * 0.3 + cell_id);
+		
+		// Render sharp bubble dots if they pass a density threshold and aren't in their "popped" state
+		if (bubble_noise > 0.86 && pop_cycle < 0.75) {
+			color = mix(color, sheen_color, 0.85);
+		}
 	}
+
+	// Apply grit/dirt texture to the color map
 	color *= 0.78 + grit * dirty_strength * 0.22;
 
-	// Soft scum/foam edge along each tile boundary so seams between
-	// neighboring water cells read as a continuous body.
-	vec2 tile_uv = fract(world_pos / 32.0);
-	float edge = min(min(tile_uv.x, 1.0 - tile_uv.x), min(tile_uv.y, 1.0 - tile_uv.y));
-	float scum = smoothstep(0.0, 0.16, edge);
-	color = mix(low_color * 0.65, color, scum);
+	// 5. Pixelated tile boundary dark seam
+	vec2 pixel_tile_uv = fract(snapped_world / 32.0);
+	vec2 edge_dist = min(pixel_tile_uv, vec2(1.0) - pixel_tile_uv) * 32.0;
+	float min_dist = min(edge_dist.x, edge_dist.y);
+
+	// Create a sharp, pixel-aligned boundary shadow instead of a smooth blur
+	float border_width = max(pixel_size, 2.0);
+	float scum = step(border_width, min_dist);
+	color = mix(low_color * 0.60, color, scum);
 
 	COLOR = vec4(color, alpha);
 }

@@ -10,12 +10,12 @@ const LIGHTING_Z_INDEX: int = 850
 @export var camera_path: NodePath
 @export var chunk_manager_path: NodePath
 @export var fog_of_war_path: NodePath
+@export var dither_pixel_size: float = 1.0 # Set to 1.0 or 2.0 for higher detail
 
 var _camera: Camera2D
 var _chunk_manager: ChunkManager
 var _fog: FogOfWar
 var _material: ShaderMaterial
-var _shader_time: float = 0.0
 
 
 func _ready() -> void:
@@ -24,23 +24,18 @@ func _ready() -> void:
 	_camera = get_node(camera_path) as Camera2D
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_fog = get_node(fog_of_war_path) as FogOfWar
+	
 	_material = ShaderMaterial.new()
 	_material.shader = LIGHTING_SHADER
 	material = _material
+	
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.visibility_changed.connect(_on_visibility_changed)
 	EventBus.structure_built.connect(_on_structure_built)
 	if SettingsManager != null:
 		SettingsManager.settings_changed.connect(_on_settings_changed)
+	
 	_refresh_shader_inputs()
-
-
-func _process(delta: float) -> void:
-	if _material == null:
-		return
-	_shader_time += delta
-	_material.set_shader_parameter("time_seconds", _shader_time)
-	queue_redraw()
 
 
 func _draw() -> void:
@@ -48,6 +43,7 @@ func _draw() -> void:
 		return
 	if _fog.visibility_mask_texture() == null or _fog.light_mask_texture() == null:
 		return
+	
 	var bounds: Rect2i = _visible_grid_bounds()
 	var map_bounds: Rect2i = _chunk_manager.map_grid_bounds()
 	var lo := Vector2i(
@@ -60,6 +56,7 @@ func _draw() -> void:
 	)
 	if hi.x <= lo.x or hi.y <= lo.y:
 		return
+	
 	var rect := Rect2(
 		Vector2(lo * Chunk.TILE_PIXELS),
 		Vector2((hi - lo) * Chunk.TILE_PIXELS),
@@ -67,7 +64,10 @@ func _draw() -> void:
 	draw_rect(rect, Color.WHITE)
 
 
-func _on_camera_moved(_world_pos: Vector2, _zoom: Vector2) -> void:
+func _on_camera_moved(world_pos: Vector2, zoom: Vector2) -> void:
+	if _material != null:
+		_material.set_shader_parameter("camera_zoom", zoom.x)
+		_material.set_shader_parameter("camera_position", world_pos)
 	queue_redraw()
 
 
@@ -94,6 +94,15 @@ func _refresh_shader_inputs() -> void:
 	_material.set_shader_parameter("mask_origin_grid", Vector2(_fog.visibility_mask_origin()))
 	_material.set_shader_parameter("mask_size_grid", Vector2(_fog.visibility_mask_size()))
 	_material.set_shader_parameter("tile_pixels", float(Chunk.TILE_PIXELS))
+	_material.set_shader_parameter("dither_pixel_size", dither_pixel_size)
+	
+	if _camera != null:
+		_material.set_shader_parameter("camera_zoom", _camera.zoom.x)
+		_material.set_shader_parameter("camera_position", _camera.global_position)
+	
+	var scale_factor: float = float(get_viewport().size.x) / get_viewport_rect().size.x
+	_material.set_shader_parameter("screen_scale_factor", scale_factor)
+	
 	_apply_darkness_settings()
 
 
@@ -108,7 +117,7 @@ func _apply_darkness_settings() -> void:
 func _visible_grid_bounds() -> Rect2i:
 	var viewport_size: Vector2 = get_viewport_rect().size
 	var zoom: Vector2 = _camera.zoom
-	var world_size := Vector2(viewport_size.x / zoom.x, viewport_size.y / zoom.y)
+	var world_size := viewport_size / zoom
 	var top_left: Vector2 = _camera.global_position - world_size * 0.5
 	var bottom_right: Vector2 = _camera.global_position + world_size * 0.5
 	var lo := Vector2i(

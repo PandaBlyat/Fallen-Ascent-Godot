@@ -1,7 +1,7 @@
 extends Control
 ##
 ## Embark customization screen shown before the seed/size dialog.
-## Players can review and randomize the starting workers (name, trait, role).
+## Players can review and randomize the starting workers by clicking them.
 ## For now, workers are cosmetic only — no mechanical effect yet.
 ## Future: customize limbs, skills, personality buffs/debuffs.
 ##
@@ -9,7 +9,7 @@ extends Control
 signal embark_confirmed(workers: Array)
 signal embark_cancelled
 
-const MAX_STARTING_WORKERS: int = 5
+const MAX_STARTING_WORKERS: int = 6
 const DEFAULT_STARTING_WORKERS: int = 3
 
 const WORKER_NAMES: Array[String] = [
@@ -67,22 +67,24 @@ func _build_ui() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
+	# Wrapping in a CanvasLayer guarantees viewport centering regardless of parent constraints
+	var canvas_layer := CanvasLayer.new()
+	add_child(canvas_layer)
+
 	var dimmer := ColorRect.new()
 	dimmer.color = Color(0, 0, 0, 0.60)
 	dimmer.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(dimmer)
+	canvas_layer.add_child(dimmer)
+
+	var center_container := CenterContainer.new()
+	center_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center_container.mouse_filter = Control.MOUSE_FILTER_PASS
+	canvas_layer.add_child(center_container)
 
 	var panel := PanelContainer.new()
-	panel.anchor_left = 0.5
-	panel.anchor_top = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_bottom = 0.5
-	panel.offset_left = -340.0
-	panel.offset_top = -260.0
-	panel.offset_right = 340.0
-	panel.offset_bottom = 260.0
+	panel.custom_minimum_size = Vector2(680.0, 520.0)
 	panel.add_theme_stylebox_override("panel", _panel_style())
-	add_child(panel)
+	center_container.add_child(panel)
 
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 26)
@@ -103,7 +105,7 @@ func _build_ui() -> void:
 	vbox.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Review your starting workers. Randomize for a different crew."
+	subtitle.text = "Review your starting workers. Click on any worker to randomize them."
 	subtitle.add_theme_font_size_override("font_size", 11)
 	subtitle.add_theme_color_override("font_color", Color(0.62, 0.70, 0.74))
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -127,23 +129,16 @@ func _build_ui() -> void:
 	bottom.add_theme_constant_override("separation", 10)
 	vbox.add_child(bottom)
 
-	var randomize_btn := Button.new()
-	randomize_btn.text = "Randomize All"
-	randomize_btn.custom_minimum_size = Vector2(148, 36)
-	randomize_btn.pressed.connect(_on_randomize_all)
-	randomize_btn.pressed.connect(AudioManager.play_button_press)
-	bottom.add_child(randomize_btn)
-
-	var spacer2 := Control.new()
-	spacer2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bottom.add_child(spacer2)
-
 	var cancel_btn := Button.new()
 	cancel_btn.text = "Back"
 	cancel_btn.custom_minimum_size = Vector2(100, 36)
 	cancel_btn.pressed.connect(_on_cancel)
 	cancel_btn.pressed.connect(AudioManager.play_button_press)
 	bottom.add_child(cancel_btn)
+
+	var spacer2 := Control.new()
+	spacer2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bottom.add_child(spacer2)
 
 	var proceed_btn := Button.new()
 	proceed_btn.text = "Proceed"
@@ -167,13 +162,38 @@ func _build_worker_card(index: int) -> Control:
 	card_style.corner_radius_bottom_right = 4
 	card.add_theme_stylebox_override("panel", card_style)
 
+	# Card interactivity settings
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.tooltip_text = "Click to randomize this worker"
+
+	# Highlight styling on hover
+	card.mouse_entered.connect(func():
+		card_style.bg_color = Color(0.12, 0.16, 0.19, 0.95)
+		card_style.border_color = Color(0.38, 0.44, 0.48, 0.8)
+	)
+	card.mouse_exited.connect(func():
+		card_style.bg_color = Color(0.08, 0.10, 0.12, 0.92)
+		card_style.border_color = Color(0.28, 0.34, 0.38, 0.55)
+	)
+
+	# Click input detection
+	card.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			AudioManager.play_button_press()
+			_on_reroll_worker(index)
+	)
+
 	var hbox := HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", 10)
+	hbox.mouse_filter = Control.MOUSE_FILTER_PASS
+
 	var inner_margin := MarginContainer.new()
 	inner_margin.add_theme_constant_override("margin_left", 10)
 	inner_margin.add_theme_constant_override("margin_top", 7)
 	inner_margin.add_theme_constant_override("margin_right", 10)
 	inner_margin.add_theme_constant_override("margin_bottom", 7)
+	inner_margin.mouse_filter = Control.MOUSE_FILTER_PASS
 	inner_margin.add_child(hbox)
 	card.add_child(inner_margin)
 
@@ -182,30 +202,35 @@ func _build_worker_card(index: int) -> Control:
 	dot.custom_minimum_size = Vector2(18, 18)
 	dot.color = Color(0.38, 0.80, 0.58, 1.0)
 	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	dot.mouse_filter = Control.MOUSE_FILTER_PASS
 	hbox.add_child(dot)
 
 	# Name + role
 	var name_col := VBoxContainer.new()
 	name_col.add_theme_constant_override("separation", 2)
 	name_col.custom_minimum_size = Vector2(110, 0)
+	name_col.mouse_filter = Control.MOUSE_FILTER_PASS
 	hbox.add_child(name_col)
 
 	var name_label := Label.new()
 	name_label.text = str(entry["name"])
 	name_label.add_theme_font_size_override("font_size", 13)
 	name_label.add_theme_color_override("font_color", Color(0.92, 0.96, 0.94))
+	name_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	name_col.add_child(name_label)
 
 	var role_label := Label.new()
 	role_label.text = str(entry["role"])
 	role_label.add_theme_font_size_override("font_size", 10)
 	role_label.add_theme_color_override("font_color", Color(0.56, 0.70, 0.78))
+	role_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	name_col.add_child(role_label)
 
 	# Trait
 	var trait_col := VBoxContainer.new()
 	trait_col.add_theme_constant_override("separation", 2)
 	trait_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	trait_col.mouse_filter = Control.MOUSE_FILTER_PASS
 	hbox.add_child(trait_col)
 
 	var trait_data: Dictionary = entry["trait"] as Dictionary
@@ -213,6 +238,7 @@ func _build_worker_card(index: int) -> Control:
 	trait_name.text = "Trait: " + str(trait_data["name"])
 	trait_name.add_theme_font_size_override("font_size", 11)
 	trait_name.add_theme_color_override("font_color", Color(0.84, 0.78, 0.52))
+	trait_name.mouse_filter = Control.MOUSE_FILTER_PASS
 	trait_col.add_child(trait_name)
 
 	var trait_desc := Label.new()
@@ -220,17 +246,8 @@ func _build_worker_card(index: int) -> Control:
 	trait_desc.add_theme_font_size_override("font_size", 10)
 	trait_desc.add_theme_color_override("font_color", Color(0.56, 0.62, 0.65))
 	trait_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	trait_desc.mouse_filter = Control.MOUSE_FILTER_PASS
 	trait_col.add_child(trait_desc)
-
-	# Re-roll individual worker button
-	var reroll_btn := Button.new()
-	reroll_btn.text = "~"
-	reroll_btn.tooltip_text = "Randomize this worker"
-	reroll_btn.custom_minimum_size = Vector2(28, 28)
-	reroll_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	reroll_btn.pressed.connect(_on_reroll_worker.bind(index))
-	reroll_btn.pressed.connect(AudioManager.play_button_press)
-	hbox.add_child(reroll_btn)
 
 	return card
 

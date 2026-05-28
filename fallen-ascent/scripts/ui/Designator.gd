@@ -251,11 +251,15 @@ func _on_right_release() -> void:
 				_stockpile_manager.create_zone(cells)
 				_did_place = true
 			Mode.MINE:
+				_job_board.begin_batch()
 				for cell in cells:
 					_apply_mine_click(cell)
+				_job_board.end_batch()
 			Mode.SCRAPE_BIOMASS:
+				_job_board.begin_batch()
 				for cell in cells:
 					_apply_scrape_biomass_click(cell)
+				_job_board.end_batch()
 			Mode.REMOVE_STOCKPILE:
 				for cell in cells:
 					_apply_remove_stockpile_click(cell)

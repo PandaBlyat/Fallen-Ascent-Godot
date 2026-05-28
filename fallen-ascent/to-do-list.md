@@ -349,6 +349,28 @@ world map/colony map generation is just randomly patchy blobs.  It should be lik
       units; clamp keeps samples inside the source cell so neighbouring
       grass variants don't bleed in.
 
+## Quick-fix session 2026-05-28 (highlighters + haul loop + job board perf)
+
+- [x] **Highlighters drawn on destination tile.** `Worker._draw()` previously
+      rendered the highlight sprite centered on the worker. Now
+      `_highlight_dest_local()` computes the local-space offset to the actual
+      destination (final path waypoint for MOVING_FREEFORM, outlet tile for
+      MOVING_TO_CHARGE, structure anchor for MOVING_TO_REPAIR, combat-target
+      position for FIGHTING) and the sprite is drawn there instead.
+- [x] **Worker pick-up-and-drop haul loop fixed.** `_pickup_for_haul()` now
+      checks the path to the dropoff cell *before* picking up the item. If
+      unreachable it blocks the job (5 s), marks it failed for this worker,
+      and releases without clearing `item.reserved_by` — preventing
+      StockpileManager from posting a duplicate job to the same cell.
+- [x] **JobBoard `is_active()` made O(1).** Added `_pending_set: Dictionary`
+      that mirrors `pending`; all add/remove paths maintain it. `is_active()`
+      now does a single Dictionary lookup instead of an O(N) `Array.has()`.
+- [x] **Batch job-add signal suppression.** `JobBoard.begin_batch()` /
+      `end_batch()` suppress per-job `job_added` signals during bulk
+      designation. `Designator._on_right_release` wraps the MINE and
+      SCRAPE_BIOMASS loops in a batch so designating a large area emits one
+      signal instead of hundreds, eliminating the per-designation FPS stall.
+
 ## Quick-fix session 2026-05-26 (HUD recursion + biomass + acid avoidance + wisdom curve)
 
 - [ ] **ColonyHud panel positioning re-entry guard.** Right-clicking the

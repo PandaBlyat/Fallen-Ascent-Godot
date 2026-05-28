@@ -22,6 +22,12 @@ var _operation_targets: Dictionary = {} ## Vector2i -> OperateStructureJob
 var _pending_by_chunk: Dictionary = {}
 ## Prevents stale job references when item coordinates change dynamically.
 var _job_indexed_chunk: Dictionary = {}
+## O(1) active-job lookup — mirrors `pending` as a set. Used by is_active().
+var _pending_set: Dictionary = {}
+## When true, job_added signals are suppressed until end_batch() is called.
+## Use begin_batch() / end_batch() when adding many jobs at once (e.g. drag
+## mine designation) to avoid a per-job signal storm.
+var _batch_mode: bool = false
 
 const SCRAPE_RUST_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeRustJob.gd")
 const SCRAPE_BIOMASS_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/ScrapeBiomassJob.gd")
@@ -32,14 +38,28 @@ const OPERATE_STRUCTURE_JOB_SCRIPT: Script = preload("res://scripts/colony/jobs/
 const NEAR_CHUNK_RADIUS: int = 1
 
 
+## Suppress per-job job_added signals for a batch of additions. Call
+## end_batch() when done; it emits one job_added to wake idle workers.
+func begin_batch() -> void:
+	_batch_mode = true
+
+
+func end_batch() -> void:
+	_batch_mode = false
+	if not pending.is_empty():
+		job_added.emit(pending[-1])
+
+
 func add_mine_job(target: Vector2i) -> MineJob:
 	if _mine_targets.has(target):
 		return _mine_targets[target] as MineJob
 	var job := MineJob.new(target)
 	pending.append(job)
+	_pending_set[job] = true
 	_mine_targets[target] = job
 	_index_job(job)
-	job_added.emit(job)
+	if not _batch_mode:
+		job_added.emit(job)
 	return job
 
 
@@ -49,6 +69,7 @@ func cancel_mine_at(target: Vector2i) -> void:
 	var job: MineJob = _mine_targets[target]
 	_mine_targets.erase(target)
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	# If a worker has it claimed, let them notice and bail on next tick.
 	job_cancelled.emit(job)
@@ -63,9 +84,11 @@ func add_scrape_rust_job(target: Vector2i) -> Job:
 		return _scrape_targets[target] as Job
 	var job: Job = SCRAPE_RUST_JOB_SCRIPT.new(target) as Job
 	pending.append(job)
+	_pending_set[job] = true
 	_scrape_targets[target] = job
 	_index_job(job)
-	job_added.emit(job)
+	if not _batch_mode:
+		job_added.emit(job)
 	return job
 
 
@@ -75,6 +98,7 @@ func cancel_scrape_rust_at(target: Vector2i) -> void:
 	var job: Job = _scrape_targets[target] as Job
 	_scrape_targets.erase(target)
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	job_cancelled.emit(job)
 
@@ -92,9 +116,11 @@ func add_scrape_biomass_job(target: Vector2i) -> Job:
 		return _scrape_biomass_targets[target] as Job
 	var job: Job = SCRAPE_BIOMASS_JOB_SCRIPT.new(target) as Job
 	pending.append(job)
+	_pending_set[job] = true
 	_scrape_biomass_targets[target] = job
 	_index_job(job)
-	job_added.emit(job)
+	if not _batch_mode:
+		job_added.emit(job)
 	return job
 
 
@@ -104,6 +130,7 @@ func cancel_scrape_biomass_at(target: Vector2i) -> void:
 	var job: Job = _scrape_biomass_targets[target] as Job
 	_scrape_biomass_targets.erase(target)
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	job_cancelled.emit(job)
 
@@ -135,6 +162,7 @@ func cancel_order_at(grid: Vector2i) -> bool:
 func add_haul_job(item: Node, zone: Node, cell: Vector2i) -> HaulJob:
 	var job := HaulJob.new(item, zone, cell)
 	pending.append(job)
+	_pending_set[job] = true
 	_index_job(job)
 	job_added.emit(job)
 	return job
@@ -149,6 +177,7 @@ func cancel_hauls_to_zone(zone: Node) -> Array[Vector2i]:
 		var j: Job = pending[i]
 		if j is HaulJob and (j as HaulJob).dropoff_zone == zone:
 			cancelled.append((j as HaulJob).dropoff)
+			_pending_set.erase(j)
 			pending.remove_at(i)
 			_unindex_job(j)
 			job_cancelled.emit(j)
@@ -163,6 +192,7 @@ func cancel_haul_to(zone: Node, cell: Vector2i) -> bool:
 		var j: Job = pending[i]
 		if j is HaulJob and (j as HaulJob).dropoff_zone == zone \
 				and (j as HaulJob).dropoff == cell:
+			_pending_set.erase(j)
 			pending.remove_at(i)
 			_unindex_job(j)
 			job_cancelled.emit(j)
@@ -176,6 +206,7 @@ func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL,
 			return _build_targets[cell] as BuildJob
 	var job := BuildJob.new(target, blueprint_id, rotation)
 	pending.append(job)
+	_pending_set[job] = true
 	for cell in job.footprint:
 		_build_targets[cell] = job
 	_index_job(job)
@@ -186,6 +217,7 @@ func add_build_job(target: Vector2i, blueprint_id: int = BuildBlueprint.Id.WALL,
 func add_craft_job(station_anchor: Vector2i, object_kind: int) -> CraftJob:
 	var job: CraftJob = CRAFT_JOB_SCRIPT.new(station_anchor, object_kind) as CraftJob
 	pending.append(job)
+	_pending_set[job] = true
 	_index_job(job)
 	job_added.emit(job)
 	return job
@@ -196,6 +228,7 @@ func add_operation_job(anchor: Vector2i, structure_id: int) -> OperateStructureJ
 		return _operation_targets[anchor] as OperateStructureJob
 	var job: OperateStructureJob = OPERATE_STRUCTURE_JOB_SCRIPT.new(anchor, structure_id) as OperateStructureJob
 	pending.append(job)
+	_pending_set[job] = true
 	_operation_targets[anchor] = job
 	_index_job(job)
 	job_added.emit(job)
@@ -216,6 +249,7 @@ func cancel_craft_jobs_at(station_anchor: Vector2i) -> int:
 	while i >= 0:
 		var job: Job = pending[i]
 		if job is CraftJob and (job as CraftJob).station_anchor == station_anchor:
+			_pending_set.erase(job)
 			pending.remove_at(i)
 			_unindex_job(job)
 			job_cancelled.emit(job)
@@ -239,6 +273,7 @@ func cancel_build_at(target: Vector2i) -> BuildJob:
 	for cell in job.footprint:
 		_build_targets.erase(cell)
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	job_cancelled.emit(job)
 	return job
@@ -330,12 +365,13 @@ func release(job: Job) -> void:
 
 
 func is_active(job: Job) -> bool:
-	return pending.has(job)
+	return _pending_set.has(job)
 
 
 ## Mark a job done and remove it. Also clears any per-target index.
 func complete(job: Job) -> void:
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	if job is MineJob:
 		_mine_targets.erase((job as MineJob).target)
@@ -360,7 +396,7 @@ func pending_count() -> int:
 ## the stockpile reservation is released via the StockpileZone API so the
 ## reserved cell becomes available again.
 func cancel_job(job: Job) -> bool:
-	if job == null or not pending.has(job):
+	if job == null or not _pending_set.has(job):
 		return false
 	if job is MineJob:
 		_mine_targets.erase((job as MineJob).target)
@@ -382,6 +418,7 @@ func cancel_job(job: Job) -> bool:
 	elif job.kind == Job.Kind.SCRAPE_BIOMASS:
 		_scrape_biomass_targets.erase(job.get("target") as Vector2i)
 	pending.erase(job)
+	_pending_set.erase(job)
 	_unindex_job(job)
 	job_cancelled.emit(job)
 	return true

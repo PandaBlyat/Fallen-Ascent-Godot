@@ -105,6 +105,7 @@ const PANEL_DRAG_BORDER_PX: float = 8.0
 @export var camera_path: NodePath
 @export var selection_controller_path: NodePath
 
+
 var _designator: Designator
 var _job_board: JobBoard
 var _stockpile_manager: StockpileManager

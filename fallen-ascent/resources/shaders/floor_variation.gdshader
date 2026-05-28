@@ -40,7 +40,7 @@ uniform float rust_strength : hint_range(0.0, 1.0) = 0.50;
 uniform vec4 rust_color : source_color = vec4(0.45, 0.22, 0.12, 1.0);
 
 // --- Industrial Hazard Stripes ---
-uniform float hazard_chance : hint_range(0.0, 0.2) = 0.01;
+uniform float hazard_chance : hint_range(0.0, 0.2) = 0.005;
 uniform vec4 hazard_yellow : source_color = vec4(0.80, 0.60, 0.05, 1.0);
 uniform vec4 hazard_dark : source_color = vec4(0.12, 0.12, 0.12, 1.0);
 
@@ -48,7 +48,7 @@ uniform vec4 hazard_dark : source_color = vec4(0.12, 0.12, 0.12, 1.0);
 uniform float grate_chance : hint_range(0.0, 0.2) = 0.03;
 
 // --- Floor Breaches (Void holes) ---
-uniform float breach_chance : hint_range(0.0, 0.2) = 0.005;
+uniform float breach_chance : hint_range(0.0, 0.2) = 0.003;
 
 // --- Coolant / Sludge Leaks ---
 uniform float fluid_chance : hint_range(0.0, 0.2) = 0.0;
@@ -56,10 +56,10 @@ uniform vec4 fluid_color : source_color = vec4(0.0, 0.9, 0.2, 1.0);
 uniform float fluid_flow_speed : hint_range(0.1, 5.0) = 1.5;
 
 // --- Server LED Grid Panels ---
-uniform float server_chance : hint_range(0.0, 0.2) = 0.005;
+uniform float server_chance : hint_range(0.0, 0.2) = 0.0005;
 
 // --- Multi-Panel Subdivisions ---
-uniform float split_chance : hint_range(0.0, 1.0) = 0.30;
+uniform float split_chance : hint_range(0.0, 1.0) = 0.20;
 
 varying vec2 world_pos;
 

@@ -19,10 +19,9 @@ const PANEL_H: float = 160.0
 
 ## Queued achievement ids waiting to be shown.
 var _queue: Array[StringName] = []
-## Whether we are currently showing a modal (and the game is paused).
 var _showing: bool = false
-## Speed the game was running at before we paused it.
-var _saved_speed: float = 1.0
+## Wall-clock msec when the current modal started showing (set by _show_next).
+var _show_start_msec: int = 0
 ## Active modal panel (freed on dismiss).
 var _modal: Control = null
 
@@ -58,21 +57,28 @@ func _show_next() -> void:
 		return
 
 	_showing = true
+	_show_start_msec = Time.get_ticks_msec()
 	_modal = _build_modal(ach, ach_index)
 	add_child(_modal)
 	_animate_in(_modal)
 
 
-func _pause_game() -> void:
-	_saved_speed = GameState.game_speed if GameState != null else 1.0
-	if GameState != null:
-		GameState.set_game_speed(0.0)
-
-
-func _resume_game() -> void:
-	_showing = false
-	if GameState != null and GameState.game_speed == 0.0:
-		GameState.set_game_speed(_saved_speed if _saved_speed > 0.0 else 1.0)
+## _process drives all animation using real wall-clock time so it works even
+## when Engine.time_scale == 0 (game paused). PROCESS_MODE_ALWAYS ensures
+## this runs regardless of the scene tree's pause state.
+func _process(_delta: float) -> void:
+	if not _showing or _modal == null or not is_instance_valid(_modal):
+		return
+	var elapsed: float = (Time.get_ticks_msec() - _show_start_msec) / 1000.0
+	if elapsed < SCALE_IN_SECONDS:
+		var t: float = elapsed / SCALE_IN_SECONDS
+		_modal.scale = Vector2.ONE * lerpf(0.7, 1.0, t)
+		_modal.modulate.a = clampf(t / 0.8, 0.0, 1.0)
+	else:
+		_modal.scale = Vector2.ONE
+		_modal.modulate.a = 1.0
+	if elapsed >= SCALE_IN_SECONDS + DISPLAY_SECONDS:
+		_dismiss()
 
 
 func _dismiss() -> void:
@@ -81,31 +87,16 @@ func _dismiss() -> void:
 		_showing = false
 		_show_next()
 		return
-	var tween := create_tween()
-	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
-	tween.tween_property(_modal, "modulate:a", 0.0, FADE_OUT_SECONDS).set_ease(Tween.EASE_IN)
-	tween.tween_callback(func() -> void:
-		if is_instance_valid(_modal):
-			_modal.queue_free()
-		_modal = null
-		_showing = false
-		_show_next()
-	)
+	if is_instance_valid(_modal):
+		_modal.queue_free()
+	_modal = null
+	_showing = false
+	_show_next()
 
 
 func _animate_in(panel: Control) -> void:
 	panel.scale = Vector2(0.7, 0.7)
 	panel.modulate.a = 0.0
-	var tween := create_tween()
-	tween.set_process_mode(Tween.TWEEN_PROCESS_IDLE)
-	tween.set_parallel(true)
-	tween.tween_property(panel, "scale", Vector2.ONE, SCALE_IN_SECONDS) \
-		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
-	tween.tween_property(panel, "modulate:a", 1.0, SCALE_IN_SECONDS * 0.8) \
-		.set_ease(Tween.EASE_OUT)
-	tween.set_parallel(false)
-	tween.tween_interval(DISPLAY_SECONDS)
-	tween.tween_callback(_dismiss)
 
 
 func _build_modal(ach: Dictionary, index: int) -> Control:

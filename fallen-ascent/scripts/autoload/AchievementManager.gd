@@ -57,7 +57,7 @@ func _ready() -> void:
 
 func _connect_signals() -> void:
 	EventBus.tile_changed.connect(_on_tile_changed)
-	EventBus.structure_built.connect(_on_structure_built)
+	EventBus.player_structure_placed.connect(_on_player_structure_placed)
 	EventBus.combatant_died.connect(_on_combatant_died)
 	EventBus.tech_unlocked.connect(_on_tech_unlocked)
 	EventBus.worker_spawned_from_cradle.connect(_on_worker_spawned_from_cradle)
@@ -197,7 +197,7 @@ func _on_tile_changed(_grid: Vector2i, new_tile: int) -> void:
 		unlock(&"first_mine")
 
 
-func _on_structure_built(_manager: Node) -> void:
+func _on_player_structure_placed() -> void:
 	unlock(&"first_build")
 
 

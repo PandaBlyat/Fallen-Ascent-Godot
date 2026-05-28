@@ -233,7 +233,6 @@ func _start_game(seed_text: String, size_index: int) -> void:
 	site.grid_pos = Vector2i.ZERO
 	site.biome = SiteData.Biome.HABITAT
 	GameState.set_selected_site(site)
-	AchievementManager.on_new_game_started()
 	get_tree().change_scene_to_file("res://scenes/colony/ColonySite.tscn")
 
 

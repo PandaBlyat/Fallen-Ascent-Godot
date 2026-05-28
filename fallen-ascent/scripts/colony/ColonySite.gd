@@ -70,9 +70,6 @@ func _ready() -> void:
 	_alert_system.name = "AlertSystem"
 	$HUD.add_child(_alert_system)
 
-	var achievement_toast := ACHIEVEMENT_TOAST_SCRIPT.new() as Control
-	achievement_toast.name = "AchievementToast"
-	$HUD.add_child(achievement_toast)
 	if _alert_system.has_method("set_camera"):
 		_alert_system.call("set_camera", camera)
 
@@ -87,6 +84,11 @@ func _spawn_initial_workers() -> void:
 	if _spawned_initial_workers:
 		return
 	_spawned_initial_workers = true
+	# Toast is added here (after loading) so achievements never pop up during
+	# the loading overlay or before the colony is interactive.
+	var achievement_toast := ACHIEVEMENT_TOAST_SCRIPT.new() as Control
+	achievement_toast.name = "AchievementToast"
+	$HUD.add_child(achievement_toast)
 	if static_prop_manager != null and static_prop_manager.has_method("generate_now_at"):
 		static_prop_manager.call("generate_now_at", Vector2i.ZERO)
 	if not _pending_load.is_empty():
@@ -132,6 +134,7 @@ func _spawn_initial_workers() -> void:
 	_spawn_neutral_bots(INITIAL_NEUTRALS)
 	# Notify alert system of the initial outlet count.
 	EventBus.outlet_count_changed.emit(chunk_manager.outlet_count())
+	AchievementManager.on_new_game_started()
 
 
 func _show_loading_overlay() -> void:

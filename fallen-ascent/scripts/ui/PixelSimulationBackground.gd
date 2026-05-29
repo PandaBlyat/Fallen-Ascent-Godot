@@ -50,11 +50,11 @@ enum State { BG_RISING, TITLE_RISING, HOLDING, TITLE_DECAYING, BG_DECAYING, PAUS
 		_update_text_container_layout()
 
 @export_category("Timing (Seconds)")
-@export var bg_rise_duration: float = 5.0
-@export var title_rise_duration: float = 4.0
-@export var hold_duration: float = 10.0
-@export var title_decay_duration: float = 4.0
-@export var bg_decay_duration: float = 5.0
+@export var bg_rise_duration: float = 4.0
+@export var title_rise_duration: float = 3.0
+@export var hold_duration: float = 14.0
+@export var title_decay_duration: float = 3.0
+@export var bg_decay_duration: float = 2.0
 @export var pause_duration: float = 2.0
 
 @export_category("Aesthetics")
@@ -62,12 +62,12 @@ enum State { BG_RISING, TITLE_RISING, HOLDING, TITLE_DECAYING, BG_DECAYING, PAUS
 @export var glow_color: Color = Color(1.0, 0.38, 0.08, 1.0)       # Thermal decay orange
 @export var ash_color: Color = Color(0.18, 0.19, 0.22, 1.0)        # Cooling graphite/ash
 @export var conduit_color: Color = Color(0.0, 0.72, 0.53, 1.0)     # Machine bus line green
-@export var pixel_grid_width: float = 512.0                       # Raised to 512 for pixel-art readability
+@export var pixel_grid_width: float = 1024.0                       # Raised to 512 for pixel-art readability
 
 @export_category("Simulation Settings")
-@export_range(0.0, 2.0) var wind_strength: float = 0.6
+@export_range(0.0, 2.0) var wind_strength: float = 0.4
 @export_range(0.0, 5.0) var decay_gravity: float = 0.6
-@export_range(0.0, 1.0) var glitch_intensity: float = 0.8
+@export_range(0.0, 1.0) var glitch_intensity: float = 0.4
 @export_range(0.0, 1.0) var background_dimness: float = 0.25      
 @export var enable_scanlines: bool = true
 @export var enable_curvature: bool = true                         
@@ -83,7 +83,7 @@ enum State { BG_RISING, TITLE_RISING, HOLDING, TITLE_DECAYING, BG_DECAYING, PAUS
 @export var enable_screen_shake: bool = true
 @export_range(0.0, 0.1) var max_shake_offset: float = 0.015       # Relative shift multiplier inside screen space UVs
 @export var shake_decay: float = 4.5                              # Dampening speed
-@export_range(0.0, 2.0) var max_vhold_roll_speed: float = 1.2     # Speed of screen roll during sync failure
+@export_range(0.0, 2.0) var max_vhold_roll_speed: float = 0.2     # Speed of screen roll during sync failure
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
@@ -464,37 +464,37 @@ func _style_button(btn: Button) -> void:
 	# Clear parent themes that interfere with the shader dither rendering
 	btn.theme = null
 	
-	# Enforce a larger minimum bounding size to prevent thin/microscopic button bounding boxes
-	btn.custom_minimum_size = Vector2(360, 56)
+	# Enforce a slightly larger vertical size to accommodate the optimized, thicker font bounds
+	btn.custom_minimum_size = Vector2(360, 64)
 	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	
 	# Solid white coordinates and clean borders for dithered text_mask sampling
 	var style_normal := StyleBoxFlat.new()
 	style_normal.bg_color = Color(1.0, 1.0, 1.0, 0.0) # Transparent content area
-	style_normal.border_color = Color(1.0, 1.0, 1.0, 0.2) # Soft terminal outline
+	style_normal.border_color = Color(1.0, 1.0, 1.0, 0.35) # Raised outline visibility to define bounds clearly
 	style_normal.set_border_width_all(2) # Thicker border retains presence through low-res shader
-	style_normal.content_margin_left = 20
-	style_normal.content_margin_right = 20
+	style_normal.content_margin_left = 24
+	style_normal.content_margin_right = 24
 	style_normal.content_margin_top = 10
 	style_normal.content_margin_bottom = 10
 	style_normal.anti_aliasing = false # Crisp pixelated boundary
 	
 	var style_hover := StyleBoxFlat.new()
-	style_hover.bg_color = Color(1.0, 1.0, 1.0, 0.12) # Warm glowing background on hover
-	style_hover.border_color = Color(1.0, 1.0, 1.0, 0.85) # Bright white outline on hover
+	style_hover.bg_color = Color(1.0, 1.0, 1.0, 0.15) # Stronger glowing backdrop on hover
+	style_hover.border_color = Color(1.0, 1.0, 1.0, 0.95) # Bright white outline on hover
 	style_hover.set_border_width_all(2)
-	style_hover.content_margin_left = 20
-	style_hover.content_margin_right = 20
+	style_hover.content_margin_left = 24
+	style_hover.content_margin_right = 24
 	style_hover.content_margin_top = 10
 	style_hover.content_margin_bottom = 10
 	style_hover.anti_aliasing = false
 	
 	var style_pressed := StyleBoxFlat.new()
-	style_pressed.bg_color = Color(1.0, 1.0, 1.0, 0.25)
+	style_pressed.bg_color = Color(1.0, 1.0, 1.0, 0.3)
 	style_pressed.border_color = Color(1.0, 1.0, 1.0, 1.0)
 	style_pressed.set_border_width_all(2)
-	style_pressed.content_margin_left = 20
-	style_pressed.content_margin_right = 20
+	style_pressed.content_margin_left = 24
+	style_pressed.content_margin_right = 24
 	style_pressed.content_margin_top = 10
 	style_pressed.content_margin_bottom = 10
 	style_pressed.anti_aliasing = false
@@ -505,24 +505,24 @@ func _style_button(btn: Button) -> void:
 	btn.add_theme_stylebox_override("pressed", style_pressed)
 	btn.add_theme_stylebox_override("disabled", style_normal)
 	
-	# Bold configuration (44px) and outline addition for robust pixelation shapes
-	btn.add_theme_font_size_override("font_size", 44)
-	btn.add_theme_constant_override("outline_size", 3)
-	btn.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 1.0, 0.8))
+	# Bold configuration and outline additions to survive nearest-neighbor pixel grids
+	btn.add_theme_font_size_override("font_size", 44) # Increased from 40 for superior character clarity
+	btn.add_theme_constant_override("outline_size", 6) # Thickened outline prevents broken subpixel stems
+	btn.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 1.0, 0.95)) # Increased opacity
 	
 	if subtitle_font != null:
 		btn.add_theme_font_override("font", subtitle_font)
 	elif title_font != null:
 		btn.add_theme_font_override("font", title_font)
 		
-	# Adjust mask color opacity (unhovered has lower alpha, hovered matches full title glow)
-	btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.7))
+	# Robust opacity parameters prevent text cores from getting washed out by background dither
+	btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.95))
 	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0, 1.0))
 	btn.add_theme_color_override("font_focus_color", Color(1.0, 1.0, 1.0, 1.0))
 	btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
 	btn.add_theme_color_override("font_disabled_color", Color(1.0, 1.0, 1.0, 0.2))
 	
-	btn.add_theme_color_override("icon_normal_color", Color(1.0, 1.0, 1.0, 0.7))
+	btn.add_theme_color_override("icon_normal_color", Color(1.0, 1.0, 1.0, 0.95))
 	btn.add_theme_color_override("icon_hover_color", Color(1.0, 1.0, 1.0, 1.0))
 	btn.add_theme_color_override("icon_focus_color", Color(1.0, 1.0, 1.0, 1.0))
 	btn.add_theme_color_override("icon_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
@@ -652,10 +652,7 @@ void fragment() {
 		float bg_form_threshold = grid_uv.y + grid_uv.x * 0.2 + (bg_p_hash - 0.5) * 0.08;
 		float bg_t_rise = clamp((bg_form_wave - bg_form_threshold) / edge_burn_width, 0.0, 1.0);
 		float bg_visible_rise = step(dither, bg_t_rise);
-		
-		float bg_form_disp_y = (1.0 - bg_formation) * (1.0 - bg_formation) * 0.12;
-		float bg_form_drift_x = sin(time * 12.0) * 0.02 * (1.0 - bg_formation) * wind_strength;
-		
+		float bg_form_disp_y = (1.0 - bg_t_rise) * 0.35, bg_form_drift_x = sin(time * 12.0 + grid_uv.y * 32.0) * 0.08 * (1.0 - bg_t_rise) * wind_strength;
 		float bg_decay_wave = bg_decay * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
 		float bg_decay_threshold = grid_uv.y + grid_uv.x * 0.15 + (bg_p_hash - 0.5) * 0.1;
 		float bg_decay_age = clamp((bg_decay_wave - bg_decay_threshold) / edge_burn_width, 0.0, 1.0);
@@ -665,8 +662,6 @@ void fragment() {
 		read_uv_bg.y -= bg_form_disp_y; read_uv_bg.x -= bg_form_drift_x;
 		read_uv_bg.y -= bg_fall_dist; read_uv_bg.x -= bg_decay_drift_x;
 		read_uv_bg.x += glitch_offset_x;
-		read_uv_bg = floor(read_uv_bg * pixel_grid + 0.5) / pixel_grid;
-		
 		float wp_mask = 0.0;
 		if (read_uv_bg.x >= 0.0 && read_uv_bg.x <= 1.0 && read_uv_bg.y >= 0.0 && read_uv_bg.y <= 1.0) {
 			float wp_ab = 0.005 * active_glitch * (1.0 + bg_decay * 2.0);
@@ -704,10 +699,7 @@ void fragment() {
 		float title_form_threshold = grid_uv.y + grid_uv.x * 0.15 + (p_hash - 0.5) * 0.08;
 		float t_rise = clamp((title_form_wave - title_form_threshold) / edge_burn_width, 0.0, 1.0);
 		float title_visible_rise = step(dither, t_rise);
-		
-		float title_form_disp_y = (1.0 - title_formation) * (1.0 - title_formation) * 0.12;
-		float title_form_drift_x = sin(time * 14.0) * 0.02 * (1.0 - title_formation) * wind_strength;
-		
+		float title_form_disp_y = (1.0 - t_rise) * 0.35, title_form_drift_x = sin(time * 14.0 + grid_uv.y * 36.0) * 0.06 * (1.0 - t_rise) * wind_strength;
 		float title_decay_wave = title_decay * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
 		float title_decay_threshold = grid_uv.y + grid_uv.x * 0.15 + (p_hash - 0.5) * 0.08;
 		float decay_val_pixel = clamp((title_decay_wave - title_decay_threshold) / edge_burn_width, 0.0, 1.0);
@@ -717,11 +709,9 @@ void fragment() {
 		read_uv.y -= title_form_disp_y; read_uv.x -= title_form_drift_x;
 		read_uv.y -= title_fall_dist; read_uv.x -= title_decay_drift_x;
 		read_uv.x += glitch_offset_x;
-		read_uv = floor(read_uv * pixel_grid + 0.5) / pixel_grid;
-		
 		vec2 read_uv_text = read_uv; if (flip_v) read_uv_text.y = 1.0 - read_uv_text.y;
 		float text_mask_r = 0.0, text_mask_g = 0.0, text_mask_b = 0.0;
-		float ab_intensity = (1.5 / pixel_grid.x) * active_glitch * (1.0 + title_decay * 2.0);
+		float ab_intensity = 0.007 * active_glitch * (1.0 + title_decay * 2.0);
 		vec2 ab_dir = vec2(ab_intensity, 0.0);
 		if (read_uv.x >= 0.0 && read_uv.x <= 1.0 && read_uv.y >= 0.0 && read_uv.y <= 1.0) {
 			vec4 mask_r = texture(text_mask, clamp(read_uv_text - ab_dir, vec2(0.0), vec2(1.0)));
@@ -752,22 +742,30 @@ void fragment() {
 		}
 		float glow_mask = 0.0;
 		if (title_formation > 0.0) {
-			vec2 glow_offset_1 = 1.0 / pixel_grid;
-			vec2 glow_offset_2 = 2.0 / pixel_grid;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_1.x, -glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_1.x, -glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_1.x, glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_1.x, glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, -glow_offset_2.y), vec2(0.0), vec2(1.0))).a * 0.5;
-			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, glow_offset_2.y), vec2(0.0), vec2(1.0))).a * 0.5;
+			float glow_offset_1 = 0.0035; float glow_offset_2 = 0.007;
+			// Aspect-ratio correction applied to prevent horizontal stretching in ultra-widescreen modes
+			vec2 off1 = vec2(glow_offset_1 * aspect_ratio, glow_offset_1);
+			vec2 off2 = vec2(glow_offset_2 * aspect_ratio, glow_offset_2);
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-off1.x, -off1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(off1.x, -off1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-off1.x, off1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(off1.x, off1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-off2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(off2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, -off2.y), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, off2.y), vec2(0.0), vec2(1.0))).a * 0.5;
 			glow_mask = (glow_mask / 6.0) * 1.1;
 		}
 		vec4 glow_layer = vec4(glow_color.rgb * 1.5, glow_mask * text_alpha_mult);
 		vec4 text_layer = vec4(text_mask_r * final_color.r, text_mask_g * final_color.g, text_mask_b * final_color.b, max(max(text_mask_r, text_mask_g), text_mask_b) * final_color.a * text_alpha_mult);
 		vec4 final_text_color = mix(glow_layer, text_layer, text_layer.a);
 		final_text_color.a = max(glow_layer.a, text_layer.a);
+		
+		// Injects a localized, dark drop-shadow around the text boundaries and glow to preserve readability over bright backgrounds
+		float text_or_glow_alpha = max(max(text_mask_r, text_mask_g), text_mask_b);
+		float shadow_factor = max(glow_mask * 1.5, text_or_glow_alpha) * text_alpha_mult;
+		bg_color.rgb = mix(bg_color.rgb, bg_color.rgb * 0.12, clamp(shadow_factor, 0.0, 1.0));
+		
 		COLOR = mix(bg_color, final_text_color, final_text_color.a);
 		
 		vec2 edge_dist = min(cur_uv, 1.0 - cur_uv);

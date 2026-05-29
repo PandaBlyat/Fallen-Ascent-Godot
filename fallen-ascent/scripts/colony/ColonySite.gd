@@ -68,6 +68,7 @@ func _ready() -> void:
 	add_child(fzm)
 	_forbidden_zone_manager = fzm
 	designator._forbidden_zone_manager = fzm
+	job_board.set_forbidden_zone_manager(fzm)
 
 	EventBus.camera_moved.connect(_on_camera_moved)
 	EventBus.game_speed_changed.connect(_on_speed_changed)

@@ -119,6 +119,10 @@ signal fabricator_needs_inputs(anchor: Vector2i, missing_kinds: Array)
 signal outlet_count_changed(count: int)
 signal worker_low_energy(worker: Node, ratio: float)
 signal worker_low_condition(worker: Node, ratio: float)
+## Emitted when a worker snaps into a mental break. break_type is a
+## MentalBreaks.Type. Used for alerts/telemetry; mood contagion is handled inside
+## Worker so this is purely a notification.
+signal worker_mental_break(worker: Node, break_type: int)
 signal hostile_spotted(hostile: Node, spotter: Node)
 signal achievement_unlocked(id: StringName)
 signal player_structure_placed()

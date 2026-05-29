@@ -64,6 +64,17 @@ const WORLD_LIGHT_NEIGHBORS: Array[Vector2i] = [
 	Vector2i(0, -1),
 ]
 
+## Condition system: every player-placed structure carries a 0..100 condition.
+## "Machines" (worker-operated workshops, benches, docks, lights, sensors, charge
+## pads) slowly wear down; anything can be smashed by a berserk worker via
+## `damage_structure_at`. Below REPAIR_THRESHOLD a high-priority repair job is
+## auto-queued; at 0 a machine stops functioning until repaired.
+const STRUCTURE_CONDITION_MAX: float = 100.0
+const STRUCTURE_REPAIR_THRESHOLD: float = 55.0
+const STRUCTURE_AMBIENT_WEAR_PER_SEC: float = 0.05    ## machines only, per real second
+const STRUCTURE_WEAR_PER_OPERATION: float = 1.2
+const STRUCTURE_REPAIR_AMOUNT: float = 100.0          ## a finished repair restores to full
+
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
 @export var stockpile_manager_path: NodePath
@@ -194,6 +205,7 @@ func _add_structure(id: int, anchor: Vector2i, rotation: int = 0, generated: boo
 		"blocked": "",
 		"blocked_for_inputs": false,
 		"generated": generated,
+		"condition": STRUCTURE_CONDITION_MAX,
 	}
 	_structures.append(structure)
 	for cell in cells:
@@ -224,6 +236,7 @@ func capture_save() -> Dictionary:
 			"anchor": s["anchor"] as Vector2i,
 			"rotation": int(s.get("rotation", 0)),
 			"timer": float(s.get("timer", 0.0)),
+			"condition": float(s.get("condition", STRUCTURE_CONDITION_MAX)),
 		})
 	var removed: Array = []
 	for anchor in _removed_generated_lights:
@@ -253,6 +266,8 @@ func restore_save(data: Dictionary) -> void:
 		var placed: Dictionary = structure_at(anchor)
 		if not placed.is_empty():
 			placed["timer"] = float(d.get("timer", 0.0))
+			placed["condition"] = float(d.get("condition", STRUCTURE_CONDITION_MAX))
+			_maybe_queue_repair(placed)
 	queue_redraw()
 
 
@@ -497,6 +512,7 @@ func complete_dismantle_at(anchor: Vector2i) -> bool:
 	var id: int = int(structure["id"])
 	var cells: Array = structure["cells"] as Array
 	_structures.erase(structure)
+	_clear_repair_job(anchor)
 	for raw_cell in cells:
 		var cell: Vector2i = raw_cell as Vector2i
 		_cell_to_structure.erase(cell)
@@ -513,6 +529,120 @@ func complete_dismantle_at(anchor: Vector2i) -> bool:
 	return true
 
 
+## --- Condition / repair -------------------------------------------------
+
+func _clear_repair_job(anchor: Vector2i) -> void:
+	if _job_board != null and _job_board.has_method("cancel_repair_at"):
+		_job_board.call("cancel_repair_at", anchor)
+
+
+func condition_at(anchor: Vector2i) -> float:
+	var structure: Dictionary = structure_at(anchor)
+	if structure.is_empty():
+		return STRUCTURE_CONDITION_MAX
+	return float(structure.get("condition", STRUCTURE_CONDITION_MAX))
+
+
+func condition_ratio_at(anchor: Vector2i) -> float:
+	return clampf(condition_at(anchor) / STRUCTURE_CONDITION_MAX, 0.0, 1.0)
+
+
+func is_structure_broken(anchor: Vector2i) -> bool:
+	var structure: Dictionary = structure_at(anchor)
+	if structure.is_empty():
+		return false
+	return float(structure.get("condition", STRUCTURE_CONDITION_MAX)) <= 0.0
+
+
+## Machines wear down over time and stop functioning when broken. Pure-structure
+## tiles (walls/floor/door/storage/outlet) take no ambient wear but can still be
+## smashed and repaired.
+func _is_machine(id: int) -> bool:
+	if BuildBlueprint.is_worker_operated(id):
+		return true
+	return id == BuildBlueprint.Id.REPAIR_BENCH \
+		or id == BuildBlueprint.Id.MAINTENANCE_DOCK \
+		or id == BuildBlueprint.Id.DOCK \
+		or id == BuildBlueprint.Id.MEDITATION_PAD \
+		or id == BuildBlueprint.Id.CHARGE_PAD \
+		or id == BuildBlueprint.Id.SENSOR \
+		or id == BuildBlueprint.Id.RUDIMENTARY_SENSOR \
+		or id == BuildBlueprint.Id.SMALL_LIGHT_DEVICE \
+		or id == BuildBlueprint.Id.LARGE_LIGHT_DEVICE
+
+
+## Deal `amount` condition damage to the structure under `grid`. Returns true if
+## a structure was hit. Generated (world) structures are skipped — they are not
+## part of the colony's upkeep loop. Auto-queues a repair job past the threshold.
+func damage_structure_at(grid: Vector2i, amount: float) -> bool:
+	var structure: Dictionary = structure_at(grid)
+	if structure.is_empty() or bool(structure.get("generated", false)):
+		return false
+	var before: float = float(structure.get("condition", STRUCTURE_CONDITION_MAX))
+	if before <= 0.0:
+		return true
+	var after: float = maxf(0.0, before - maxf(0.0, amount))
+	structure["condition"] = after
+	if after <= 0.0:
+		structure["blocked"] = "broken"
+	_maybe_queue_repair(structure)
+	queue_redraw()
+	return true
+
+
+## Worker finished a repair job at `anchor`: restore condition to full, clear the
+## broken flag, and remove the repair job from the board.
+func repair_structure_at(anchor: Vector2i) -> bool:
+	var structure: Dictionary = structure_at(anchor)
+	if structure.is_empty():
+		if _job_board != null and _job_board.has_method("cancel_repair_at"):
+			_job_board.call("cancel_repair_at", anchor)
+		return false
+	structure["condition"] = STRUCTURE_CONDITION_MAX
+	if (structure.get("blocked", "") as String) == "broken":
+		structure["blocked"] = ""
+	if _job_board != null and _job_board.has_method("cancel_repair_at"):
+		_job_board.call("cancel_repair_at", anchor)
+	queue_redraw()
+	return true
+
+
+## A structure needs repair when its condition has fallen below the threshold.
+func _needs_repair(structure: Dictionary) -> bool:
+	if bool(structure.get("generated", false)):
+		return false
+	return float(structure.get("condition", STRUCTURE_CONDITION_MAX)) < STRUCTURE_REPAIR_THRESHOLD
+
+
+func _maybe_queue_repair(structure: Dictionary) -> void:
+	if _job_board == null or not _job_board.has_method("add_repair_job"):
+		return
+	if not _needs_repair(structure):
+		return
+	var anchor: Vector2i = structure["anchor"] as Vector2i
+	if _job_board.has_method("has_repair_at") and bool(_job_board.call("has_repair_at", anchor)):
+		return
+	_job_board.call("add_repair_job", anchor, int(structure["id"]))
+
+
+## Berserk targeting: nearest player-placed structure anchor within `radius`
+## (Chebyshev) of `from`, or UNREACHABLE. Prefers ones not already broken.
+func nearest_damageable_structure(from: Vector2i, radius: int) -> Vector2i:
+	var best: Vector2i = Pathfinder.UNREACHABLE
+	var best_d: int = 0x7fffffff
+	for structure in _structures:
+		if bool(structure.get("generated", false)):
+			continue
+		if float(structure.get("condition", STRUCTURE_CONDITION_MAX)) <= 0.0:
+			continue
+		var anchor: Vector2i = structure["anchor"] as Vector2i
+		var d: int = maxi(absi(anchor.x - from.x), absi(anchor.y - from.y))
+		if d <= radius and d < best_d:
+			best = anchor
+			best_d = d
+	return best
+
+
 ## Remove a structure for relocation without any refund. Returns its id and
 ## rotation so the caller can queue a build at the new position.
 func remove_for_relocation(grid: Vector2i) -> Dictionary:
@@ -524,6 +654,7 @@ func remove_for_relocation(grid: Vector2i) -> Dictionary:
 	var rot: int = int(structure.get("rotation", 0))
 	var cells: Array = structure["cells"] as Array
 	_structures.erase(structure)
+	_clear_repair_job(anchor)
 	for raw_cell in cells:
 		var cell: Vector2i = raw_cell as Vector2i
 		_cell_to_structure.erase(cell)
@@ -554,6 +685,7 @@ func delete_structure_at(grid: Vector2i) -> bool:
 	var anchor: Vector2i = structure["anchor"] as Vector2i
 	var cells: Array = structure["cells"] as Array
 	_structures.erase(structure)
+	_clear_repair_job(anchor)
 	for raw_cell in cells:
 		var cell: Vector2i = raw_cell as Vector2i
 		_cell_to_structure.erase(cell)
@@ -671,6 +803,9 @@ func can_operate_structure(anchor: Vector2i) -> bool:
 	var id: int = int(structure["id"])
 	if not BuildBlueprint.is_worker_operated(id):
 		return false
+	if float(structure.get("condition", STRUCTURE_CONDITION_MAX)) <= 0.0:
+		structure["blocked"] = "broken"
+		return false
 	if _first_output_cell(structure) == Pathfinder.UNREACHABLE:
 		structure["blocked"] = "output blocked"
 		return false
@@ -695,6 +830,10 @@ func complete_operation(anchor: Vector2i) -> bool:
 	structure["timer"] = 0.0
 	structure["blocked"] = ""
 	structure["blocked_for_inputs"] = false
+	# Using a machine wears it; below the threshold a repair job is queued.
+	var worn: float = maxf(0.0, float(structure.get("condition", STRUCTURE_CONDITION_MAX)) - STRUCTURE_WEAR_PER_OPERATION)
+	structure["condition"] = worn
+	_maybe_queue_repair(structure)
 	return true
 
 
@@ -743,6 +882,16 @@ func _process(delta: float) -> void:
 	var tick: float = _accum
 	_accum = 0.0
 	_process_doors()
+	for structure in _structures:
+		if bool(structure.get("generated", false)):
+			continue
+		var sid: int = int(structure["id"])
+		# Machines slowly wear; below the threshold a repair job is queued.
+		if _is_machine(sid) and STRUCTURE_AMBIENT_WEAR_PER_SEC > 0.0:
+			var cond: float = float(structure.get("condition", STRUCTURE_CONDITION_MAX))
+			if cond > 0.0:
+				structure["condition"] = maxf(0.0, cond - STRUCTURE_AMBIENT_WEAR_PER_SEC * tick)
+		_maybe_queue_repair(structure)
 	for structure in _structures:
 		var id: int = int(structure["id"])
 		if not BuildBlueprint.is_worker_operated(id):
@@ -1175,6 +1324,9 @@ func _status_for(structure: Dictionary) -> Dictionary:
 		"rotation": int(structure.get("rotation", 0)),
 		"name": BuildBlueprint.display_name(id),
 		"description": BuildBlueprint.description(id),
+		"condition": float(structure.get("condition", STRUCTURE_CONDITION_MAX)),
+		"condition_ratio": clampf(float(structure.get("condition", STRUCTURE_CONDITION_MAX)) / STRUCTURE_CONDITION_MAX, 0.0, 1.0),
+		"repairing": _job_board != null and _job_board.has_method("has_repair_at") and bool(_job_board.call("has_repair_at", structure["anchor"] as Vector2i)),
 		"timer": operation_job.progress if operation_job != null else timer,
 		"interval": interval,
 		"progress": clampf((operation_job.progress if operation_job != null else timer) / interval, 0.0, 1.0) if interval > 0.0 else 0.0,

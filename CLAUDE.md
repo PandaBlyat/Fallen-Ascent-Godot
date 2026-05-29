@@ -135,12 +135,44 @@ and Esc still cancels through `Designator.cancel_active()`.
 ## Bot mood + needs
 
 `Worker._mood` is a 0..100 stat. The baseline is `_mood_baseline` (default
-`MOOD_BASELINE = 80`, but personality/parts shift it) and recovery is scaled by
-`_mood_recovery_mult`. `_unsatisfied_needs` is recomputed every frame from
-`RoomManager`. Each unmet need drains mood at `MOOD_NEED_DECAY_PER_SEC`; when
-satisfied, mood drifts back to baseline. Add new needs by appending to
-`_unsatisfied_needs` in `Worker._update_mood` — the HUD renders them
-automatically.
+`MOOD_BASELINE = 80`, but personality/parts shift it). `_unsatisfied_needs` is
+recomputed on a throttle (`_refresh_unsatisfied_needs`) and is the **single mood
+driver**: each unmet need lowers a setpoint by `MOOD_NEED_TARGET_DROP` and mood
+drifts toward it (`_update_mood`). With no needs, mood climbs back to baseline.
+Current needs: dock room, Power-starved, Exhausted, Lonely, Damaged chassis,
+Standing in filth. Add new needs by appending in `_refresh_unsatisfied_needs` —
+the HUD renders them automatically.
+
+### Mental breaks (friction / spirals)
+
+When mood sits below `MOOD_BREAK_THRESHOLD`, `_break_risk` accumulates faster the
+lower the mood; crossing the randomized `_break_risk_trigger` snaps the bot into a
+**mental break** (`Worker._mental_break`, a `MentalBreaks.Type`). Breaks last a
+banded duration, then end with a catharsis mood bump. Triggering a break also
+drains nearby bots' mood (`_spread_break_contagion`) — that contagion is the
+death-spiral mechanism. `scripts/colony/MentalBreaks.gd` is the pure-data
+catalogue (label/desc/duration/color/severity/personality weighting); the
+behaviour lives in `Worker._decide_break_behavior` (run from the IDLE branch, which
+is gated while broken). Break types: **Drift** (long wander), **Lockup**
+(catatonic), **Fixation** (paces an anchor), **Wall-In** (raises walls around
+itself — major), **Berserk** (smashes player structures via
+`StructureManager.damage_structure_at` and attacks other bots via `take_damage` —
+major). Major breaks unlock only below `MOOD_MAJOR_BREAK_THRESHOLD`. Add a break
+by extending the `MentalBreaks.Type` enum + its data switches and adding a step
+fn in `Worker`. Break state is saved/restored.
+
+### Object condition + repair
+
+Every player-placed structure carries a `condition` 0..100 (`StructureManager`,
+saved/restored, shown in the structure info card). "Machines" (worker-operated
+workshops, benches, docks, lights, sensors, charge pads — see `_is_machine`) take
+slow ambient wear (`STRUCTURE_AMBIENT_WEAR_PER_SEC`) plus per-operation wear;
+anything can be smashed via `damage_structure_at` (berserk bots, future combat).
+A broken machine (condition 0) stops functioning. Below
+`STRUCTURE_REPAIR_THRESHOLD` a high-priority `RepairStructureJob` (JobBoard
+priority 2, above build/mine) is auto-queued; a worker walks to it
+(`State.FIXING_STRUCTURE`) and `repair_structure_at` restores it to full. Repair
+jobs are not saved (they regenerate from condition on load).
 
 `Worker.Personality` has **9** values (Dutiful, Grumpy, Cheerful, Philosophical,
 Paranoid, Stoic, Nostalgic, Competitive, Glitchy) and maps 1:1 to

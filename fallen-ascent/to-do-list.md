@@ -145,11 +145,84 @@ Format: `[area] short description — why it matters / first hint at how`.
 - [x] **Mine unexplored tiles.** Players can designate any tile for mining
       (fog-of-war included). `_begin_mine` routes through unexplored space when
       needed. `_complete_mine` cancels silently if tile turns out not minable.
-- [ ] **Cradle-spawned workers and forbidden zones.** Workers spawned by the
-      Replication Cradle currently receive `null` for `_forbidden_zone_manager`
-      and won't respect forbidden zones for idle wander. Fix by adding a
+- [ ] **Cradle-spawned workers and forbidden zones (idle wander only).** Workers
+      spawned by the Replication Cradle receive `null` for
+      `_forbidden_zone_manager` and won't avoid forbidden cells when picking idle
+      *wander* targets. (Forbidden *jobs* are now handled centrally in
+      `JobBoard._job_is_claimable`, so all workers — cradle-spawned included —
+      already skip claiming jobs in forbidden cells.) Fix wander by adding a
       `_forbidden_zone_manager` field to `StructureManager` and passing it
       through `WorkerSpawner.spawn_one_at`.
+
+## Bug-fix pass: forbidden jobs / manual idle / relocate ghost
+
+- [x] **Forbidden zones now block jobs, not just wander.** `JobBoard` holds an
+      optional `ForbiddenZoneManager` (`set_forbidden_zone_manager`, wired in
+      `ColonySite._ready`). `_job_is_claimable` rejects any auto-claimed job whose
+      work cell (or any BuildJob footprint cell) is forbidden. Manual orders
+      bypass this (they go through `command_*`, never `claim_next_for`).
+- [x] **Manual-order idle grace actually fires + scales with game speed.** The
+      grace window was only set when an order came off `_direct_order_queue`, so
+      single (non-shift) orders and manual *moves* (which bypassed `_finish_job`)
+      never got it. Now every `command_*` with `clear_queue=true` sets
+      `_last_job_was_manual`, the MOVING_FREEFORM completion routes through the
+      shared `_apply_post_job_idle()`, and the 2–3 s window is multiplied by
+      `GameState.game_speed` so the real-time pause stays constant at 2x/3x
+      (idle counts down in `Engine.time_scale`-scaled delta).
+- [x] **Relocate has a build-style placement ghost.** `RELOCATE` mode now draws
+      the footprint ghost (valid/invalid tint) via the generalized
+      `_draw_build_ghost(id, anchor, rotation)` and supports `R` to rotate
+      (`_relocate_source_rotation`) before committing.
+- [ ] **(Nicety) Abandon in-flight jobs when a cell becomes forbidden.** Marking
+      a cell forbidden only stops *future* claims; a worker already mid-job there
+      finishes it. Acceptable for now (RimWorld-like), but `ForbiddenZoneManager.
+      mark()` could notify `JobBoard`/workers to release claims in newly-forbidden
+      cells for snappier feedback.
+
+## Big features still owed (from the move/dismantle/forbid request)
+
+- [ ] **World-gen easter eggs / unique rooms behind ore walls + more floor/wall
+      variety.** Sealed vaults with loot, themed rooms, using the floor shader
+      for variety. Code-only procgen work in `TerrainGenerator` / service-core
+      pass; bump `WORLDGEN_VERSION`.
+## Mood/friction + object condition session
+
+- [x] **Friction / mood-spiral / death-spiral + mental breaks.** Mood is now
+      needs-driven (`_update_mood` drifts toward a needs-lowered setpoint). Below
+      `MOOD_BREAK_THRESHOLD` `_break_risk` builds and snaps the bot into a
+      `MentalBreaks.Type` break: Drift, Lockup, Fixation, Wall-In (major),
+      Berserk (major). Breaks have banded durations + catharsis recovery and
+      drain nearby bots' mood on trigger (`_spread_break_contagion`) — the
+      spiral. Personality-weighted pick. Saved/restored. Shown in the worker
+      stat panel. Expanded needs: Power-starved, Exhausted, Lonely, Damaged
+      chassis, Standing in filth.
+- [x] **Condition 0–100 on every placed object + breakdowns + repair jobs.**
+      `StructureManager` tracks per-structure `condition` (saved/restored, in the
+      info card). Machines wear over time + per operation; broken machines stop
+      working; berserk bots smash structures (`damage_structure_at`). Below
+      `STRUCTURE_REPAIR_THRESHOLD` a high-priority `RepairStructureJob` auto-queues
+      and a worker repairs it to full (`State.FIXING_STRUCTURE` →
+      `repair_structure_at`).
+- [ ] **Mood/condition balance + polish pass (needs playtest).** First-draft
+      tuning for: break thresholds/durations/contagion, ambient wear rate,
+      repair duration, mood setpoint drops. Also: Wall-In can fully box a bot in
+      (it can then run out of power and go downed needing rescue) — intended
+      drama but verify it isn't a soft-lock at scale. Consider an alert/toast on
+      mental break (EventBus.worker_mental_break is emitted but unhandled), an SFX,
+      and a persistent in-world visual tint for broken bots (only a 4.5s bubble +
+      stat-panel banner today). Repair is currently free (time only) — consider a
+      small material cost once the economy can support it without deadlocks.
+- [ ] **More strange-mood variety.** Five breaks today. The theme supports more
+      (e.g. hoarding a specific item, obsessive crafting of one object, broadcast
+      static that worsens contagion, self-mining). Extend `MentalBreaks.Type` +
+      `Worker._decide_break_behavior`.
+
+## Big features still owed (from the move/dismantle/forbid request)
+
+- [ ] **World-gen easter eggs / unique rooms behind ore walls + more floor/wall
+      variety.** Sealed vaults with loot, themed rooms, using the floor shader
+      for variety. Code-only procgen work in `TerrainGenerator` / service-core
+      pass; bump `WORLDGEN_VERSION`.
 - [ ] **FLOOR tile requires BASIC_FLOORING tech at build time.** The tech gate
       in `ColonyHud` greys the button out, but `can_place_blueprint` and
       `Worker._complete_build` do not check the tech. Add a

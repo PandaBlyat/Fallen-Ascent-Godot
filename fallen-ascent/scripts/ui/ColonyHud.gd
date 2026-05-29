@@ -1386,6 +1386,12 @@ func _build_worker_detail_card(worker: Worker, _selected_count: int) -> void:
 	var mood_color: Color = Color(0.96, 0.5, 0.32) if worker.mood_ratio() < 0.4 else Color(0.95, 0.85, 0.4)
 	_add_meter(left, "mood (%s)" % worker.mood_label(), worker.mood_ratio(), mood_color)
 
+	if worker.is_mentally_broken():
+		var break_color: Color = worker.mental_break_color()
+		_add_section_header(left, "Mental Break", break_color)
+		_add_status_banner(left, "⚠ " + worker.mental_break_label(), break_color)
+		_add_status_banner(left, worker.mental_break_desc(), break_color)
+
 	var needs: Array[String] = worker.unsatisfied_needs()
 	var modifiers: Array[String] = worker.status_modifiers()
 	
@@ -1837,6 +1843,19 @@ func _build_structure_card() -> void:
 	_selection_box.add_child(card)
 	_add_card_title(card, (status["name"] as String).capitalize())
 	_add_card_line(card, "grid", "%d,%d" % [_selected_structure_anchor.x, _selected_structure_anchor.y])
+	if status.has("condition_ratio"):
+		var cond_ratio: float = float(status["condition_ratio"])
+		var cond_color: Color = COLOR_METER_GOOD
+		if cond_ratio <= 0.0:
+			cond_color = Color(0.95, 0.25, 0.22)
+		elif cond_ratio < 0.55:
+			cond_color = COLOR_METER_LOW
+		var cond_label: String = "condition"
+		if cond_ratio <= 0.0:
+			cond_label = "condition (BROKEN)"
+		elif bool(status.get("repairing", false)):
+			cond_label = "condition (repair queued)"
+		_add_meter(card, cond_label, cond_ratio, cond_color)
 	_add_card_line(card, "does", status["description"] as String)
 	_add_card_line(card, "production", status["production"] as String)
 	var interval: float = float(status["interval"])

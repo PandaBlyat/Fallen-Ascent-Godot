@@ -37,6 +37,8 @@ enum State {
 	FIGHTING,
 	MOVING_TO_DISMANTLE,
 	DISMANTLING,
+	MOVING_TO_FIX_STRUCTURE,
+	FIXING_STRUCTURE,
 	# Rescue states: a non-downed worker carries a downed worker to an outlet
 	# or repair bench. MOVING_TO_SAVE = walking to the downed body;
 	# CARRYING_WORKER = downed has been picked up; MOVING_TO_DELIVER = the
@@ -157,7 +159,23 @@ const MOOD_MAX: float = 100.0
 const MOOD_BASELINE: float = 80.0
 const MOOD_RECOVERY_PER_SEC: float = 0.4         ## drift back to baseline when needs satisfied
 const MOOD_NEED_DECAY_PER_SEC: float = 0.6       ## per-need extra decay while unsatisfied
+const MOOD_NEED_TARGET_DROP: float = 12.0        ## each unmet need lowers the mood setpoint
 const MOOD_LOW_THRESHOLD: float = 35.0
+## Mental-break / friction tuning. Below BREAK_THRESHOLD risk accumulates faster
+## the lower the mood; once it crosses a (randomized) trigger the bot snaps into a
+## mental break. Major breaks (berserk / wall-in) only unlock below MAJOR.
+const MOOD_BREAK_THRESHOLD: float = 25.0
+const MOOD_MAJOR_BREAK_THRESHOLD: float = 12.0
+const BREAK_RISK_TRIGGER_MIN: float = 6.0
+const BREAK_RISK_TRIGGER_MAX: float = 16.0
+const BREAK_CATHARSIS_BONUS: float = 32.0        ## mood restored when a break ends
+const BREAK_CONTAGION_RADIUS: int = 7            ## tiles; nearby bots lose mood witnessing a break
+const BREAK_CONTAGION_MOOD: float = 9.0
+const BERSERK_ATTACK_RADIUS: int = 9             ## search range for smash targets
+const BERSERK_STRUCTURE_DAMAGE: float = 22.0     ## condition per hit
+const BERSERK_WORKER_DAMAGE: float = 9.0         ## hp per hit on another bot
+const BERSERK_HIT_INTERVAL: float = 1.1
+const WALL_IN_INTERVAL: float = 2.4
 const CROWD_SLOW_SECONDS: float = 1.0
 const CROWD_SLOW_MULTIPLIER: float = 0.55
 const DOOR_SLOW_SECONDS: float = 0.65
@@ -206,7 +224,7 @@ const MOVING_STATES: Array[int] = [
 	State.MOVING_FREEFORM, State.MOVING_TO_CHARGE, State.ROAMING, State.WANDERING,
 	State.MOVING_TO_REST, State.MOVING_TO_REPAIR, State.MOVING_TO_SOCIALIZE,
 	State.MOVING_TO_MEDITATE, State.MOVING_TO_SAVE, State.CARRYING_WORKER,
-	State.MOVING_TO_DELIVER, State.MOVING_TO_DISMANTLE
+	State.MOVING_TO_DELIVER, State.MOVING_TO_DISMANTLE, State.MOVING_TO_FIX_STRUCTURE
 ]
 
 var _personality: int = Personality.DUTIFUL
@@ -255,6 +273,13 @@ var _mental_tiredness: float = 0.0
 var _social: float = 50.0
 var _mood: float = MOOD_BASELINE
 var _unsatisfied_needs: Array[String] = []
+## Mental-break state. _mental_break is a MentalBreaks.Type, or -1 when stable.
+var _mental_break: int = -1
+var _break_timer: float = 0.0          ## game-seconds remaining in the active break
+var _break_risk: float = 0.0           ## accumulates while mood is below threshold
+var _break_risk_trigger: float = 10.0  ## randomized cap; crossing it snaps the bot
+var _break_anchor: Vector2i = Vector2i.ZERO  ## fixation/wall-in pivot
+var _break_act_cooldown: float = 0.0   ## paces berserk hits / wall-in placements
 var _activity_timer: float = 0.0
 var _activity_target: Vector2i = Vector2i.ZERO
 var _activity_partner: Worker = null
@@ -573,6 +598,9 @@ func command_attack(
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	_enter_fighting(target, preferred_stand)
 	_remember("ordered to attack %s" % _target_label(target))
@@ -841,6 +869,9 @@ func capture_save() -> Dictionary:
 		"mental": _mental_tiredness,
 		"social": _social,
 		"mood": _mood,
+		"mental_break": _mental_break,
+		"break_timer": _break_timer,
+		"break_risk": _break_risk,
 		"part_conditions": part_conditions,
 		"hp": stats.hp if stats != null else COMBAT_HP_MAX,
 		"history": _action_history.duplicate(),
@@ -866,6 +897,12 @@ func restore_save(data: Dictionary) -> void:
 	_mental_tiredness = float(data.get("mental", 0.0))
 	_social = float(data.get("social", 50.0))
 	_mood = float(data.get("mood", MOOD_BASELINE))
+	_mental_break = int(data.get("mental_break", -1))
+	_break_timer = float(data.get("break_timer", 0.0))
+	_break_risk = float(data.get("break_risk", 0.0))
+	_break_risk_trigger = randf_range(BREAK_RISK_TRIGGER_MIN, BREAK_RISK_TRIGGER_MAX)
+	if _mental_break >= 0 and _break_timer <= 0.0:
+		_mental_break = -1
 	var part_conditions: Dictionary = data.get("part_conditions", {}) as Dictionary
 	for slot_index in part_conditions:
 		_part_conditions[int(slot_index)] = float(part_conditions[slot_index])
@@ -1055,6 +1092,14 @@ func state_label() -> String:
 			return "carrying"
 		State.REBOOTING:
 			return "rebooting"
+		State.MOVING_TO_DISMANTLE:
+			return "moving to dismantle"
+		State.DISMANTLING:
+			return "dismantling"
+		State.MOVING_TO_FIX_STRUCTURE:
+			return "moving to repair"
+		State.FIXING_STRUCTURE:
+			return "repairing structure"
 		State.DEAD:
 			return "down"
 		_:
@@ -1237,6 +1282,14 @@ func _process(delta: float) -> void:
 			return
 	match _state:
 		State.IDLE:
+			# A mental break overrides normal work: the bot ignores the job board
+			# and direct orders until the break ends.
+			if _mental_break >= 0:
+				_idle_cooldown -= delta
+				if ai_due and _idle_cooldown <= 0.0:
+					_idle_cooldown = IDLE_RETRY_SECONDS
+					_decide_break_behavior()
+				return
 			if _try_start_next_direct_order():
 				return
 			_idle_cooldown -= delta
@@ -1319,7 +1372,9 @@ func _process(delta: float) -> void:
 		State.MOVING_FREEFORM:
 			if _advance_path(delta):
 				_state = State.IDLE
-				_idle_cooldown = 0.0
+				# A manual move order earns the same grace window as any other
+				# manual order so the player can chain follow-up commands.
+				_apply_post_job_idle()
 		State.MOVING_TO_DISMANTLE:
 			if _advance_path(delta):
 				_state = State.DISMANTLING
@@ -1331,6 +1386,17 @@ func _process(delta: float) -> void:
 			dismantle.progress += delta * _light_speed_multiplier() * _work_speed_mult
 			if dismantle.progress >= DismantleJob.DURATION:
 				_complete_dismantle(dismantle)
+		State.MOVING_TO_FIX_STRUCTURE:
+			if _advance_path(delta):
+				_state = State.FIXING_STRUCTURE
+		State.FIXING_STRUCTURE:
+			var fix := _job as RepairStructureJob
+			if fix == null:
+				_abandon_job()
+				return
+			fix.progress += delta * _light_speed_multiplier() * _work_speed_mult
+			if fix.progress >= RepairStructureJob.DURATION:
+				_complete_repair_structure(fix)
 		State.ROAMING, State.WANDERING:
 			if _advance_path(delta):
 				_state = State.IDLE
@@ -1538,6 +1604,9 @@ func command_save(target: Worker, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
 	if path.is_empty() and current_grid() != stand:
@@ -1741,6 +1810,8 @@ func _try_claim_job() -> bool:
 			_begin_build(job as BuildJob)
 		elif job is DismantleJob:
 			_begin_dismantle(job as DismantleJob)
+		elif job is RepairStructureJob:
+			_begin_repair_structure(job as RepairStructureJob)
 		elif job is CraftJob:
 			_begin_craft(job as CraftJob)
 		elif job is OperateStructureJob:
@@ -2453,6 +2524,37 @@ func _begin_dismantle(job: DismantleJob) -> void:
 	_state = State.MOVING_TO_DISMANTLE
 
 
+func _begin_repair_structure(job: RepairStructureJob) -> void:
+	if _structure_manager == null or _structure_manager.structure_at(job.anchor).is_empty():
+		if _job_board != null and _job_board.has_method("cancel_repair_at"):
+			_job_board.call("cancel_repair_at", job.anchor)
+		_job = null
+		_state = State.IDLE
+		return
+	var stand: Vector2i = _structure_manager.interaction_cell_for(job.anchor)
+	if stand == Pathfinder.UNREACHABLE:
+		job.block_briefly(2.0)
+		_release_and_idle()
+		return
+	var path: PackedVector2Array = _find_explored_path(current_grid(), stand)
+	if path.is_empty() and current_grid() != stand:
+		job.block_briefly(2.0)
+		_mark_job_failed(job)
+		_release_and_idle()
+		return
+	_remember("repairing %s at %d,%d" % [BuildBlueprint.display_name(job.structure_id), job.anchor.x, job.anchor.y])
+	_path = path
+	_path_index = 0
+	_state = State.MOVING_TO_FIX_STRUCTURE
+
+
+func _complete_repair_structure(job: RepairStructureJob) -> void:
+	if _structure_manager != null and _structure_manager.has_method("repair_structure_at"):
+		_structure_manager.call("repair_structure_at", job.anchor)
+	_remember("repaired %s at %d,%d" % [BuildBlueprint.display_name(job.structure_id), job.anchor.x, job.anchor.y])
+	_finish_job()
+
+
 func _begin_haul(job: HaulJob) -> void:
 	if job.item == null or not is_instance_valid(job.item):
 		_finish_job()
@@ -3155,14 +3257,23 @@ func _finish_job() -> void:
 	_path = PackedVector2Array()
 	_path_index = 0
 	_state = State.IDLE
+	_apply_post_job_idle()
+	_clear_activity()
+	_clear_resume()
+
+
+## After any job/order completes, decide how long to idle before auto-claiming.
+## A job that came from the manual direct-order queue grants a brief grace
+## window so the player can chain follow-up orders. The window is scaled by the
+## current game speed so the *real-time* pause stays roughly constant even at
+## 2x/3x (idle countdown ticks in Engine.time_scale-scaled delta).
+func _apply_post_job_idle() -> void:
 	if _last_job_was_manual and _direct_order_queue.is_empty():
-		# Brief pause so the player can issue follow-up manual orders.
-		_idle_cooldown = randf_range(2.0, 3.0)
+		var speed: float = maxf(1.0, GameState.game_speed)
+		_idle_cooldown = randf_range(2.0, 3.0) * speed
 	else:
 		_idle_cooldown = 0.0
 	_last_job_was_manual = false
-	_clear_activity()
-	_clear_resume()
 
 
 func _release_and_idle() -> void:
@@ -3563,6 +3674,9 @@ func command_move(target: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	_path = path
 	_path_index = 0
@@ -3577,6 +3691,9 @@ func command_mine(target: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	if _job_board.has_mine_at(target):
 		_job_board.cancel_mine_at(target)
@@ -3593,6 +3710,9 @@ func command_scrape_rust(target: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	if _job_board.has_scrape_rust_at(target):
 		_job_board.cancel_scrape_rust_at(target)
@@ -3609,6 +3729,9 @@ func command_scrape_biomass(target: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	if _job_board.has_scrape_biomass_at(target):
 		_job_board.cancel_scrape_biomass_at(target)
@@ -3632,6 +3755,9 @@ func command_build(
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	if _job_board.has_build_at(target):
 		_job_board.cancel_build_at(target)
@@ -3652,6 +3778,9 @@ func command_take_build_job(job: BuildJob, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	if not _job_board.force_claim(job, self):
 		return false
@@ -3672,6 +3801,9 @@ func command_charge(target: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	_manual_charging = true
 	_remember("ordered to charge at %d,%d" % [target.x, target.y])
@@ -3698,6 +3830,9 @@ func command_repair_at(anchor: Vector2i, clear_queue: bool = true) -> bool:
 		return false
 	if clear_queue:
 		_direct_order_queue.clear()
+		# Fresh player-issued order: grant the post-job idle grace window so the
+		# player can chain follow-up orders before auto-work resumes.
+		_last_job_was_manual = true
 	_abandon_job()
 	_path = path
 	_path_index = 0
@@ -3968,19 +4103,20 @@ func _update_mood(delta: float) -> void:
 	if _needs_refresh_timer <= 0.0:
 		_needs_refresh_timer = NEEDS_REFRESH_SECONDS
 		_refresh_unsatisfied_needs()
-	var target: float = _mood_baseline
-	if _social < 25.0:
-		target -= 8.0
-	if _mental_tiredness > 70.0:
-		target -= 10.0
-	if _condition < 50.0:
-		target -= 6.0
-	var penalty: float = float(_unsatisfied_needs.size()) * MOOD_NEED_DECAY_PER_SEC
+	# Needs are the single mood driver: each unmet need lowers the "happy"
+	# setpoint, and mood drifts toward it. With no needs, mood climbs back to
+	# baseline. The wider the gap, the faster the slide — which is what lets a
+	# neglected bot spiral down into a mental break.
+	var target: float = clampf(
+		_mood_baseline - float(_unsatisfied_needs.size()) * MOOD_NEED_TARGET_DROP,
+		0.0, MOOD_MAX)
 	if _mood < target:
-		_mood = minf(MOOD_MAX, _mood + MOOD_RECOVERY_PER_SEC * _mood_recovery_mult * delta)
-	if penalty > 0.0:
-		_mood = maxf(0.0, _mood - penalty * delta)
+		_mood = minf(target, _mood + MOOD_RECOVERY_PER_SEC * _mood_recovery_mult * delta)
+	elif _mood > target:
+		var drain: float = MOOD_RECOVERY_PER_SEC + float(_unsatisfied_needs.size()) * MOOD_NEED_DECAY_PER_SEC
+		_mood = maxf(target, _mood - drain * delta)
 	_mood = clampf(_mood, 0.0, MOOD_MAX)
+	_update_mental_break(delta)
 
 
 func _refresh_unsatisfied_needs() -> void:
@@ -3992,6 +4128,258 @@ func _refresh_unsatisfied_needs() -> void:
 			has_room = bool(_room_manager.call("has_dock_room", self))
 		if not has_room:
 			_unsatisfied_needs.append("Needs dock room")
+	if _energy <= ENERGY_LOW and _state != State.CHARGING and _state != State.MOVING_TO_CHARGE:
+		_unsatisfied_needs.append("Power-starved")
+	if _mental_tiredness >= 80.0:
+		_unsatisfied_needs.append("Exhausted")
+	if _social <= 20.0:
+		_unsatisfied_needs.append("Lonely")
+	if _condition <= 40.0:
+		_unsatisfied_needs.append("Damaged chassis")
+	if _chunk_manager != null and _chunk_manager.get_tile_at(current_grid()) == TerrainGenerator.TILE_RUST:
+		_unsatisfied_needs.append("Standing in filth")
+
+
+# --- Mental breaks ---------------------------------------------------------
+
+func is_mentally_broken() -> bool:
+	return _mental_break >= 0
+
+
+func mental_break_label() -> String:
+	return MentalBreaks.label(_mental_break) if _mental_break >= 0 else ""
+
+
+func mental_break_desc() -> String:
+	return MentalBreaks.desc(_mental_break) if _mental_break >= 0 else ""
+
+
+func mental_break_color() -> Color:
+	return MentalBreaks.color(_mental_break) if _mental_break >= 0 else Color.WHITE
+
+
+## Mood damage inflicted by witnessing another bot's breakdown (contagion) — the
+## mechanism behind mood/death spirals.
+func apply_mood_shock(amount: float) -> void:
+	_mood = clampf(_mood - amount, 0.0, MOOD_MAX)
+
+
+func _break_incapacitated() -> bool:
+	return _dead or _paused or is_downed() \
+		or _state == State.DEAD or _state == State.REBOOTING \
+		or _state == State.FIGHTING \
+		or _state == State.MOVING_TO_SAVE or _state == State.CARRYING_WORKER \
+		or _state == State.MOVING_TO_DELIVER
+
+
+func _update_mental_break(delta: float) -> void:
+	if _break_act_cooldown > 0.0:
+		_break_act_cooldown = maxf(0.0, _break_act_cooldown - delta)
+	if _mental_break >= 0:
+		_break_timer -= delta
+		if _break_timer <= 0.0:
+			_end_mental_break()
+		return
+	if _break_incapacitated():
+		return
+	# Below the threshold risk builds the lower the mood; above it, risk bleeds off.
+	if _mood < MOOD_BREAK_THRESHOLD:
+		var severity: float = (MOOD_BREAK_THRESHOLD - _mood) / MOOD_BREAK_THRESHOLD
+		_break_risk += severity * delta
+		if _break_risk >= _break_risk_trigger:
+			_trigger_mental_break()
+	else:
+		_break_risk = maxf(0.0, _break_risk - delta * 0.5)
+
+
+func _trigger_mental_break() -> void:
+	var allow_major: bool = _mood <= MOOD_MAJOR_BREAK_THRESHOLD
+	_mental_break = MentalBreaks.pick_for(_personality, allow_major, randf())
+	var band: Vector2 = MentalBreaks.duration_range(_mental_break)
+	_break_timer = randf_range(band.x, band.y)
+	_break_risk = 0.0
+	_break_anchor = current_grid()
+	_break_act_cooldown = 0.0
+	_abandon_job()
+	_path = PackedVector2Array()
+	_path_index = 0
+	_state = State.IDLE
+	_idle_cooldown = 0.0
+	_remember("MENTAL BREAK: %s" % MentalBreaks.label(_mental_break))
+	# Force an in-world bubble so the player notices the meltdown.
+	_speech_text = "! %s !" % MentalBreaks.label(_mental_break)
+	_speech_timer = SPEECH_DISPLAY_SECONDS
+	if ACTION_FONT != null:
+		_speech_text_size = ACTION_FONT.get_string_size(
+			_speech_text, HORIZONTAL_ALIGNMENT_LEFT, -1, SPEECH_FONT_SIZE)
+	EventBus.worker_mental_break.emit(self, _mental_break)
+	_spread_break_contagion()
+	queue_redraw()
+
+
+func _end_mental_break() -> void:
+	var was: int = _mental_break
+	_mental_break = -1
+	_break_timer = 0.0
+	_break_risk = 0.0
+	_break_risk_trigger = randf_range(BREAK_RISK_TRIGGER_MIN, BREAK_RISK_TRIGGER_MAX)
+	# Catharsis: surviving a break briefly lifts the bot out of the danger zone.
+	_mood = clampf(_mood + BREAK_CATHARSIS_BONUS, 0.0, MOOD_MAX)
+	_state = State.IDLE
+	_idle_cooldown = randf_range(0.5, 1.5)
+	_remember("recovered from %s" % MentalBreaks.label(was))
+	queue_redraw()
+
+
+## Bots within range that witness a meltdown take a mood hit — this is the
+## friction loop that turns one breakdown into a colony-wide spiral.
+func _spread_break_contagion() -> void:
+	var parent: Node = get_parent()
+	if parent == null:
+		return
+	var here: Vector2i = current_grid()
+	for child in parent.get_children():
+		var other := child as Worker
+		if other == null or other == self or not is_instance_valid(other):
+			continue
+		if other.is_downed() or other.is_mentally_broken():
+			continue
+		var d: Vector2i = other.current_grid() - here
+		if maxi(absi(d.x), absi(d.y)) <= BREAK_CONTAGION_RADIUS:
+			other.apply_mood_shock(BREAK_CONTAGION_MOOD)
+
+
+## Per-idle-tick break behaviour dispatcher. Mirrors _choose_idle_behavior but
+## for a broken bot; called only while _mental_break >= 0.
+func _decide_break_behavior() -> void:
+	match _mental_break:
+		MentalBreaks.Type.DRIFT:
+			_break_drift_step()
+		MentalBreaks.Type.LOCKUP:
+			_idle_cooldown = randf_range(1.0, 2.0)
+		MentalBreaks.Type.FIXATION:
+			_break_fixation_step()
+		MentalBreaks.Type.WALL_IN:
+			_break_wall_in_step()
+		MentalBreaks.Type.BERSERK:
+			_break_berserk_step()
+		_:
+			_idle_cooldown = 1.0
+
+
+func _break_drift_step() -> void:
+	var here: Vector2i = current_grid()
+	var target: Vector2i = _random_walkable_near(here, 12)
+	if target == Pathfinder.UNREACHABLE or target == here:
+		_idle_cooldown = randf_range(0.6, 1.2)
+		return
+	var path: PackedVector2Array = _find_explored_path(here, target)
+	if path.is_empty():
+		_idle_cooldown = randf_range(0.6, 1.2)
+		return
+	_path = path
+	_path_index = 0
+	_activity_target = target
+	_state = State.WANDERING
+
+
+func _break_fixation_step() -> void:
+	var target: Vector2i = _random_walkable_near(_break_anchor, 2)
+	if target == Pathfinder.UNREACHABLE:
+		_idle_cooldown = randf_range(0.8, 1.4)
+		return
+	var path: PackedVector2Array = _find_explored_path(current_grid(), target)
+	if path.is_empty():
+		_idle_cooldown = randf_range(0.8, 1.4)
+		return
+	_path = path
+	_path_index = 0
+	_activity_target = target
+	_state = State.WANDERING
+
+
+func _break_wall_in_step() -> void:
+	if _break_act_cooldown > 0.0 or _chunk_manager == null:
+		_idle_cooldown = 0.4
+		return
+	var here: Vector2i = current_grid()
+	var offsets: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	for off in offsets:
+		var c: Vector2i = here + off
+		if _chunk_manager.get_tile_at(c) != TerrainGenerator.TILE_FLOOR or not _chunk_manager.is_walkable(c):
+			continue
+		if _structure_manager != null and not _structure_manager.structure_at(c).is_empty():
+			continue
+		_chunk_manager.set_tile_at(c, TerrainGenerator.TILE_WALL)
+		_break_act_cooldown = WALL_IN_INTERVAL
+		_idle_cooldown = 0.4
+		_remember("walling itself in at %d,%d" % [c.x, c.y])
+		return
+	# Fully boxed in — nothing left to raise.
+	_idle_cooldown = randf_range(1.0, 2.0)
+
+
+func _break_berserk_step() -> void:
+	if _break_act_cooldown > 0.0:
+		_idle_cooldown = 0.3
+		return
+	var here: Vector2i = current_grid()
+	# Prefer smashing a player structure.
+	if _structure_manager != null and _structure_manager.has_method("nearest_damageable_structure"):
+		var anchor: Vector2i = _structure_manager.nearest_damageable_structure(here, BERSERK_ATTACK_RADIUS)
+		if anchor != Pathfinder.UNREACHABLE:
+			var stand: Vector2i = _structure_manager.interaction_cell_for(anchor)
+			if stand != Pathfinder.UNREACHABLE and here == stand:
+				_structure_manager.damage_structure_at(anchor, BERSERK_STRUCTURE_DAMAGE)
+				_break_act_cooldown = BERSERK_HIT_INTERVAL
+				_idle_cooldown = 0.3
+				_remember("smashing structure at %d,%d" % [anchor.x, anchor.y])
+				queue_redraw()
+				return
+			if stand != Pathfinder.UNREACHABLE:
+				var path: PackedVector2Array = _find_explored_path(here, stand)
+				if not path.is_empty():
+					_path = path
+					_path_index = 0
+					_state = State.MOVING_FREEFORM
+					return
+	# Otherwise lash out at the nearest other bot.
+	var victim: Worker = _nearest_attackable_worker(here, BERSERK_ATTACK_RADIUS)
+	if victim != null:
+		if _is_adjacent_to(victim):
+			victim.take_damage(BERSERK_WORKER_DAMAGE, self)
+			_break_act_cooldown = BERSERK_HIT_INTERVAL
+			_idle_cooldown = 0.3
+			_remember("attacking %s" % victim.display_name())
+			return
+		var vpath: PackedVector2Array = _find_explored_path(here, victim.current_grid())
+		if not vpath.is_empty():
+			_path = vpath
+			_path_index = 0
+			_state = State.MOVING_FREEFORM
+			return
+	# Nothing in reach — thrash in place.
+	_idle_cooldown = randf_range(0.5, 1.0)
+
+
+func _nearest_attackable_worker(from: Vector2i, radius: int) -> Worker:
+	var parent: Node = get_parent()
+	if parent == null:
+		return null
+	var best: Worker = null
+	var best_d: int = 0x7fffffff
+	for child in parent.get_children():
+		var other := child as Worker
+		if other == null or other == self or not is_instance_valid(other):
+			continue
+		if other.is_downed():
+			continue
+		var d: Vector2i = other.current_grid() - from
+		var cheb: int = maxi(absi(d.x), absi(d.y))
+		if cheb <= radius and cheb < best_d:
+			best = other
+			best_d = cheb
+	return best
 
 
 func _damage_part(amount: float) -> void:

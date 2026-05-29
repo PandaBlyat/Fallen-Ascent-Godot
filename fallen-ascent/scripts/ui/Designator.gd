@@ -208,11 +208,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey:
 		var key := event as InputEventKey
-		if key.pressed and not key.echo and key.physical_keycode == KEY_R and _is_build_mode():
-			_build_rotation = posmod(_build_rotation + 1, 4)
-			queue_redraw()
-			get_viewport().set_input_as_handled()
-			return
+		if key.pressed and not key.echo and key.physical_keycode == KEY_R:
+			if _is_build_mode():
+				_build_rotation = posmod(_build_rotation + 1, 4)
+				queue_redraw()
+				get_viewport().set_input_as_handled()
+				return
+			if _mode == Mode.RELOCATE and _relocate_source_id >= 0:
+				_relocate_source_rotation = posmod(_relocate_source_rotation + 1, 4)
+				queue_redraw()
+				get_viewport().set_input_as_handled()
+				return
 
 	if event is InputEventMouseMotion:
 		_hover_grid = _world_to_grid(_camera.get_global_mouse_position())
@@ -608,12 +614,16 @@ func _draw() -> void:
 		draw_rect(rect, DELETE_PREVIEW_FILL)
 		draw_rect(rect, DELETE_PREVIEW_BORDER, false, 1.2)
 	if _is_build_mode():
-		_draw_build_ghost(_blueprint_for_mode(), _hover_grid)
+		_draw_build_ghost(_blueprint_for_mode(), _hover_grid, _build_rotation)
+	elif _mode == Mode.RELOCATE and _relocate_source_id >= 0:
+		# Relocation reuses the build-ghost preview so the player sees the
+		# footprint, validity, and (R-rotated) orientation before committing.
+		_draw_build_ghost(_relocate_source_id, _hover_grid, _relocate_source_rotation)
 
 
-func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
+func _draw_build_ghost(blueprint_id: int, anchor: Vector2i, rotation: int) -> void:
 	var valid: bool = _structure_manager != null \
-		and _structure_manager.can_place_blueprint(blueprint_id, anchor, _build_rotation) \
+		and _structure_manager.can_place_blueprint(blueprint_id, anchor, rotation) \
 		and (_fog == null or _fog.is_explored(anchor))
 	var outlet_range: int = BuildBlueprint.outlet_range(blueprint_id)
 	if outlet_range > 0:
@@ -623,7 +633,7 @@ func _draw_build_ghost(blueprint_id: int, anchor: Vector2i) -> void:
 		raw_fill = Color(0.25, 0.95, 0.35, 0.45)
 	var fill: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, raw_fill.a * 0.55)
 	var border: Color = Color(raw_fill.r, raw_fill.g, raw_fill.b, 0.55)
-	for cell in BuildBlueprint.footprint(blueprint_id, anchor, _build_rotation):
+	for cell in BuildBlueprint.footprint(blueprint_id, anchor, rotation):
 		var origin := Vector2(cell.x * Chunk.TILE_PIXELS, cell.y * Chunk.TILE_PIXELS)
 		var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
 		draw_rect(rect, fill)

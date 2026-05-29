@@ -1404,13 +1404,36 @@ func _draw_workshop(structure: Dictionary) -> void:
 
 func _draw_light_glow(cell: Vector2i, id: int) -> void:
 	var center := Vector2(cell * Chunk.TILE_PIXELS) + Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS) * 0.5
-	var radius: float = (4.6 if id == BuildBlueprint.Id.LARGE_LIGHT_DEVICE else 2.8) * float(Chunk.TILE_PIXELS)
 	var color: Color = _object_color(
 		BuildBlueprint.object_item_kind(id),
 		Color(1.0, 0.78, 0.34, 1.0),
 	)
-	draw_circle(center, radius, Color(color.r, color.g, color.b, 0.045))
-	draw_circle(center, radius * 0.45, Color(color.r, color.g, color.b, 0.10))
+	
+	# Determine blocky reach based on light size
+	var reach: int = 4 if id == BuildBlueprint.Id.LARGE_LIGHT_DEVICE else 2
+	var pixel_size := 4 # Size of the "glow pixels". Adjust to match your art's texel size.
+	
+	# Draw a rough diamond/cross shape using small square blocks to emulate low-res pixels
+	for dx in range(-reach, reach + 1):
+		for dy in range(-reach, reach + 1):
+			var dist: float = sqrt(dx*dx + dy*dy)
+			if dist > reach:
+				continue
+				
+			# Calculate falloff intensity
+			var falloff := 1.0 - (dist / float(reach))
+			if falloff <= 0.0:
+				continue
+				
+			# Simple checkerboard pattern for a basic dither effect at the edges
+			if falloff < 0.5 and (posmod(dx + dy, 2) == 0):
+				continue
+				
+			var block_pos := center + Vector2(dx * Chunk.TILE_PIXELS, dy * Chunk.TILE_PIXELS) - Vector2(pixel_size, pixel_size) * 0.5
+			var block_rect := Rect2(block_pos, Vector2(pixel_size, pixel_size))
+			
+			var alpha := falloff * 0.15
+			draw_rect(block_rect, Color(color.r, color.g, color.b, alpha))
 
 
 static func _color_for(id: int) -> Color:

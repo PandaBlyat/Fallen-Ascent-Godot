@@ -7,20 +7,54 @@ signal title_decay_finished
 signal state_changed(new_state: State)
 signal terminal_glitched(intensity: float)
 
-enum State { RISING, HOLDING, DECAYING, PAUSED }
+enum State { BG_RISING, TITLE_RISING, HOLDING, TITLE_DECAYING, BG_DECAYING, PAUSED }
 
 @export_category("Assets")
 @export var pixel_shader: Shader 
 
 @export_category("Title Configuration")
-@export var title_text: String = "Fallen Ascent"
+@export var title_text: String = "Fallen Ascent":
+	set(val):
+		title_text = val
+		if _label:
+			_label.text = title_text
 @export var title_font: Font 
-@export var font_size: int = 72
+@export var font_size: int = 108:
+	set(val):
+		font_size = val
+		if _label and _label.label_settings:
+			_label.label_settings.font_size = font_size
+
+@export_category("Subtitle Configuration")
+@export var subtitle_text: String = "SYSTEM REBOOT // STAGE_01":
+	set(val):
+		subtitle_text = val
+		if _subtitle_label:
+			_subtitle_label.text = subtitle_text
+@export var subtitle_font: Font
+@export var subtitle_font_size: int = 32:
+	set(val):
+		subtitle_font_size = val
+		if _subtitle_label and _subtitle_label.label_settings:
+			_subtitle_label.label_settings.font_size = subtitle_font_size
+@export var subtitle_visible: bool = true:
+	set(val):
+		subtitle_visible = val
+		if _subtitle_label:
+			_subtitle_label.visible = subtitle_visible
+
+@export_category("Layout Positioning")
+@export_range(0.1, 0.9) var title_vertical_position: float = 0.35:
+	set(val):
+		title_vertical_position = val
+		_update_text_container_layout()
 
 @export_category("Timing (Seconds)")
-@export var rise_duration: float = 3.5
-@export var hold_duration: float = 5.0
-@export var decay_duration: float = 4.0
+@export var bg_rise_duration: float = 5.0
+@export var title_rise_duration: float = 4.0
+@export var hold_duration: float = 10.0
+@export var title_decay_duration: float = 4.0
+@export var bg_decay_duration: float = 5.0
 @export var pause_duration: float = 2.0
 
 @export_category("Aesthetics")
@@ -28,51 +62,92 @@ enum State { RISING, HOLDING, DECAYING, PAUSED }
 @export var glow_color: Color = Color(1.0, 0.38, 0.08, 1.0)       # Thermal decay orange
 @export var ash_color: Color = Color(0.18, 0.19, 0.22, 1.0)        # Cooling graphite/ash
 @export var conduit_color: Color = Color(0.0, 0.72, 0.53, 1.0)     # Machine bus line green
-@export var pixel_grid_width: float = 384.0
+@export var pixel_grid_width: float = 512.0                       # Raised to 512 for pixel-art readability
 
 @export_category("Simulation Settings")
 @export_range(0.0, 2.0) var wind_strength: float = 0.6
-@export_range(0.0, 5.0) var decay_gravity: float = 2.2
-@export_range(0.0, 1.0) var glitch_intensity: float = 0.5
+@export_range(0.0, 5.0) var decay_gravity: float = 0.6
+@export_range(0.0, 1.0) var glitch_intensity: float = 0.8
 @export_range(0.0, 1.0) var background_dimness: float = 0.25      
 @export var enable_scanlines: bool = true
 @export var enable_curvature: bool = true                         
-@export var flip_v: bool = false # Easily toggle vertical mirroring inside the Inspector!
+@export var flip_v: bool = false
 
+@export_category("CRT & Lens Customization")
+@export_range(0.0, 1.0) var phosphor_intensity: float = 0.07      # RGB phosphor triad bleed strength
+@export_range(0.0, 1.0) var glass_reflection: float = 0.06        # Dynamic sweep glare intensity
+@export_range(0.05, 0.3) var edge_burn_width: float = 0.06        # Sweep glow boundary thickness
+@export_range(0.0, 0.5) var curvature_intensity: float = 0.04     # CRT screen bending bulge intensity (lowered from 0.14)
+
+@export_category("CRT Analog Glitch Settings")
+@export var enable_screen_shake: bool = true
+@export_range(0.0, 0.1) var max_shake_offset: float = 0.015       # Relative shift multiplier inside screen space UVs
+@export var shake_decay: float = 4.5                              # Dampening speed
+@export_range(0.0, 2.0) var max_vhold_roll_speed: float = 1.2     # Speed of screen roll during sync failure
+
+var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
-var _center_container: CenterContainer
+var _text_container: VBoxContainer
 var _label: Label
+var _subtitle_label: Label
 var _color_rect: ColorRect
 var _shader_material: ShaderMaterial
 
-var _current_state: State = State.RISING
+var _current_state: State = State.BG_RISING
 var _state_timer: float = 0.0
 var _time_elapsed: float = 0.0
 var _last_glitch_state: bool = false
+var _selected_wallpaper: Texture2D
+
+# Analog simulation parameters
+var _shake_intensity: float = 0.0
+var _shake_vector: Vector2 = Vector2.ZERO
+var _current_sync_roll: float = 0.0
+var _roll_velocity: float = 0.0
+
+var _has_simulated_ui: bool = false
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	
+	_load_random_wallpaper()
 	_setup_color_rect()
 	_setup_viewport()
 	
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 	_on_viewport_size_changed()
 	
-	# Wait for sizing arrays to populate before material generation
 	await get_tree().process_frame
 	
 	_setup_shader()
+
+func _load_random_wallpaper() -> void:
+	var wp_index: int = randi_range(1, 7)
+	var wp_path: String = "res://resources/wallpapers/wallpaper" + str(wp_index) + ".png"
+	
+	if ResourceLoader.exists(wp_path):
+		_selected_wallpaper = load(wp_path) as Texture2D
+		if _shader_material:
+			_shader_material.set_shader_parameter("wallpaper_texture", _selected_wallpaper)
+	else:
+		push_error("PixelSimulationBackground: Wallpaper file not found at: " + wp_path)
 
 func _setup_color_rect() -> void:
 	_color_rect = ColorRect.new()
 	_color_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_color_rect)
-	# Set anchors AFTER the node enters the scene tree so they evaluate parent bounds properly
 	_color_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 
 func _setup_viewport() -> void:
+	_viewport_container = SubViewportContainer.new()
+	_viewport_container.mouse_filter = Control.MOUSE_FILTER_PASS
+	_viewport_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Set opacity to a tiny fraction above 0.0 so Godot's UI collision engine remains 
+	# active, but rendering remains completely invisible to the player.
+	_viewport_container.modulate.a = 0.001
+	add_child(_viewport_container)
+	
 	_viewport = SubViewport.new()
 	_viewport.transparent_bg = true
 	_viewport.disable_3d = true
@@ -82,29 +157,75 @@ func _setup_viewport() -> void:
 	var screen_size = get_viewport_rect().size
 	_viewport.size = Vector2i(screen_size)
 	
-	add_child(_viewport)
+	_viewport_container.add_child(_viewport)
 	
-	_center_container = CenterContainer.new()
-	_viewport.add_child(_center_container)
-	# Set anchors AFTER adding the container to its viewport parent
-	_center_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Layout Container
+	_text_container = VBoxContainer.new()
+	_viewport.add_child(_text_container)
+	_text_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_text_container.alignment = BoxContainer.ALIGNMENT_CENTER
+	_update_text_container_layout()
 	
+	# Primary Title Setup
 	_label = Label.new()
 	_label.text = title_text
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	
-	var settings := LabelSettings.new()
-	settings.font_size = font_size
-	settings.font_color = Color.WHITE
-	settings.outline_size = 4
-	settings.outline_color = Color.WHITE
+	var title_settings := LabelSettings.new()
+	title_settings.font_size = font_size
+	title_settings.font_color = Color.WHITE
+	title_settings.outline_size = 12 # Increased for solid pixel presence
+	title_settings.outline_color = Color.WHITE
 	
 	if title_font != null:
-		settings.font = title_font
+		title_settings.font = title_font
 		
-	_label.label_settings = settings
-	_center_container.add_child(_label)
+	_label.label_settings = title_settings
+	_text_container.add_child(_label)
+	
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 16)
+	_text_container.add_child(spacer)
+	
+	# Subtitle Setup
+	_subtitle_label = Label.new()
+	_subtitle_label.text = subtitle_text
+	_subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_subtitle_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_subtitle_label.visible = subtitle_visible
+	
+	var sub_settings := LabelSettings.new()
+	sub_settings.font_size = subtitle_font_size
+	sub_settings.font_color = Color.WHITE
+	sub_settings.outline_size = 6 # Increased for solid pixel presence
+	sub_settings.outline_color = Color.WHITE
+	
+	if subtitle_font != null:
+		sub_settings.font = subtitle_font
+	elif title_font != null:
+		sub_settings.font = title_font
+		
+	_subtitle_label.label_settings = sub_settings
+	_text_container.add_child(_subtitle_label)
+
+func _update_text_container_layout() -> void:
+	if not _text_container:
+		return
+		
+	var vertical_half_span: float = 0.45 if _has_simulated_ui else 0.25
+	var top_anchor = clampf(title_vertical_position - vertical_half_span, 0.0, 1.0 - (vertical_half_span * 2.0))
+	var bottom_anchor = clampf(title_vertical_position + vertical_half_span, vertical_half_span * 2.0, 1.0)
+	
+	_text_container.anchor_left = 0.0
+	_text_container.anchor_right = 1.0
+	_text_container.anchor_top = top_anchor
+	_text_container.anchor_bottom = bottom_anchor
+	
+	_text_container.offset_left = 0
+	_text_container.offset_right = 0
+	_text_container.offset_top = 0
+	_text_container.offset_bottom = 0
 
 func _setup_shader() -> void:
 	var shader_resource: Shader = pixel_shader
@@ -117,7 +238,7 @@ func _setup_shader() -> void:
 	if shader_resource == null:
 		shader_resource = Shader.new()
 		shader_resource.code = _get_hardcoded_shader_code()
-		push_warning("PixelSimulationBackground: External shader was not found. Using high-fidelity embedded fallback.")
+		push_warning("PixelSimulationBackground: External shader not found. Using updated fallback.")
 		
 	_shader_material = ShaderMaterial.new()
 	_shader_material.shader = shader_resource
@@ -129,6 +250,8 @@ func _update_shader_parameters() -> void:
 	if _shader_material == null:
 		return
 	_shader_material.set_shader_parameter("text_mask", _viewport.get_texture())
+	if _selected_wallpaper != null:
+		_shader_material.set_shader_parameter("wallpaper_texture", _selected_wallpaper)
 	_shader_material.set_shader_parameter("base_color", base_color)
 	_shader_material.set_shader_parameter("glow_color", glow_color)
 	_shader_material.set_shader_parameter("ash_color", ash_color)
@@ -140,9 +263,13 @@ func _update_shader_parameters() -> void:
 	_shader_material.set_shader_parameter("bg_dimness", background_dimness)
 	_shader_material.set_shader_parameter("enable_scanlines", enable_scanlines)
 	_shader_material.set_shader_parameter("enable_curvature", enable_curvature)
+	_shader_material.set_shader_parameter("curvature_intensity", curvature_intensity)
 	_shader_material.set_shader_parameter("flip_v", flip_v)
 	
-	# Send stable aspect ratio metrics immediately
+	_shader_material.set_shader_parameter("phosphor_intensity", phosphor_intensity)
+	_shader_material.set_shader_parameter("glass_reflection", glass_reflection)
+	_shader_material.set_shader_parameter("edge_burn_width", edge_burn_width)
+	
 	var screen_size = get_viewport_rect().size
 	var aspect: float = float(screen_size.y) / float(screen_size.x) if screen_size.x > 0 else 0.5625
 	_shader_material.set_shader_parameter("aspect_ratio", aspect)
@@ -151,42 +278,72 @@ func _process(delta: float) -> void:
 	_time_elapsed += delta
 	_state_timer += delta
 	
-	var formation_val: float = 0.0
-	var decay_val: float = 0.0
+	var bg_formation_val: float = 0.0
+	var title_formation_val: float = 0.0
+	var bg_decay_val: float = 0.0
+	var title_decay_val: float = 0.0
 	
 	match _current_state:
-		State.RISING:
-			formation_val = clampf(_state_timer / rise_duration, 0.0, 1.0)
-			decay_val = 0.0
-			if _state_timer >= rise_duration:
+		State.BG_RISING:
+			bg_formation_val = clampf(_state_timer / bg_rise_duration, 0.0, 1.0)
+			title_formation_val = 0.0
+			bg_decay_val = 0.0
+			title_decay_val = 0.0
+			if _state_timer >= bg_rise_duration:
+				_change_state(State.TITLE_RISING)
+				
+		State.TITLE_RISING:
+			bg_formation_val = 1.0
+			title_formation_val = clampf(_state_timer / title_rise_duration, 0.0, 1.0)
+			bg_decay_val = 0.0
+			title_decay_val = 0.0
+			if _state_timer >= title_rise_duration:
 				_change_state(State.HOLDING)
 				title_formed.emit()
 				
 		State.HOLDING:
-			formation_val = 1.0
-			decay_val = 0.0
+			bg_formation_val = 1.0
+			title_formation_val = 1.0
+			bg_decay_val = 0.0
+			title_decay_val = 0.0
 			if _state_timer >= hold_duration:
-				_change_state(State.DECAYING)
+				_change_state(State.TITLE_DECAYING)
 				title_decay_started.emit()
 				
-		State.DECAYING:
-			formation_val = 1.0
-			decay_val = clampf(_state_timer / decay_duration, 0.0, 1.0)
-			if _state_timer >= decay_duration:
-				_change_state(State.PAUSED)
+		State.TITLE_DECAYING:
+			bg_formation_val = 1.0
+			title_formation_val = 1.0
+			bg_decay_val = 0.0
+			title_decay_val = clampf(_state_timer / title_decay_duration, 0.0, 1.0)
+			if _state_timer >= title_decay_duration:
+				_change_state(State.BG_DECAYING)
 				title_decay_finished.emit()
 				
+		State.BG_DECAYING:
+			bg_formation_val = 1.0
+			title_formation_val = 0.0
+			bg_decay_val = clampf(_state_timer / bg_decay_duration, 0.0, 1.0)
+			title_decay_val = 1.0
+			if _state_timer >= bg_decay_duration:
+				_change_state(State.PAUSED)
+				
 		State.PAUSED:
-			formation_val = 0.0
-			decay_val = 1.0
+			bg_formation_val = 0.0
+			title_formation_val = 0.0
+			bg_decay_val = 1.0
+			title_decay_val = 1.0
 			if _state_timer >= pause_duration:
-				_change_state(State.RISING)
+				_load_random_wallpaper()
+				_change_state(State.BG_RISING)
 
 	_process_glitch_signals()
+	_process_analog_sync_simulation(delta)
 
 	if _shader_material != null:
-		_shader_material.set_shader_parameter("formation", formation_val)
-		_shader_material.set_shader_parameter("decay", decay_val)
+		_shader_material.set_shader_parameter("bg_formation", bg_formation_val)
+		_shader_material.set_shader_parameter("title_formation", title_formation_val)
+		_shader_material.set_shader_parameter("bg_decay", bg_decay_val)
+		_shader_material.set_shader_parameter("title_decay", title_decay_val)
 		_shader_material.set_shader_parameter("time", _time_elapsed)
 
 func _change_state(new_state: State) -> void:
@@ -204,44 +361,230 @@ func _process_glitch_signals() -> void:
 	if is_glitching != _last_glitch_state:
 		_last_glitch_state = is_glitching
 		if is_glitching:
-			terminal_glitched.emit(randf_range(0.4, 1.0))
+			var intensity: float = randf_range(0.45, 1.0)
+			_shake_intensity = intensity
+			
+			# Induce vertical desynchronization roll on heavy glitch peaks
+			if intensity > 0.75:
+				_roll_velocity = randf_range(0.5, max_vhold_roll_speed)
+				
+			terminal_glitched.emit(intensity)
+
+func _process_analog_sync_simulation(delta: float) -> void:
+	if enable_screen_shake and _shake_intensity > 0.0:
+		_shake_intensity = move_toward(_shake_intensity, 0.0, delta * shake_decay)
+		var shake_range = _shake_intensity * max_shake_offset
+		_shake_vector = Vector2(
+			randf_range(-shake_range, shake_range),
+			randf_range(-shake_range, shake_range)
+		)
+	else:
+		_shake_vector = Vector2.ZERO
+	
+	if _roll_velocity > 0.01:
+		_roll_velocity = move_toward(_roll_velocity, 0.0, delta * 1.5)
+		_current_sync_roll = fposmod(_current_sync_roll + _roll_velocity * delta, 1.0)
+	else:
+		_current_sync_roll = move_toward(_current_sync_roll, 0.0, delta * 0.8)
+		
+	if _shader_material != null:
+		_shader_material.set_shader_parameter("screen_shake", _shake_vector)
+		_shader_material.set_shader_parameter("sync_roll", _current_sync_roll)
 
 func _on_viewport_size_changed() -> void:
 	var screen_size = get_viewport_rect().size
-	
-	# Explicitly drive sizes to match actual window dimensions
 	size = screen_size
 	if _color_rect:
 		_color_rect.size = screen_size
+	if _viewport_container:
+		_viewport_container.size = screen_size
 	if _viewport:
 		_viewport.size = Vector2i(screen_size)
-	if _center_container:
-		_center_container.size = screen_size
-		_center_container.custom_minimum_size = screen_size
+		
+	_update_text_container_layout()
 		
 	if _shader_material:
 		var aspect: float = float(screen_size.y) / float(screen_size.x) if screen_size.x > 0 else 0.5625
 		_shader_material.set_shader_parameter("aspect_ratio", aspect)
 
+## Integrates a Control container (such as a VBoxContainer of buttons) into the
+## simulation viewport. This manages reparenting, layout centering, terminal styling,
+## and signals for dynamic additions.
+func add_simulated_ui(control: Control) -> void:
+	if not is_node_ready():
+		await ready
+		
+	if control == null:
+		return
+		
+	_has_simulated_ui = true
+	_update_text_container_layout()
+	
+	if control.get_parent():
+		control.get_parent().remove_child(control)
+		
+	# Vertical separator between subtitle and interactive buttons
+	var menu_spacer := Control.new()
+	menu_spacer.custom_minimum_size = Vector2(0, 24)
+	_text_container.add_child(menu_spacer)
+	
+	_text_container.add_child(control)
+	
+	# Optimize layout configuration for terminal centring
+	control.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	if control is BoxContainer:
+		control.alignment = BoxContainer.ALIGNMENT_CENTER
+		# Set comfortable visual spacing between button panels
+		control.add_theme_constant_override("separation", 16)
+		
+	_apply_terminal_styling(control)
+	
+	if not control.child_entered_tree.is_connected(_on_simulated_ui_child_entered):
+		control.child_entered_tree.connect(_on_simulated_ui_child_entered)
+
+func _apply_terminal_styling(node: Node) -> void:
+	if node is Button:
+		_style_button(node)
+	for child in node.get_children():
+		_apply_terminal_styling(child)
+
+func _on_simulated_ui_child_entered(node: Node) -> void:
+	# Wait one frame to ensure properties such as text are initialized
+	await get_tree().process_frame
+	if is_instance_valid(node):
+		_apply_terminal_styling(node)
+
+func _style_button(btn: Button) -> void:
+	if btn == null:
+		return
+		
+	if not btn.has_meta("original_text"):
+		btn.set_meta("original_text", btn.text)
+		
+	# Clear parent themes that interfere with the shader dither rendering
+	btn.theme = null
+	
+	# Enforce a larger minimum bounding size to prevent thin/microscopic button bounding boxes
+	btn.custom_minimum_size = Vector2(360, 56)
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	
+	# Solid white coordinates and clean borders for dithered text_mask sampling
+	var style_normal := StyleBoxFlat.new()
+	style_normal.bg_color = Color(1.0, 1.0, 1.0, 0.0) # Transparent content area
+	style_normal.border_color = Color(1.0, 1.0, 1.0, 0.2) # Soft terminal outline
+	style_normal.set_border_width_all(2) # Thicker border retains presence through low-res shader
+	style_normal.content_margin_left = 20
+	style_normal.content_margin_right = 20
+	style_normal.content_margin_top = 10
+	style_normal.content_margin_bottom = 10
+	style_normal.anti_aliasing = false # Crisp pixelated boundary
+	
+	var style_hover := StyleBoxFlat.new()
+	style_hover.bg_color = Color(1.0, 1.0, 1.0, 0.12) # Warm glowing background on hover
+	style_hover.border_color = Color(1.0, 1.0, 1.0, 0.85) # Bright white outline on hover
+	style_hover.set_border_width_all(2)
+	style_hover.content_margin_left = 20
+	style_hover.content_margin_right = 20
+	style_hover.content_margin_top = 10
+	style_hover.content_margin_bottom = 10
+	style_hover.anti_aliasing = false
+	
+	var style_pressed := StyleBoxFlat.new()
+	style_pressed.bg_color = Color(1.0, 1.0, 1.0, 0.25)
+	style_pressed.border_color = Color(1.0, 1.0, 1.0, 1.0)
+	style_pressed.set_border_width_all(2)
+	style_pressed.content_margin_left = 20
+	style_pressed.content_margin_right = 20
+	style_pressed.content_margin_top = 10
+	style_pressed.content_margin_bottom = 10
+	style_pressed.anti_aliasing = false
+	
+	btn.add_theme_stylebox_override("normal", style_normal)
+	btn.add_theme_stylebox_override("hover", style_hover)
+	btn.add_theme_stylebox_override("focus", style_hover)
+	btn.add_theme_stylebox_override("pressed", style_pressed)
+	btn.add_theme_stylebox_override("disabled", style_normal)
+	
+	# Bold configuration (44px) and outline addition for robust pixelation shapes
+	btn.add_theme_font_size_override("font_size", 44)
+	btn.add_theme_constant_override("outline_size", 3)
+	btn.add_theme_color_override("font_outline_color", Color(1.0, 1.0, 1.0, 0.8))
+	
+	if subtitle_font != null:
+		btn.add_theme_font_override("font", subtitle_font)
+	elif title_font != null:
+		btn.add_theme_font_override("font", title_font)
+		
+	# Adjust mask color opacity (unhovered has lower alpha, hovered matches full title glow)
+	btn.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.7))
+	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("font_focus_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("font_disabled_color", Color(1.0, 1.0, 1.0, 0.2))
+	
+	btn.add_theme_color_override("icon_normal_color", Color(1.0, 1.0, 1.0, 0.7))
+	btn.add_theme_color_override("icon_hover_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("icon_focus_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("icon_pressed_color", Color(1.0, 1.0, 1.0, 1.0))
+	btn.add_theme_color_override("icon_disabled_color", Color(1.0, 1.0, 1.0, 0.2))
+	
+	if not btn.has_meta("simulation_styled"):
+		btn.set_meta("simulation_styled", true)
+		btn.mouse_entered.connect(_on_btn_hover.bind(btn))
+		btn.mouse_exited.connect(_on_btn_unhover.bind(btn))
+		btn.focus_entered.connect(_on_btn_hover.bind(btn))
+		btn.focus_exited.connect(_on_btn_unhover.bind(btn))
+
+func _on_btn_hover(btn: Button) -> void:
+	if btn == null:
+		return
+	var original = btn.get_meta("original_text", btn.text)
+	btn.text = "[  " + original + "  ]"
+	
+	# Attempt to play hover audio using whichever naming convention AudioManager implements
+	var am = get_node_or_null("/root/AudioManager")
+	if am:
+		if am.has_method("play_hover"):
+			am.call("play_hover")
+		elif am.has_method("play_button_hover"):
+			am.call("play_button_hover")
+
+func _on_btn_unhover(btn: Button) -> void:
+	if btn == null:
+		return
+	var original = btn.get_meta("original_text", btn.text)
+	btn.text = original
+
 func _get_hardcoded_shader_code() -> String:
 	return """shader_type canvas_item;
 uniform sampler2D text_mask : hint_default_black, filter_nearest;
-uniform float formation = 0.0;
-uniform float decay = 0.0;
+uniform sampler2D wallpaper_texture : hint_default_black, filter_nearest;
+uniform float bg_formation = 0.0;
+uniform float bg_decay = 0.0;
+uniform float title_formation = 0.0;
+uniform float title_decay = 0.0;
 uniform float time = 0.0;
-uniform bool flip_v = false;
+uniform bool flip_v = true;
 uniform float aspect_ratio = 0.5625;
 uniform float pixel_grid_width = 384.0;
 uniform float wind_strength = 0.6;
 uniform float decay_gravity = 2.2;
 uniform float glitch_intensity = 0.5;
-uniform float bg_dimness = 0.18;
+uniform float bg_dimness = 0.25;
 uniform bool enable_scanlines = true;
 uniform bool enable_curvature = true;
+uniform float phosphor_intensity = 0.15;
+uniform float glass_reflection = 0.12;
+uniform float edge_burn_width = 0.12;
+uniform float curvature_intensity = 0.04;
 uniform vec4 base_color : source_color = vec4(0.82, 0.92, 0.95, 1.0);
 uniform vec4 glow_color : source_color = vec4(1.0, 0.38, 0.08, 1.0);
 uniform vec4 ash_color : source_color = vec4(0.18, 0.19, 0.22, 1.0);
 uniform vec4 conduit_color : source_color = vec4(0.0, 0.72, 0.53, 1.0);
+uniform vec2 screen_shake = vec2(0.0);
+uniform float sync_roll = 0.0;
+uniform float hum_bar_speed = 0.75;
+uniform float hum_bar_intensity = 0.02;
 
 float hash2d(vec2 co) { return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453); }
 float noise(vec2 co) {
@@ -250,57 +593,37 @@ float noise(vec2 co) {
 	vec2 u = f * f * (3.0 - 2.0 * f);
 	return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
 }
+float bayer4x4(vec2 p) {
+	ivec2 ip = ivec2(mod(p, 4.0));
+	int val = (ip.x ^ ip.y) * 4 + ip.y;
+	return float(val) / 16.0;
+}
 vec2 curve_uv(vec2 uv) {
 	vec2 centered = uv - 0.5;
 	float dist = dot(centered, centered);
-	centered *= 1.0 + dist * 0.15; 
+	centered *= 1.0 + dist * curvature_intensity; 
 	return centered + 0.5;
 }
-void megastructure(vec2 uv, float t, out vec3 base_struct, out vec3 glow_struct) {
-	base_struct = vec3(0.0); glow_struct = vec3(0.0);
-	float t3 = t * 0.015, t2 = t * 0.04, t1 = t * 0.08;
-	vec2 uv3 = uv + vec2(t3, 0.0);
-	float p3_col = floor(uv3.x * 6.0), p3_hash = hash2d(vec2(p3_col, 42.12)), is_p3 = step(0.4, p3_hash);
-	float p3_edge = smoothstep(0.01, 0.05, fract(uv3.x * 6.0)) * smoothstep(0.99, 0.95, fract(uv3.x * 6.0));
-	float p3_mask = is_p3 * p3_edge;
-	base_struct += vec3(0.12) * p3_mask * (1.0 - uv3.y * 0.5);
-	float p3_grid_x = floor(uv3.x * 60.0), p3_grid_y = floor(uv3.y * 30.0), light_hash = hash2d(vec2(p3_grid_x, p3_grid_y));
-	glow_struct += step(0.96, light_hash) * step(0.5, sin(t * 3.0 + light_hash * 50.0)) * vec3(0.1, 0.15, 0.25) * p3_mask;
-	vec2 uv2 = uv + vec2(t2, 0.0);
-	float p2_col = floor(uv2.x * 12.0), p2_hash = hash2d(vec2(p2_col, 87.54)), is_p2 = step(0.6, p2_hash);
-	float p2_edge = smoothstep(0.03, 0.1, fract(uv2.x * 12.0)) * smoothstep(0.97, 0.9, fract(uv2.x * 12.0)), p2_mask = is_p2 * p2_edge;
-	base_struct = mix(base_struct, vec3(0.3) * p2_mask * (1.0 - uv2.y * 0.3), p2_mask);
-	base_struct += vec3(step(0.96, sin(fract(uv2.x * 12.0) * 3.14159)) * 0.06 * p2_mask);
-	float cable_col = floor(uv2.x * 4.0), cable_x = fract(uv2.x * 4.0), sag = 0.4 + 0.3 * hash2d(vec2(cable_col, 19.82));
-	float cable_y = uv2.y - (0.15 + sag * (cable_x - 0.5) * (cable_x - 0.5) * 4.0), cable_mask = step(abs(cable_y), 0.005) * step(0.02, cable_x) * step(cable_x, 0.98);
-	base_struct = mix(base_struct, vec3(0.1), cable_mask * (1.0 - p2_mask));
-	vec2 fan1_center = vec2(0.12, 0.3), fan1_diff = (uv - fan1_center); fan1_diff.x /= aspect_ratio;
-	float fan1_dist = length(fan1_diff), fan1_mask = step(0.38, abs(sin(3.0 * (atan(fan1_diff.y, fan1_diff.x) + t * 1.5)))) * step(fan1_dist, 0.1) * step(0.015, fan1_dist);
-	base_struct = mix(base_struct, vec3(0.12), fan1_mask * (1.0 - p2_mask)); glow_struct += smoothstep(0.12, 0.0, fan1_dist) * vec3(0.15, 0.08, 0.04) * (1.0 - p2_mask * 0.8);
-	vec2 fan2_center = vec2(0.88, 0.55), fan2_diff = (uv - fan2_center); fan2_diff.x /= aspect_ratio;
-	float fan2_dist = length(fan2_diff), fan2_mask = step(0.38, abs(sin(4.0 * (atan(fan2_diff.y, fan2_diff.x) - t * 1.1)))) * step(fan2_dist, 0.08) * step(0.012, fan2_dist);
-	base_struct = mix(base_struct, vec3(0.12), fan2_mask * (1.0 - p2_mask)); glow_struct += smoothstep(0.1, 0.0, fan2_dist) * vec3(0.04, 0.12, 0.15) * (1.0 - p2_mask * 0.8);
-	float beacon_y = 0.2 + 0.6 * hash2d(vec2(p2_col, 54.3)); vec2 beacon_pos = vec2((p2_col + 0.5) / 12.0 - t2, beacon_y), beacon_diff = uv - beacon_pos; beacon_diff.x /= aspect_ratio;
-	glow_struct += vec3(1.0, 0.25, 0.05) * smoothstep(0.04, 0.0, length(beacon_diff)) * step(0.5, sin(t * 3.5 + hash2d(vec2(p2_col)) * 10.0)) * is_p2 * p2_mask * 1.5;
-	vec2 uv1 = uv + vec2(t1, 0.0);
-	float p1_col = floor(uv1.x * 18.0), p1_hash = hash2d(vec2(p1_col, 133.7)), is_p1 = step(0.8, p1_hash);
-	float p1_edge = smoothstep(0.04, 0.12, fract(uv1.x * 18.0)) * smoothstep(0.96, 0.88, fract(uv1.x * 18.0)), p1_mask = is_p1 * p1_edge;
-	base_struct = mix(base_struct, vec3(0.5) * p1_mask * (1.0 - uv1.y * 0.2), p1_mask);
-	float conduit_pos = fract(uv1.x * 18.0) - 0.5, conduit_line = step(abs(conduit_pos), 0.035) * p1_mask;
-	glow_struct += conduit_line * conduit_color.rgb * 0.18 + smoothstep(0.9, 0.99, fract(uv1.y * 1.5 + t * ((p1_hash * 0.7 + 0.3) * -1.8) + p1_hash)) * conduit_line * conduit_color.rgb * 1.4;
-	float is_server = step(0.45, hash2d(vec2(p1_col, 22.4))) * p1_mask, code_col = floor(uv1.x * 140.0), code_row = floor(uv1.y * 70.0);
-	float code_trail = smoothstep(0.25, 0.0, fract(uv1.y - fract(t * (4.0 + hash2d(vec2(code_col, 88.1)) * 4.0) * 0.06 + hash2d(vec2(code_col, 14.2))))) * step(0.05, fract(uv1.y - fract(t * (4.0 + hash2d(vec2(code_col, 88.1)) * 4.0) * 0.06 + hash2d(vec2(code_col, 14.2)))));
-	glow_struct += step(0.5, hash2d(vec2(code_col, code_row + floor(t * 12.0)))) * code_trail * is_server * conduit_color.rgb * 1.2;
-}
-float steam_haze(vec2 uv, float t) {
-	return (noise(uv * 3.5 + vec2(t * 0.06, -t * 0.18)) * 0.6 + noise(uv * 7.0 + vec2(-t * 0.09, -t * 0.25)) * 0.4) * 0.12;
+float embers(vec2 uv, float t) {
+	vec2 ember_uv = uv;
+	ember_uv.y -= t * 0.06;
+	ember_uv.x += sin(t * 1.8 + uv.y * 12.0) * 0.02;
+	vec2 grid = floor(ember_uv * 96.0);
+	float noise_val = hash2d(grid);
+	return step(0.994, noise_val) * (sin(t * 4.0 + noise_val * 100.0) * 0.5 + 0.5);
 }
 float circuits(vec2 uv, float t) {
-	vec2 cell = floor(uv * 40.0), f = fract(uv * 40.0); float rand = hash2d(cell), wire = 0.0;
-	if (rand < 0.4) { wire = step(0.42, f.y) * step(f.y, 0.48); }
-	else if (rand < 0.8) { wire = step(0.42, f.x) * step(f.x, 0.48); }
-	else { wire = step(abs(f.x - f.y), 0.06); }
-	return (wire * 0.1 + wire * step(0.9, sin(t * 4.0 + rand * 6.28)) * 0.4);
+	vec2 grid = floor(uv * 48.0);
+	vec2 ipart = fract(uv * 48.0);
+	float h = hash2d(grid);
+	float line = 0.0;
+	if (h > 0.5) {
+		line = step(0.92, ipart.x) * step(0.15, hash2d(grid + vec2(1.0, 0.0)));
+	} else {
+		line = step(0.92, ipart.y) * step(0.15, hash2d(grid + vec2(0.0, 1.0)));
+	}
+	float pulses = step(0.92, sin(t * 3.0 + h * 20.0));
+	return line * (0.2 + 0.8 * pulses);
 }
 void fragment() {
 	bool is_bezel = false; vec2 cur_uv = UV;
@@ -308,54 +631,162 @@ void fragment() {
 		cur_uv = curve_uv(UV);
 		if (cur_uv.x < 0.0 || cur_uv.x > 1.0 || cur_uv.y < 0.0 || cur_uv.y > 1.0) is_bezel = true;
 	}
-	if (is_bezel) { COLOR = vec4(0.0, 0.0, 0.0, 1.0); } else {
+	if (is_bezel) { COLOR = vec4(0.012, 0.012, 0.015, 1.0); } else {
+		cur_uv += screen_shake;
+		cur_uv.y = fract(cur_uv.y + sync_roll);
 		vec2 pixel_grid = vec2(pixel_grid_width, pixel_grid_width * aspect_ratio);
-		float haze = steam_haze(cur_uv, time);
-		vec2 grid_uv = floor((cur_uv + vec2(haze * 0.035, 0.0)) * pixel_grid) / pixel_grid;
-		vec3 base_struct = vec3(0.0), glow_struct = vec3(0.0); megastructure(grid_uv, time, base_struct, glow_struct);
-		vec4 bg_color = mix(vec4(0.008, 0.01, 0.012, 1.0), vec4(0.002, 0.003, 0.004, 1.0), grid_uv.y) + vec4(base_struct * bg_dimness, 0.0);
-		bg_color.rgb += glow_struct + conduit_color.rgb * haze * 0.25 + glow_color.rgb * haze * 0.12 * sin(time * 0.5 + grid_uv.y); bg_color.a = 1.0;
-		float p_hash = hash2d(grid_uv * 137.0), glitch_cycle = sin(time * 0.8) * cos(time * 1.7), active_glitch = step(0.85, glitch_cycle) * hash2d(vec2(floor(time * 18.0))) * glitch_intensity;
-		float glitch_offset_x = (hash2d(vec2(floor(grid_uv.y * 48.0), floor(time * 15.0))) - 0.5) * 0.08 * active_glitch;
-		float glitch_offset_y = (hash2d(vec2(floor(grid_uv.x * 24.0), floor(time * 24.0))) - 0.5) * 0.04 * active_glitch;
-		float slice_offset = (hash2d(vec2(floor(grid_uv.y * 64.0), 32.1)) - 0.5) * 0.18 * decay;
-		float t_rise = clamp((formation - p_hash * 0.35) / (1.0 - p_hash * 0.35), 0.0, 1.0);
-		float disp_y = (1.0 - t_rise) * (0.6 + 0.4 * p_hash), disp_x = sin(time * 14.0 + grid_uv.y * 40.0 + p_hash * 6.28) * 0.02 * (1.0 - t_rise) * wind_strength;
-		float decay_val_pixel = clamp((decay - p_hash * 0.35) / (1.0 - p_hash * 0.35), 0.0, 1.0);
-		float fall_dist = pow(decay_val_pixel, 2.5) * decay_gravity * (1.0 + noise(grid_uv * 15.0) * 0.3), drift_x = (sin(time * 8.0 + grid_uv.y * 22.0) * 0.25 - 0.15) * decay_val_pixel * wind_strength;
-		vec2 read_uv = grid_uv + vec2(disp_x + slice_offset + drift_x + glitch_offset_x, disp_y + fall_dist + glitch_offset_y);
-		if (flip_v) read_uv.y = 1.0 - read_uv.y;
+		vec2 grid_uv = floor(cur_uv * pixel_grid) / pixel_grid;
+		float glitch_cycle = sin(time * 0.8) * cos(time * 1.7), active_glitch = step(0.82, glitch_cycle) * hash2d(vec2(floor(time * 15.0))) * glitch_intensity;
+		float jitter_rand = hash2d(vec2(floor(grid_uv.y * 64.0), floor(time * 24.0))), glitch_offset_x = (jitter_rand - 0.5) * 0.08 * active_glitch;
+		if (jitter_rand > 0.85) glitch_offset_x += (hash2d(vec2(floor(time * 30.0))) - 0.5) * 0.05 * active_glitch;
+		vec2 glitch_block_grid = floor(grid_uv * 12.0);
+		if (hash2d(glitch_block_grid + floor(time * 8.0)) < 0.08 * active_glitch) {
+			grid_uv.x += (hash2d(glitch_block_grid) - 0.5) * 0.15;
+			grid_uv.y += (hash2d(glitch_block_grid + vec2(1.0)) - 0.5) * 0.15;
+		}
+		float hum_bar = sin(grid_uv.y * 8.0 - time * hum_bar_speed) * sin(grid_uv.y * 3.0 + time * hum_bar_speed * 0.5);
+		grid_uv.x += hum_bar * hum_bar_intensity * active_glitch;
+		float dither = bayer4x4(grid_uv * pixel_grid);
+		float bg_p_hash = hash2d(grid_uv * 157.0);
+		float bg_form_wave = bg_formation * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
+		float bg_form_threshold = grid_uv.y + grid_uv.x * 0.2 + (bg_p_hash - 0.5) * 0.08;
+		float bg_t_rise = clamp((bg_form_wave - bg_form_threshold) / edge_burn_width, 0.0, 1.0);
+		float bg_visible_rise = step(dither, bg_t_rise);
+		
+		float bg_form_disp_y = (1.0 - bg_formation) * (1.0 - bg_formation) * 0.12;
+		float bg_form_drift_x = sin(time * 12.0) * 0.02 * (1.0 - bg_formation) * wind_strength;
+		
+		float bg_decay_wave = bg_decay * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
+		float bg_decay_threshold = grid_uv.y + grid_uv.x * 0.15 + (bg_p_hash - 0.5) * 0.1;
+		float bg_decay_age = clamp((bg_decay_wave - bg_decay_threshold) / edge_burn_width, 0.0, 1.0);
+		float bg_visible_decay = step(bg_decay_age, dither);
+		float bg_fall_dist = bg_decay_age * bg_decay_age * decay_gravity * 0.35, bg_decay_drift_x = (sin(time * 9.0 + grid_uv.y * 18.0) * 0.18 - (0.4 + wind_strength * 0.3)) * bg_decay_age * wind_strength;
+		vec2 read_uv_bg = grid_uv;
+		read_uv_bg.y -= bg_form_disp_y; read_uv_bg.x -= bg_form_drift_x;
+		read_uv_bg.y -= bg_fall_dist; read_uv_bg.x -= bg_decay_drift_x;
+		read_uv_bg.x += glitch_offset_x;
+		read_uv_bg = floor(read_uv_bg * pixel_grid + 0.5) / pixel_grid;
+		
+		float wp_mask = 0.0;
+		if (read_uv_bg.x >= 0.0 && read_uv_bg.x <= 1.0 && read_uv_bg.y >= 0.0 && read_uv_bg.y <= 1.0) {
+			float wp_ab = 0.005 * active_glitch * (1.0 + bg_decay * 2.0);
+			vec4 wp_r = texture(wallpaper_texture, clamp(read_uv_bg - vec2(wp_ab, 0.0), vec2(0.0), vec2(1.0)));
+			vec4 wp_g = texture(wallpaper_texture, clamp(read_uv_bg, vec2(0.0), vec2(1.0)));
+			vec4 wp_b = texture(wallpaper_texture, clamp(read_uv_bg + vec2(wp_ab, 0.0), vec2(0.0), vec2(1.0)));
+			wp_mask = max(wp_r.r, max(wp_g.g, wp_b.b));
+		}
+		vec4 wp_color = conduit_color;
+		if (bg_t_rise > 0.0 && bg_t_rise < 1.0) {
+			float sizzle = step(0.40, hash2d(grid_uv * 200.0 + time * 20.0));
+			wp_color = mix(conduit_color, mix(glow_color, vec4(1.0, 0.8, 0.5, 1.0), sizzle * 0.5) * 2.5, sin(bg_t_rise * 3.14159));
+		} else if (bg_formation >= 1.0 && bg_decay == 0.0) {
+			wp_color.rgb += vec3(circuits(grid_uv, time * 0.5)) * base_color.rgb * 0.6;
+			wp_color.rgb += vec3((noise(grid_uv * 100.0 + vec2(time * 1.0)) - 0.5) * 0.08);
+		}
+		float wp_alpha_mult = bg_visible_rise * bg_visible_decay;
+		if (bg_decay > 0.0 && bg_decay_age > 0.0) {
+			if (bg_decay_age < 0.25) {
+				float sizzle = step(0.35, hash2d(grid_uv * 180.0 + time * 25.0));
+				wp_color = mix(conduit_color, vec4(glow_color.rgb * 3.0 + sizzle * 0.8, 1.0), bg_decay_age / 0.25);
+			} else if (bg_decay_age < 0.70) {
+				wp_color = mix(glow_color * 2.0, ash_color, (bg_decay_age - 0.25) / 0.45);
+			} else {
+				wp_color = mix(ash_color, vec4(ash_color.rgb, 0.0), (bg_decay_age - 0.70) / 0.30);
+			}
+		}
+		vec4 raw_bg = mix(vec4(0.01, 0.012, 0.015, 1.0), vec4(0.002, 0.003, 0.005, 1.0), grid_uv.y);
+		vec4 bg_color = raw_bg + vec4(glow_color.rgb * embers(grid_uv, time), 1.0) * 0.22;
+		bg_color.rgb *= bg_dimness; bg_color.a = 1.0;
+		vec4 final_wp = vec4(wp_color.rgb, wp_mask * wp_color.a * wp_alpha_mult);
+		bg_color = mix(bg_color, final_wp, final_wp.a);
+		float p_hash = hash2d(grid_uv * 137.0);
+		float title_form_wave = title_formation * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
+		float title_form_threshold = grid_uv.y + grid_uv.x * 0.15 + (p_hash - 0.5) * 0.08;
+		float t_rise = clamp((title_form_wave - title_form_threshold) / edge_burn_width, 0.0, 1.0);
+		float title_visible_rise = step(dither, t_rise);
+		
+		float title_form_disp_y = (1.0 - title_formation) * (1.0 - title_formation) * 0.12;
+		float title_form_drift_x = sin(time * 14.0) * 0.02 * (1.0 - title_formation) * wind_strength;
+		
+		float title_decay_wave = title_decay * (1.0 + edge_burn_width * 2.0) - edge_burn_width;
+		float title_decay_threshold = grid_uv.y + grid_uv.x * 0.15 + (p_hash - 0.5) * 0.08;
+		float decay_val_pixel = clamp((title_decay_wave - title_decay_threshold) / edge_burn_width, 0.0, 1.0);
+		float title_visible_decay = step(decay_val_pixel, dither);
+		float title_fall_dist = decay_val_pixel * decay_val_pixel * decay_gravity * 0.35, title_decay_drift_x = (sin(time * 11.0 + grid_uv.y * 22.0) * 0.18 - (0.45 + wind_strength * 0.35)) * decay_val_pixel * wind_strength;
+		vec2 read_uv = grid_uv;
+		read_uv.y -= title_form_disp_y; read_uv.x -= title_form_drift_x;
+		read_uv.y -= title_fall_dist; read_uv.x -= title_decay_drift_x;
+		read_uv.x += glitch_offset_x;
+		read_uv = floor(read_uv * pixel_grid + 0.5) / pixel_grid;
+		
+		vec2 read_uv_text = read_uv; if (flip_v) read_uv_text.y = 1.0 - read_uv_text.y;
 		float text_mask_r = 0.0, text_mask_g = 0.0, text_mask_b = 0.0;
+		float ab_intensity = (1.5 / pixel_grid.x) * active_glitch * (1.0 + title_decay * 2.0);
+		vec2 ab_dir = vec2(ab_intensity, 0.0);
 		if (read_uv.x >= 0.0 && read_uv.x <= 1.0 && read_uv.y >= 0.0 && read_uv.y <= 1.0) {
-			float ab_offset = 0.006 * active_glitch * (1.0 + decay * 2.5);
-			vec4 mask_r = texture(text_mask, clamp(read_uv - vec2(ab_offset, 0.0), vec2(0.0), vec2(1.0)));
-			vec4 mask_g = texture(text_mask, clamp(read_uv, vec2(0.0), vec2(1.0)));
-			vec4 mask_b = texture(text_mask, clamp(read_uv + vec2(ab_offset, 0.0), vec2(0.0), vec2(1.0)));
-			text_mask_r = max(mask_r.a, max(mask_r.r, max(mask_r.g, mask_r.b)));
-			text_mask_g = max(mask_g.a, max(mask_g.r, max(mask_g.g, mask_g.b)));
-			text_mask_b = max(mask_b.a, max(mask_b.r, max(mask_b.g, mask_b.b)));
+			vec4 mask_r = texture(text_mask, clamp(read_uv_text - ab_dir, vec2(0.0), vec2(1.0)));
+			vec4 mask_g = texture(text_mask, clamp(read_uv_text, vec2(0.0), vec2(1.0)));
+			vec4 mask_b = texture(text_mask, clamp(read_uv_text + ab_dir, vec2(0.0), vec2(1.0)));
+			text_mask_r = mask_r.a; text_mask_g = mask_g.a; text_mask_b = mask_b.a;
 		}
 		vec4 final_color = base_color;
 		if (t_rise > 0.0 && t_rise < 1.0) {
-			float sweep_line = smoothstep(0.05, 0.0, abs(grid_uv.y - (1.0 - t_rise)));
-			final_color = mix(vec4(glow_color.rgb + step(0.6, hash2d(grid_uv * 180.0 + time * 12.0)) * 0.4, glow_color.a), base_color, clamp(t_rise * 1.5, 0.0, 1.0));
-			final_color.rgb += vec3(sweep_line * 1.5) * base_color.rgb;
-		} else if (formation >= 1.0 && decay == 0.0) {
-			final_color.rgb += vec3(circuits(grid_uv, time)) * conduit_color.rgb * 1.5;
-			final_color.rgb += vec3((noise(grid_uv * 120.0 + vec2(time * 2.5)) - 0.5) * 0.08);
-			final_color.rgb *= (1.0 - (hash2d(vec2(floor(time * 24.0))) * 0.05));
+			float sizzle = step(0.40, hash2d(grid_uv * 200.0 + time * 20.0));
+			final_color = mix(base_color, mix(glow_color, vec4(1.0, 0.8, 0.5, 1.0), sizzle * 0.5) * 2.5, sin(t_rise * 3.14159));
+		} else if (title_formation >= 1.0 && title_decay == 0.0) {
+			final_color.rgb += vec3(circuits(grid_uv, time * 1.2)) * glow_color.rgb * 1.5;
+			final_color.rgb += vec3((noise(grid_uv * 140.0 + vec2(time * 1.5)) - 0.5) * 0.12);
+			float raster_sweep = sin(grid_uv.y * 10.0 - time * 3.0) * 0.5 + 0.5;
+			final_color.rgb = mix(final_color.rgb, final_color.rgb * 1.35, raster_sweep * 0.3);
 		}
-		if (decay > 0.0) {
-			if (decay_val_pixel < 0.25) { final_color = mix(base_color, glow_color * 1.5, decay_val_pixel / 0.25); }
-			else if (decay_val_pixel < 0.65) { final_color = mix(glow_color * 1.5, ash_color, (decay_val_pixel - 0.25) / 0.40); }
-			else { final_color = mix(ash_color, vec4(ash_color.rgb, 0.0), (decay_val_pixel - 0.65) / 0.35); }
+		float text_alpha_mult = title_visible_rise * title_visible_decay;
+		if (title_decay > 0.0 && decay_val_pixel > 0.0) {
+			if (decay_val_pixel < 0.25) {
+				float sizzle = step(0.35, hash2d(grid_uv * 180.0 + time * 25.0));
+				final_color = mix(base_color, vec4(glow_color.rgb * 3.0 + sizzle * 0.8, 1.0), decay_val_pixel / 0.25);
+			} else if (decay_val_pixel < 0.70) {
+				final_color = mix(glow_color * 2.0, ash_color, (decay_val_pixel - 0.25) / 0.45);
+			} else {
+				final_color = mix(ash_color, vec4(ash_color.rgb, 0.0), (decay_val_pixel - 0.70) / 0.30);
+			}
 		}
-		vec4 final_text_color = vec4(0.0);
-		final_text_color.r = text_mask_r * final_color.r; final_text_color.g = text_mask_g * final_color.g; final_text_color.b = text_mask_b * final_color.b;
-		final_text_color.a = max(max(text_mask_r, text_mask_g), text_mask_b) * final_color.a;
+		float glow_mask = 0.0;
+		if (title_formation > 0.0) {
+			vec2 glow_offset_1 = 1.0 / pixel_grid;
+			vec2 glow_offset_2 = 2.0 / pixel_grid;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_1.x, -glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_1.x, -glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_1.x, glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_1.x, glow_offset_1.y), vec2(0.0), vec2(1.0))).a;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(-glow_offset_2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(glow_offset_2.x, 0.0), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, -glow_offset_2.y), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask += texture(text_mask, clamp(read_uv_text + vec2(0.0, glow_offset_2.y), vec2(0.0), vec2(1.0))).a * 0.5;
+			glow_mask = (glow_mask / 6.0) * 1.1;
+		}
+		vec4 glow_layer = vec4(glow_color.rgb * 1.5, glow_mask * text_alpha_mult);
+		vec4 text_layer = vec4(text_mask_r * final_color.r, text_mask_g * final_color.g, text_mask_b * final_color.b, max(max(text_mask_r, text_mask_g), text_mask_b) * final_color.a * text_alpha_mult);
+		vec4 final_text_color = mix(glow_layer, text_layer, text_layer.a);
+		final_text_color.a = max(glow_layer.a, text_layer.a);
 		COLOR = mix(bg_color, final_text_color, final_text_color.a);
-		if (enable_scanlines) { COLOR.rgb -= vec3(sin(cur_uv.y * pixel_grid.y * 3.14159) * 0.15 + sin(cur_uv.y * 10.0 - time * 2.0) * 0.03); }
-		COLOR.rgb *= mix(0.4, 1.0, smoothstep(0.8, 0.45, length(cur_uv - 0.5)));
-		COLOR.rgb *= (0.85 + 0.15 * sin(cur_uv.x * pixel_grid_width * 3.14159 * 3.0));
+		
+		vec2 edge_dist = min(cur_uv, 1.0 - cur_uv);
+		COLOR.rgb *= smoothstep(0.0, 0.03, min(edge_dist.x, edge_dist.y));
+		float reflection_sweep = sin(cur_uv.x * 1.8 - cur_uv.y * 0.6 + time * 0.5) * 0.5 + 0.5;
+		COLOR.rgb += vec3((pow(reflection_sweep, 10.0) * glass_reflection) * 0.18);
+		if (enable_scanlines) {
+			COLOR.rgb -= vec3(mix(0.12, 0.0, abs(sin(cur_uv.y * pixel_grid.y * 3.14159))) * 0.5);
+			COLOR.rgb *= (0.98 + 0.02 * sin(time * 60.0));
+		}
+		float subpixel = mod(cur_uv.x * pixel_grid.x * 3.0, 3.0);
+		vec3 rgb_mask = vec3(1.0);
+		if (subpixel < 1.0) rgb_mask = vec3(1.0 + phosphor_intensity, 1.0 - phosphor_intensity, 1.0 - phosphor_intensity);
+		else if (subpixel < 2.0) rgb_mask = vec3(1.0 - phosphor_intensity, 1.0 + phosphor_intensity, 1.0 - phosphor_intensity);
+		else rgb_mask = vec3(1.0 - phosphor_intensity, 1.0 - phosphor_intensity, 1.0 + phosphor_intensity);
+		COLOR.rgb *= rgb_mask;
+		COLOR.rgb *= mix(0.5, 1.0, smoothstep(0.85, 0.35, length(cur_uv - 0.5)));
+		if (active_glitch > 0.4 && hash2d(grid_uv * 313.0 + vec2(time)) > 0.98) {
+			COLOR.rgb += vec3(0.5 * active_glitch);
+		}
 	}
 }"""

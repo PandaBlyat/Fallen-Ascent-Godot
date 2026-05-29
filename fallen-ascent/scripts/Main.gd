@@ -31,6 +31,11 @@ func _ready() -> void:
 	theme = UiStyle.button_theme()
 	_add_continue_button()
 	_add_achievements_button()
+	
+	# Register the button container with the high-fidelity pixel simulation background
+	if _background and _background.has_method("add_simulated_ui"):
+		_background.add_simulated_ui(_buttons)
+	
 	_new_game_button.pressed.connect(_on_new_game_pressed)
 	_new_game_button.pressed.connect(AudioManager.play_button_press)
 	_settings_button.pressed.connect(_on_settings_pressed)

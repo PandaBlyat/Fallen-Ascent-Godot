@@ -17,15 +17,23 @@ signal stockpile_changed()
 @export var job_board_path: NodePath
 @export var chunk_manager_path: NodePath
 @export var items_root_path: NodePath
+@export var structure_manager_path: NodePath
 @export var max_pending_haul_jobs: int = 96
 
 ## How long (ms) an item that failed delivery is skipped before a fresh haul is
 ## posted. Read by Worker when it drops an undeliverable carry.
 const HAUL_RETRY_COOLDOWN_MS: int = 4000
 
+## Game-seconds between degradation ticks on exposed stockpile items.
+const DEGRADE_INTERVAL_SECONDS: float = 10.0
+## Condition points removed per tick on each exposed stack.
+const DEGRADE_AMOUNT_PER_TICK: float = 5.0
+
 var _job_board: JobBoard
 var _chunk_manager: ChunkManager
 var _items_root: Node2D
+var _structure_manager: StructureManager
+var _degrade_accum: float = 0.0
 var zones: Array[StockpileZone] = []
 var _rematch_queued: bool = false
 var _pending_haul_jobs: int = 0
@@ -44,7 +52,9 @@ func _ready() -> void:
 	_job_board = get_node(job_board_path) as JobBoard
 	_chunk_manager = get_node(chunk_manager_path) as ChunkManager
 	_items_root = get_node(items_root_path) as Node2D
+	_structure_manager = get_node_or_null(structure_manager_path) as StructureManager
 	EventBus.tile_changed.connect(_on_tile_changed)
+	EventBus.structure_built.connect(_on_structure_built_for_enclosure)
 	if _items_root != null:
 		_items_root.child_exiting_tree.connect(_on_item_exiting_root)
 	if _job_board != null:
@@ -350,6 +360,9 @@ func consume_one(kind: int) -> bool:
 ## on the new tile; if the new tile is solid the item gets stranded — that's
 ## consistent with the current "carry until reachable" behavior).
 func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
+	# Invalidate enclosure cache for any zone that might be affected.
+	for zone in zones:
+		zone.invalidate_enclosure()
 	if _chunk_manager.is_walkable(grid):
 		return
 	var any_change: bool = false
@@ -380,3 +393,34 @@ func _on_tile_changed(grid: Vector2i, _new_tile: int) -> void:
 	if any_change:
 		stockpile_changed.emit()
 		_match_loose_items()
+
+
+func _process(delta: float) -> void:
+	if zones.is_empty() or _chunk_manager == null or _structure_manager == null:
+		return
+	_degrade_accum += delta
+	if _degrade_accum < DEGRADE_INTERVAL_SECONDS:
+		return
+	_degrade_accum = 0.0
+	var any_degraded: bool = false
+	for zone in zones:
+		if zone.is_enclosed(_chunk_manager, _structure_manager):
+			continue
+		var consumed: Array[Vector2i] = zone.degrade_exposed_items(DEGRADE_AMOUNT_PER_TICK)
+		if not consumed.is_empty():
+			any_degraded = true
+	if any_degraded:
+		stockpile_changed.emit()
+
+
+func _on_structure_built_for_enclosure(_manager: Node) -> void:
+	for zone in zones:
+		zone.invalidate_enclosure()
+
+
+## Returns true when the given zone is fully enclosed by walls + at least one
+## door. Used by the UI layer for tooltip/card display.
+func is_zone_enclosed(zone: StockpileZone) -> bool:
+	if _chunk_manager == null or _structure_manager == null:
+		return false
+	return zone.is_enclosed(_chunk_manager, _structure_manager)

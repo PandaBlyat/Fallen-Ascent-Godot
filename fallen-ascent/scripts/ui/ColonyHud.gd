@@ -942,7 +942,7 @@ func _on_bot_inspected(node: Node, faction: int) -> void:
 	_refresh_inspect_card()
 
 
-func _on_combatant_died(node: Node, _faction: int) -> void:
+func _on_combatant_died(node: Node, _faction: int, _attacker: Node) -> void:
 	if node == _inspected_node:
 		_inspected_node = null
 		_refresh_inspect_card()
@@ -1971,6 +1971,11 @@ func _build_stockpile_card() -> void:
 	_add_card_line(card, "cells", "%d" % _selected_stockpile.cells.size())
 	_add_card_line(card, "stacks", "%d / %d" % [_selected_stockpile.stack_count(), _selected_stockpile.stack_capacity()])
 	_add_card_line(card, "items", "%d / %d" % [_selected_stockpile.stored_count(), _selected_stockpile.capacity()])
+	if _stockpile_manager != null and _stockpile_manager.has_method("is_zone_enclosed"):
+		if not _stockpile_manager.is_zone_enclosed(_selected_stockpile):
+			_add_card_line(card, "status", "⚠ Degrading — enclose with walls + door", Color(0.95, 0.75, 0.2))
+		else:
+			_add_card_line(card, "status", "enclosed (protected)", COLOR_TEXT_MUTED)
 	var counts: Dictionary = _selected_stockpile.resource_counts()
 	if counts.is_empty():
 		_add_card_line(card, "resources", "empty", COLOR_TEXT_MUTED)

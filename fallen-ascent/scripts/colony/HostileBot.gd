@@ -58,6 +58,7 @@ var _stun_remaining: float = 0.0
 var _door_slow_remaining: float = 0.0
 var _last_door_slow_cell: Vector2i = Pathfinder.UNREACHABLE
 var _dead: bool = false
+var _last_attacker: Node = null
 var _facing: int = FACING_SOUTH
 ## LOS cache: target_instance_id -> {result: bool, expires_at_msec: int}.
 var _los_cache: Dictionary = {}
@@ -143,6 +144,8 @@ func take_damage(amount: float, attacker: Node) -> void:
 	if _dead or stats == null:
 		return
 	stats.hp = maxf(0.0, stats.hp - amount)
+	if attacker != null and is_instance_valid(attacker):
+		_last_attacker = attacker
 	if attacker is Node2D and _target == null and is_instance_valid(attacker):
 		_target = attacker as Node2D
 		_last_seen_at = _now()
@@ -445,6 +448,7 @@ func _tick_acid_damage(delta: float) -> void:
 	stats.hp = maxf(0.0, stats.hp - dps * delta)
 	queue_redraw()
 	if stats.hp <= 0.0:
+		_last_attacker = null
 		_die()
 
 
@@ -457,7 +461,7 @@ func _die() -> void:
 	if _wander_timer != null:
 		_wander_timer.stop()
 	AIScheduler.unregister(self)
-	EventBus.combatant_died.emit(self, FACTION_HOSTILE)
+	EventBus.combatant_died.emit(self, FACTION_HOSTILE, _last_attacker)
 	queue_redraw()
 	var fade := Timer.new()
 	fade.one_shot = true

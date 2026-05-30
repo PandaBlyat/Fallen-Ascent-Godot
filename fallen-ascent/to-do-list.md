@@ -219,12 +219,75 @@ Format: `[area] short description — why it matters / first hint at how`.
 
 ## Big features still owed (from the move/dismantle/forbid request)
 
-- [ ] **World-gen easter eggs / unique rooms behind ore walls + more floor/wall
-      variety.** Sealed vaults with loot, themed rooms, using the floor shader
-      for variety. Code-only procgen work in `TerrainGenerator` / service-core
-      pass; bump `WORLDGEN_VERSION`.
+- [x] **World-gen easter eggs / unique rooms behind ore walls + more floor/wall
+      variety.** Done: hidden sealed chambers (8 themed types: resource cache,
+      ancient chamber, hazard room, treasure vault, abandoned workshop, ancient
+      terminal, crystal grotto, forgotten generator) placed behind mineable walls
+      via `_hidden_room_pass()`. Floor shader now uses per-chunk biome-aware
+      uniforms via `_apply_zone_shader_uniforms()` in `Chunk.gd`
+      (The Abyss=corroded, Industrial=hazard/LEDs, Habitation=clean,
+      Lithic=cracked, Structural=conduit/grate). World detail pass adds corridor
+      trim, dead-end furnishings, pillar variety, environmental storytelling,
+      and void-edge safety railings. `WORLDGEN_VERSION` bumped to 10.
 - [ ] **FLOOR tile requires BASIC_FLOORING tech at build time.** The tech gate
       in `ColonyHud` greys the button out, but `can_place_blueprint` and
       `Worker._complete_build` do not check the tech. Add a
       `TechManager.is_unlocked(TechDatabase.BASIC_FLOORING)` guard in both
       so cheats / console-placed floors are also gated.
+
+## Degradation + achievement + worldgen session
+
+- [x] **Achievement bug: hostile achievements firing prematurely.**
+      Done: `combatant_died` signal now carries `attacker: Node` parameter.
+      `first_hostile_killed` only unlocks when a sane (non-berserk) worker
+      lands the killing blow. Environmental kills (acid) and berserk-worker
+      kills no longer trigger the achievement.
+- [x] **Stockpile degradation when not enclosed.**
+      Done: items in stockpiles not enclosed by walls + door degrade via
+      condition decay (100 → 0 per stack, consuming 1 count per cycle).
+      `StockpileZone.is_enclosed()` checks perimeter for walls/doors.
+      `StockpileManager._process()` ticks every 10s game-time. UI shows
+      warning in tooltip and stockpile card. Condition persisted in saves.
+- [ ] **Stockpile degradation balance.** The current `DEGRADE_AMOUNT_PER_TICK`
+      (5.0 per 10s) and `DEGRADE_INTERVAL_SECONDS` (10s) are first-pass values.
+      Playtest and tune so exposed stockpiles feel urgent but not punishing.
+      Consider making degradation rate scale with item rarity.
+- [ ] **Per-chunk floor material overhead.** Each chunk now creates its own
+      `ShaderMaterial` instance for biome uniforms. For a 12×12 map this is
+      144 materials (lightweight), but measure draw-call impact if chunk count
+      grows. If needed, batch by zone (group chunks sharing the same zone into
+      a shared material pool).
+
+## Worldgen expansion + pixel simulation overhaul session
+
+- [x] **Void tile bug fix.** `floor_variation.gdshader` now skips all effects
+      for near-black pixels (luminance < 0.08), preventing floor shader from
+      drawing brightness/tint/wear on void tiles.
+- [x] **New room styles (5).** Vertical Shaft (void column + conduit platforms),
+      Flooded Chamber (fluid + raised walkways), Crypt (service core sarcophagi),
+      Armory (rich-wall weapon racks), Hexagonal Chamber (hex-distance carving).
+      All wired into `_pick_room_style` with zone-appropriate weighting.
+- [x] **Corridor improvement pass.** `_corridor_improvement_pass` adds periodic
+      outlet lights along corridors and carves small rest alcoves (2×2 widenings
+      with outlets) into wall-adjacent corridor tiles.
+- [x] **Expanded hidden rooms.** 3 new themes: Ancient Terminal (teleporter +
+      conduit ring + service cores), Crystal Grotto (irregular rich-wall clusters),
+      Forgotten Generator (dense service core + outlet ring on conduit floor).
+- [x] **Improved macro structures.** 2 new macro styles: Grand Atrium
+      (concentric material rings with outlet ring) and Reactor Core (central void
+      with radiating conduit arms + service core tips). Existing styles enhanced
+      with rich-wall accents, conduit rings, and service core markers.
+- [x] **Pixel simulation shader overhaul.** Complete rewrite of
+      `pixel_simulation.gdshader` with multi-layer procedural megastructure:
+      distant structural beams, mid-ground pipe networks, vertical spires with
+      blinking antenna lights, ambient deep glow sources, falling debris particles,
+      rising embers, and improved CRT post-processing. Background now has real
+      depth instead of flat wallpaper. GDScript timing tuned: snappier rise/decay,
+      longer hold for readability, higher background dimness for contrast.
+- [ ] **Hidden room cross-chunk continuity.** Hidden rooms currently only exist
+      within a single chunk. For truly grand hidden chambers, a cross-chunk
+      coordination pass could place rooms that span chunk boundaries. Requires
+      `WorldGenerator` to pre-plan hidden room locations at the overview level.
+- [ ] **More corridor variety.** Current corridors are still mostly L/T shaped.
+      Consider adding winding/diagonal corridor styles, stairway segments
+      (conduit ramps), and corridor junctions with wider intersections.

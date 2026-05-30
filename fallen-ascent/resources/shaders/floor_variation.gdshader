@@ -129,7 +129,8 @@ void vertex() {
 
 void fragment() {
 	vec4 base = texture(TEXTURE, UV);
-	if (base.a < 0.01) {
+	float base_luma = dot(base.rgb, vec3(0.299, 0.587, 0.114));
+	if (base.a < 0.01 || base_luma < 0.08) {
 		COLOR = base;
 	} else {
 		// Calculate current coordinate relative to the grid, snapped to virtual pixels

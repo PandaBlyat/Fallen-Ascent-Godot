@@ -46,10 +46,12 @@ extends Node
 ##                                      Payload: Node, Node, float.
 ##   combat_dodged(attacker, target)  - emitted when a target dodges a swing.
 ##                                      Payload: Node, Node.
-##   combatant_died(node, faction)    - emitted just before a downed combatant
+##   combatant_died(node, faction, attacker)
+##                                    - emitted just before a downed combatant
 ##                                      is queue_freed. Payload: Node, int
 ##                                      faction id (0=colony, 1=neutral,
-##                                      2=hostile).
+##                                      2=hostile), Node attacker (null when
+##                                      death is from environmental damage).
 ##   hostile_spawned(node)            - emitted by HostileSpawner after a new
 ##                                      hostile is added to the tree.
 ##   wisdom_changed(new_total)        - emitted by TechManager when the wisdom
@@ -110,7 +112,7 @@ signal bot_inspected(node: Node, faction: int)
 signal worker_entered_combat(worker: Node)
 signal combat_hit(attacker: Node, target: Node, damage: float)
 signal combat_dodged(attacker: Node, target: Node)
-signal combatant_died(node: Node, faction: int)
+signal combatant_died(node: Node, faction: int, attacker: Node)
 signal hostile_spawned(node: Node)
 signal wisdom_changed(new_total: float)
 signal tech_unlocked(tech_id: StringName)

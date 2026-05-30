@@ -50,27 +50,27 @@ enum State { BG_RISING, TITLE_RISING, HOLDING, TITLE_DECAYING, BG_DECAYING, PAUS
 		_update_text_container_layout()
 
 @export_category("Timing (Seconds)")
-@export var bg_rise_duration: float = 4.0
-@export var title_rise_duration: float = 3.0
-@export var hold_duration: float = 14.0
-@export var title_decay_duration: float = 3.0
+@export var bg_rise_duration: float = 3.0
+@export var title_rise_duration: float = 2.5
+@export var hold_duration: float = 18.0
+@export var title_decay_duration: float = 2.5
 @export var bg_decay_duration: float = 2.0
-@export var pause_duration: float = 2.0
+@export var pause_duration: float = 1.5
 
 @export_category("Aesthetics")
-@export var base_color: Color = Color(0.82, 0.92, 0.95, 1.0)       # Cyan terminal metal
+@export var base_color: Color = Color(0.85, 0.94, 0.97, 1.0)       # Bright cyan terminal metal
 @export var glow_color: Color = Color(1.0, 0.38, 0.08, 1.0)       # Thermal decay orange
-@export var ash_color: Color = Color(0.18, 0.19, 0.22, 1.0)        # Cooling graphite/ash
-@export var conduit_color: Color = Color(0.0, 0.72, 0.53, 1.0)     # Machine bus line green
-@export var pixel_grid_width: float = 1024.0                       # Raised to 512 for pixel-art readability
+@export var ash_color: Color = Color(0.14, 0.15, 0.18, 1.0)        # Deep cooling graphite/ash
+@export var conduit_color: Color = Color(0.0, 0.62, 0.48, 1.0)     # Deep machine bus line green
+@export var pixel_grid_width: float = 1024.0                       # Higher resolution for readability
 
 @export_category("Simulation Settings")
-@export_range(0.0, 2.0) var wind_strength: float = 0.4
-@export_range(0.0, 5.0) var decay_gravity: float = 0.6
-@export_range(0.0, 1.0) var glitch_intensity: float = 0.4
-@export_range(0.0, 1.0) var background_dimness: float = 0.25      
+@export_range(0.0, 2.0) var wind_strength: float = 0.35
+@export_range(0.0, 5.0) var decay_gravity: float = 0.5
+@export_range(0.0, 1.0) var glitch_intensity: float = 0.35
+@export_range(0.0, 1.0) var background_dimness: float = 0.35
 @export var enable_scanlines: bool = true
-@export var enable_curvature: bool = true                         
+@export var enable_curvature: bool = true
 @export var flip_v: bool = false
 
 @export_category("CRT & Lens Customization")

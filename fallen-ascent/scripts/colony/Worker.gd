@@ -302,6 +302,7 @@ var _resume_path_index: int = 0
 var _resume_carried: Item = null
 var stats: CombatStats
 var _combat_target: Node2D = null
+var _last_attacker: Node = null
 var _combat_repath_cooldown: float = 0.0
 var _last_combat_contact_at: float = 0.0
 var _knockback_remaining: float = 0.0
@@ -371,6 +372,39 @@ var _forbidden_zone_manager: ForbiddenZoneManager = null
 ## Causes _finish_job() to apply a short idle cooldown (2-3 s) so the player
 ## has time to issue follow-up manual orders.
 var _last_job_was_manual: bool = false
+
+# ── Particle System ─────────────────────────────────────────────────────────
+# Lightweight code-driven particle system for walking dust, mining sparks,
+# water/acid splashes, and crafting effects.
+class _Particle:
+	var pos: Vector2
+	var vel: Vector2
+	var color: Color
+	var size: float
+	var life: float
+	var max_life: float
+	
+	func _init(p: Vector2, v: Vector2, c: Color, s: float, l: float) -> void:
+		pos = p
+		vel = v
+		color = c
+		size = s
+		life = l
+		max_life = l
+
+const PARTICLE_MAX_COUNT: int = 64
+const PARTICLE_DUST_COLOR := Color(0.65, 0.60, 0.55, 0.8)
+const PARTICLE_WATER_COLOR := Color(0.35, 0.55, 0.85, 0.9)
+const PARTICLE_ACID_COLOR := Color(0.45, 0.95, 0.35, 0.9)
+const PARTICLE_SPARK_COLOR := Color(1.0, 0.85, 0.45, 1.0)
+const PARTICLE_ENERGY_COLOR := Color(0.55, 0.75, 1.0, 0.85)
+const PARTICLE_REST_COLOR := Color(0.60, 0.70, 0.90, 0.5)
+
+var _particles: Array[_Particle] = []
+var _last_move_pos: Vector2 = Vector2.ZERO
+var _particle_emit_cooldown: float = 0.0
+var _craft_anim_timer: float = 0.0
+var _rest_anim_timer: float = 0.0
 
 
 func setup(
@@ -569,6 +603,8 @@ func take_damage(amount: float, attacker: Node) -> void:
 	stats.hp = maxf(0.0, stats.hp - taken)
 	_damage_part(taken / 1.6)
 	_last_combat_contact_at = _now_seconds()
+	if attacker != null and is_instance_valid(attacker):
+		_last_attacker = attacker
 	if attacker is Node2D and is_instance_valid(attacker):
 		if _state != State.FIGHTING:
 			_abandon_job()
@@ -700,7 +736,7 @@ func _die() -> void:
 	_release_charge_reservation()
 	if _room_manager != null and _room_manager.has_method("release_worker"):
 		_room_manager.call("release_worker", self)
-	EventBus.combatant_died.emit(self, FACTION_COLONY)
+	EventBus.combatant_died.emit(self, FACTION_COLONY, _last_attacker)
 	queue_redraw()
 	var fade := Timer.new()
 	fade.one_shot = true
@@ -4726,7 +4762,102 @@ func _order_highlight_world_target() -> Vector2:
 	return position
 
 
+# ── Particle System Methods ─────────────────────────────────────────────────
+
+func _spawn_particle(p: Vector2, v: Vector2, c: Color, s: float, l: float) -> void:
+	if _particles.size() >= PARTICLE_MAX_COUNT:
+		_particles.pop_front()
+	_particles.append(_Particle.new(p, v, c, s, l))
+
+
+func _emit_walking_dust() -> void:
+	# Emit 1-2 small gray/brown particles behind the worker based on movement direction.
+	var move_dir: Vector2 = position - _last_move_pos
+	if move_dir.length() < 0.5:
+		return
+	move_dir = move_dir.normalized()
+	var emit_pos: Vector2 = -move_dir * BODY_RADIUS * 0.7
+	for i in range(2):
+		var spread: Vector2 = Vector2(randf_range(-0.3, 0.3), randf_range(-0.3, 0.3))
+		var vel: Vector2 = (-move_dir * randf_range(8.0, 16.0)) + spread * 12.0
+		var col: Color = PARTICLE_DUST_COLOR
+		col.a = randf_range(0.5, 0.8)
+		_spawn_particle(emit_pos, vel, col, randf_range(1.5, 2.5), randf_range(0.4, 0.7))
+
+
+func _emit_water_splash(tile: int) -> void:
+	# Emit water or acid splash particles when walking over fluid tiles.
+	var base_color: Color = PARTICLE_WATER_COLOR
+	if tile == TerrainGenerator.TILE_ACID_SHALLOW or tile == TerrainGenerator.TILE_ACID_PUDDLE:
+		base_color = PARTICLE_ACID_COLOR
+	# Emit 3-4 upward splash particles.
+	for i in range(4):
+		var angle: float = randf_range(0.0, TAU)
+		var speed: float = randf_range(12.0, 24.0)
+		var vel: Vector2 = Vector2(cos(angle), sin(angle) - 0.5) * speed
+		var col: Color = base_color
+		col.a = randf_range(0.7, 0.95)
+		_spawn_particle(Vector2.ZERO, vel, col, randf_range(1.8, 3.0), randf_range(0.3, 0.55))
+
+
+func _emit_mining_particles(target_color: Color) -> void:
+	# Emit 2-3 particles colored like the object being mined/salvaged.
+	for i in range(3):
+		var angle: float = randf_range(0.0, TAU)
+		var speed: float = randf_range(10.0, 20.0)
+		var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
+		var col: Color = target_color
+		col.a = randf_range(0.8, 1.0)
+		_spawn_particle(Vector2.ZERO, vel, col, randf_range(2.0, 3.5), randf_range(0.5, 0.8))
+
+
+func _emit_crafting_sparks() -> void:
+	# Emit bright sparks and energy pulses during crafting.
+	for i in range(2):
+		var angle: float = randf_range(0.0, TAU)
+		var speed: float = randf_range(14.0, 28.0)
+		var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
+		var col: Color = PARTICLE_SPARK_COLOR if randf() < 0.6 else PARTICLE_ENERGY_COLOR
+		col.a = randf_range(0.85, 1.0)
+		_spawn_particle(Vector2.ZERO, vel, col, randf_range(1.5, 2.5), randf_range(0.35, 0.6))
+
+
+func _emit_rest_glow() -> void:
+	# Emit gentle, slow-moving particles during rest/meditation.
+	var angle: float = randf_range(0.0, TAU)
+	var speed: float = randf_range(3.0, 8.0)
+	var vel: Vector2 = Vector2(cos(angle), sin(angle) - 0.3) * speed
+	var col: Color = PARTICLE_REST_COLOR
+	col.a = randf_range(0.3, 0.55)
+	_spawn_particle(Vector2.ZERO, vel, col, randf_range(2.5, 4.0), randf_range(0.8, 1.2))
+
+
+func _update_particles(delta: float) -> void:
+	# Update particle positions, fade alpha, and remove dead particles.
+	var i: int = _particles.size() - 1
+	while i >= 0:
+		var p: _Particle = _particles[i]
+		p.pos += p.vel * delta
+		p.vel *= 0.92  # Damping.
+		p.life -= delta
+		# Fade out as life decreases.
+		p.color.a = clampf(p.life / p.max_life, 0.0, 1.0) * (p.color.a / maxf(0.01, p.life / p.max_life))
+		if p.life <= 0.0:
+			_particles.remove_at(i)
+		i -= 1
+
+
+func _draw_particles() -> void:
+	# Draw all active particles as small circles with fading alpha.
+	for p in _particles:
+		var alpha: float = clampf(p.life / p.max_life, 0.0, 1.0)
+		var col: Color = p.color
+		col.a *= alpha
+		draw_circle(p.pos, p.size, col)
+
+
 func _draw() -> void:
+	_draw_particles()  # Render particles behind the worker.
 	_draw_action_bubble()
 	if _highlighter_atlas != null:
 		var cell: int = _highlight_cell()

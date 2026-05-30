@@ -200,11 +200,15 @@ func _on_player_structure_placed() -> void:
 	unlock(&"first_build")
 
 
-func _on_combatant_died(_node: Node, faction: int) -> void:
+func _on_combatant_died(_node: Node, faction: int, attacker: Node) -> void:
 	if faction == 0:
 		unlock(&"first_worker_dead")
-	else:
-		unlock(&"first_hostile_killed")
+	elif faction == 2:
+		# Only credit the kill if a sane (non-berserk) worker landed the blow.
+		if attacker != null and is_instance_valid(attacker) \
+				and attacker.has_method("is_mentally_broken") \
+				and not bool(attacker.call("is_mentally_broken")):
+			unlock(&"first_hostile_killed")
 
 
 func _on_tech_unlocked(_tech_id: StringName) -> void:

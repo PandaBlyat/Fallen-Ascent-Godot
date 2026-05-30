@@ -226,6 +226,60 @@ single source) and the embark screen draws from that same pool.
   small speed buff; workshops outside any room suffer a small debuff
   (`workshop_speed_multiplier_at`).
 
+## Stockpile degradation
+
+`StockpileZone` tracks an enclosure state: a zone is "enclosed" when every
+cell just outside its perimeter is a solid wall tile (WALL, RICH_WALL,
+SERVICE_CORE) or a player-built wall/door structure, AND at least one door
+is on the perimeter. `StockpileManager._process()` ticks every
+`DEGRADE_INTERVAL_SECONDS` (10s game-time) and degrades items in exposed
+zones: each stored stack loses `DEGRADE_AMOUNT_PER_TICK` (5.0) condition.
+`Item.condition` is 0..100; when it hits 0 the stack loses 1 count and
+resets to 100. Fully consumed stacks are freed. The tooltip and stockpile
+card warn the player when a zone is exposed. Enclosure is cached
+(`invalidate_enclosure()`) and recomputed on `tile_changed` and
+`structure_built`.
+
+## Terrain generation
+
+`TerrainGenerator.populate()` generates a 32×32 chunk from `(seed, chunk_coord)`.
+The pipeline runs 15 ordered passes:
+
+1. **Zone selection** — `get_zone()` assigns each chunk to one of 5 structural
+   zones (Abyss, Industrial Core, Habitation Blocks, Lithic Vault, Structural
+   Grid) using low-frequency noise. Zone drives room density, corridor width,
+   void frequency, and shader uniform overrides.
+2. **Solid mass** — fill everything with WALL.
+3. **Edge doorways** — deterministic door positions on chunk edges, shared
+   between adjacent chunks via `hash([seed, a, b, "door"])`.
+4. **Room placement** — `_place_rooms()` scatters non-overlapping `Rect2i`
+   rooms; `_carve_room()` dispatches to 22 room styles (0–21) including
+   Vertical Shaft, Flooded Chamber, Crypt, Armory, Hexagonal Chamber, and
+   zone-specific rooms like Server Databank, Assembly Foundry, etc.
+5. **Void pass** — `_void_pass()` carves deep void clusters (The Abyss has
+   many; Habitation has none).
+6. **Corridors** — doorway→room and room→room connections via L/T/Z carving.
+7. **Shortcut loops** — random room-to-room extra corridors for connectivity.
+8. **Dead-end stubs** — short corridors burrowing into walls.
+9. **Corridor improvements** — `_corridor_improvement_pass()` adds periodic
+   outlet lights and small rest alcoves along corridors.
+10. **Global conduits** — continuous utility lines spanning chunk boundaries.
+11. **Floor variants** — catwalk conversion near void, water/acid placement
+    (lake/river/puddle + acid pool/seep/splash), conduit/rust/debris scatter.
+12. **Room outlets** — utility taps inside rooms.
+13. **Service core + rich wall** — mineral veins in walls via noise peaks.
+14. **Teleporter pass** — rare unstable transport pads on open floor.
+15. **Environmental wear** — fluid erosion, cable connections, atmospheric leaks.
+16. **Hidden rooms** — `_hidden_room_pass()` carves sealed chambers behind
+    mineable walls (8 themes: resource cache, ancient chamber, hazard room,
+    treasure vault, abandoned workshop, ancient terminal, crystal grotto,
+    forgotten generator).
+17. **World detail pass** — `_world_detail_pass()` adds corridor wall trim,
+    dead-end furnishings, environmental storytelling clusters, void-edge
+    safety railings, and pillar variety.
+
+Bump `WorldGenerator.WORLDGEN_VERSION` whenever any pass changes output.
+
 ---
 
 ## Coding standards

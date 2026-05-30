@@ -59,6 +59,7 @@ var _stun_remaining: float = 0.0
 var _door_slow_remaining: float = 0.0
 var _last_door_slow_cell: Vector2i = Pathfinder.UNREACHABLE
 var _dead: bool = false
+var _last_attacker: Node = null
 var _facing: int = FACING_SOUTH
 ## LOS cache: target_instance_id -> {result: bool, expires_at_msec: int}.
 ## Halves LOS calls when the same hostile candidate is rescanned within TTL.
@@ -146,6 +147,8 @@ func take_damage(amount: float, attacker: Node) -> void:
 	if _dead or stats == null:
 		return
 	stats.hp = maxf(0.0, stats.hp - amount)
+	if attacker != null and is_instance_valid(attacker):
+		_last_attacker = attacker
 	if attacker is Node2D and is_instance_valid(attacker):
 		_threat = attacker as Node2D
 		_retaliate_until = _now() + RETALIATE_DURATION
@@ -473,7 +476,7 @@ func _die() -> void:
 	if _wander_timer != null:
 		_wander_timer.stop()
 	AIScheduler.unregister(self)
-	EventBus.combatant_died.emit(self, FACTION_NEUTRAL)
+	EventBus.combatant_died.emit(self, FACTION_NEUTRAL, _last_attacker)
 	queue_redraw()
 	var fade := Timer.new()
 	fade.one_shot = true

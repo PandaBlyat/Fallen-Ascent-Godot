@@ -90,7 +90,7 @@ func _try_spawn_one() -> bool:
 	return false
 
 
-func _on_combatant_died(_node: Node, faction: int) -> void:
+func _on_combatant_died(_node: Node, faction: int, _attacker: Node) -> void:
 	if faction == HostileBot.FACTION_HOSTILE:
 		_alive = maxi(0, _alive - 1)
 

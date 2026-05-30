@@ -42,6 +42,7 @@ script = ExtResource("7_stock")
 job_board_path = NodePath("../JobBoard")
 chunk_manager_path = NodePath("../ChunkManager")
 items_root_path = NodePath("../Items")
+structure_manager_path = NodePath("../StructureManager")
 
 [node name="StructureManager" type="Node2D" parent="."]
 script = ExtResource("12_structures")

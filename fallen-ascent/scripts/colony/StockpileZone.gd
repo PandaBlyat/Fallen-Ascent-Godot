@@ -30,6 +30,9 @@ var _partials_by_kind: Dictionary = {}           ## kind:int -> Dictionary[Vecto
 var _capacity_multipliers: Dictionary = {}       ## Vector2i -> int
 var _perimeter_edges := PackedVector2Array()
 var _perimeter_dirty: bool = true
+## Cached enclosure state. Invalidated when terrain/structures change.
+var _enclosed: bool = false
+var _enclosure_dirty: bool = true
 
 
 func setup(zone_cells: Array[Vector2i]) -> void:
@@ -63,7 +66,7 @@ func capture_save() -> Dictionary:
 		elif v is Dictionary:
 			it = (v as Dictionary).get(R_EXISTING) as Item
 		if it != null and is_instance_valid(it) and it.count > 0:
-			items.append([cell, int(it.kind), int(it.count)])
+			items.append([cell, int(it.kind), int(it.count), float(it.condition)])
 	return {"cells": cell_list, "capacity": cap, "items": items}
 
 
@@ -82,6 +85,8 @@ func restore_save(data: Dictionary, make_item: Callable) -> void:
 		var item: Item = make_item.call(cell, int(entry[1]), int(entry[2])) as Item
 		if item == null:
 			continue
+		if entry.size() > 3:
+			item.condition = float(entry[3])
 		add_child(item)
 		place(item, cell)
 
@@ -291,6 +296,82 @@ func cell_capacity(cell: Vector2i) -> int:
 	if int(_capacity_multipliers.get(cell, 1)) > 1:
 		return STORAGE_BIN_STACK_PER_CELL
 	return MAX_STACK_PER_CELL
+
+
+## Mark the cached enclosure state as stale. Called when terrain or structures
+## change near the zone.
+func invalidate_enclosure() -> void:
+	_enclosure_dirty = true
+
+
+## True when every cell just outside the zone perimeter is a solid wall tile
+## or a player-built wall/door structure. A zone with no perimeter neighbors
+## (fully interior) counts as enclosed.
+func is_enclosed(chunk_manager: ChunkManager, structure_manager: StructureManager) -> bool:
+	if not _enclosure_dirty:
+		return _enclosed
+	_enclosed = _compute_enclosed(chunk_manager, structure_manager)
+	_enclosure_dirty = false
+	return _enclosed
+
+
+func _compute_enclosed(chunk_manager: ChunkManager, structure_manager: StructureManager) -> bool:
+	const NEIGHBORS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var has_door: bool = false
+	for cell in cells:
+		for off in NEIGHBORS:
+			var n: Vector2i = cell + off
+			if _cell_set.has(n):
+				continue
+			if not _is_stockpile_boundary(n, chunk_manager, structure_manager):
+				return false
+			# Track whether at least one door is on the perimeter.
+			if not has_door:
+				var s: Dictionary = structure_manager.structure_at(n)
+				if not s.is_empty() and int(s.get("id", -1)) == BuildBlueprint.Id.DOOR:
+					has_door = true
+	return has_door
+
+
+static func _is_stockpile_boundary(
+	cell: Vector2i,
+	chunk_manager: ChunkManager,
+	structure_manager: StructureManager,
+) -> bool:
+	var tile: int = chunk_manager.get_tile_at(cell)
+	if tile == TerrainGenerator.TILE_WALL \
+			or tile == TerrainGenerator.TILE_RICH_WALL \
+			or tile == TerrainGenerator.TILE_SERVICE_CORE:
+		return true
+	var s: Dictionary = structure_manager.structure_at(cell)
+	if s.is_empty():
+		return false
+	var sid: int = int(s.get("id", -1))
+	return sid == BuildBlueprint.Id.WALL or sid == BuildBlueprint.Id.DOOR
+
+
+## Degrade all stored items in this zone. Returns an array of cells whose
+## stack was fully consumed (so the caller can clean up).
+func degrade_exposed_items(amount: float) -> Array[Vector2i]:
+	var consumed: Array[Vector2i] = []
+	for cell in cells:
+		var v: Variant = occupant.get(cell)
+		var item: Item = null
+		if v is Item:
+			item = v as Item
+		elif v is Dictionary:
+			item = (v as Dictionary).get(R_EXISTING) as Item
+		if item == null or not is_instance_valid(item):
+			continue
+		if item.degrade(amount):
+			consumed.append(cell)
+			take(cell)
+			if item.get_parent() == self:
+				remove_child(item)
+			item.queue_free()
+	return consumed
 
 
 ## Clear all index entries for `cell`, then re-classify based on the current

@@ -225,6 +225,11 @@ static func populate(
 		if rng.randf() < _DEAD_END_PROBABILITY:
 			_carve_dead_ends(out, chunk_size, rng, rooms)
 
+	# 7.6. Corridor improvements: rest alcoves and periodic lighting along
+	# long corridor stretches. Makes corridors feel more designed and less empty.
+	if not is_macro_chunk:
+		_corridor_improvement_pass(out, chunk_size, rng, zone)
+
 	# 8. Continuous global utility lines spanning boundaries.
 	_draw_global_conduits(out, chunk_size, chunk_coord, site_seed)
 
@@ -307,6 +312,13 @@ static func populate(
 	
 	# 13. Atmospheric and elemental decay simulation
 	_apply_environmental_wear(out, chunk_size, rooms, rng, zone)
+
+	# 14. Hidden sealed chambers behind mineable walls (easter eggs / resource caches).
+	_hidden_room_pass(out, chunk_size, rng, zone)
+
+	# 15. Fine detail pass: corridor trim, dead-end content, pillar variety,
+	#     environmental storytelling, and void-edge treatment.
+	_world_detail_pass(out, chunk_size, rng, zone)
 
 
 static func tile_color(t: int) -> Color:
@@ -463,6 +475,16 @@ static func _carve_room(
 			_carve_power_substation(out, chunk_size, room, rng)
 		16:
 			_carve_fluid_vat_farm(out, chunk_size, room, rng, zone)
+		17:
+			_carve_vertical_shaft(out, chunk_size, room, rng, zone)
+		18:
+			_carve_flooded_chamber(out, chunk_size, room, rng, zone)
+		19:
+			_carve_crypt(out, chunk_size, room, rng)
+		20:
+			_carve_armory(out, chunk_size, room, rng)
+		21:
+			_carve_hex_chamber(out, chunk_size, room, rng)
 		_:
 			_carve_jagged_room(out, chunk_size, room, rng)
 
@@ -486,35 +508,47 @@ static func _pick_room_style(rng: RandomNumberGenerator, zone: int, room: Rect2i
 		styles.append(10)  # Cooling Array
 		styles.append(12)  # Structural Breach
 		styles.append(15)  # Power Substation
-		
+		styles.append(17)  # Vertical Shaft
+		styles.append(19)  # Crypt
+
 	if room.size.x >= 8 and room.size.y >= 8:
 		styles.append(11)  # Server Databank
 		styles.append(13)  # Transit Junction
 		styles.append(14)  # Assembly Foundry
 		styles.append(16)  # Fluid Processing Vat
+		styles.append(18)  # Flooded Chamber
+		styles.append(20)  # Armory
+		styles.append(21)  # Hexagonal Chamber
 
 	match zone:
 		0: # The Abyss
 			styles.append(12) # High debris/ruins
 			styles.append(15) # Isolated power cores
+			styles.append(17) # Vertical shafts into the deep
+			styles.append(18) # Flooded chasms
 		1: # The Industrial Core
 			styles.append(5)  # Machinery
 			styles.append(10) # Coolant arrays
 			styles.append(11) # Server banks
 			styles.append(14) # Heavy assembly line
 			styles.append(15) # Distribution substations
+			styles.append(20) # Armory
 		2: # Habitation Blocks
 			styles.append(6)
 			styles.append(7)
 			styles.append(13) # Monorails/Transit
 			styles.append(16) # Algae/Water vats
+			styles.append(19) # Crypts
+			styles.append(21) # Hex chambers
 		3: # Lithic Vault
-			styles = [0, 1, 6, 7, 9, 12] # Raw geological ruptures
+			styles = [0, 1, 6, 7, 9, 12, 17, 19] # Raw geological ruptures + shafts + crypts
 		4: # Structural Grid
 			styles.append(3)
 			styles.append(8)
 			styles.append(11)
 			styles.append(15)
+			styles.append(17) # Tall shafts
+			styles.append(21) # Hex chambers
 			
 	return int(styles[rng.randi() % styles.size()])
 
@@ -891,7 +925,7 @@ static func _carve_transit_junction(
 			out[track_y * chunk_size + x] = TILE_CONDUIT
 			if track_y + 1 < room.position.y + room.size.y:
 				out[(track_y + 1) * chunk_size + x] = TILE_CONDUIT
-			if x % 4 == 0:
+			if x % 8 == 0:
 				out[track_y * chunk_size + x] = TILE_OUTLET
 	else:
 		var track_x: int = room.position.x + room.size.x / 2
@@ -901,7 +935,7 @@ static func _carve_transit_junction(
 			out[y * chunk_size + track_x] = TILE_CONDUIT
 			if track_x + 1 < room.position.x + room.size.x:
 				out[y * chunk_size + (track_x + 1)] = TILE_CONDUIT
-			if y % 4 == 0:
+			if y % 8 == 0:
 				out[y * chunk_size + track_x] = TILE_OUTLET
 
 
@@ -924,7 +958,7 @@ static func _carve_assembly_foundry(
 			else:
 				for x in range(room.position.x + 2, room.position.x + room.size.x - 2, 3):
 					var idx: int = y * chunk_size + x
-					if rng.randf() < 0.5:
+					if rng.randf() < 0.8:
 						out[idx] = TILE_SERVICE_CORE
 					else:
 						out[idx] = TILE_OUTLET
@@ -937,7 +971,7 @@ static func _carve_assembly_foundry(
 			else:
 				for y in range(room.position.y + 2, room.position.y + room.size.y - 2, 3):
 					var idx: int = y * chunk_size + x
-					if rng.randf() < 0.5:
+					if rng.randf() < 0.8:
 						out[idx] = TILE_SERVICE_CORE
 					else:
 						out[idx] = TILE_OUTLET
@@ -1016,6 +1050,196 @@ static func _carve_fluid_vat_farm(
 			else:
 				for y in range(room.position.y + 1, room.position.y + room.size.y - 1):
 					out[y * chunk_size + x] = TILE_CONDUIT
+
+
+## Tall narrow vertical shaft with conduit platforms at intervals, wall-mounted
+## service cores, and a central void column dropping through the middle.
+static func _carve_vertical_shaft(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	_fill_rect(out, chunk_size, room, TILE_FLOOR)
+	# Central void column (2-3 wide) with conduit platforms bridging across.
+	var shaft_w: int = rng.randi_range(2, mini(3, room.size.x - 4))
+	var shaft_x: int = room.position.x + (room.size.x - shaft_w) / 2
+	for y in range(room.position.y, room.position.y + room.size.y):
+		for x in range(shaft_x, shaft_x + shaft_w):
+			out[y * chunk_size + x] = TILE_VOID
+	# Conduit platforms every 3-4 rows bridging across the shaft.
+	var platform_interval: int = rng.randi_range(3, 4)
+	for y in range(room.position.y + 1, room.position.y + room.size.y - 1, platform_interval):
+		for x in range(shaft_x, shaft_x + shaft_w):
+			out[y * chunk_size + x] = TILE_CONDUIT
+		# Outlet light at some platform landings.
+		if rng.randf() < 0.25:
+			out[y * chunk_size + shaft_x] = TILE_OUTLET
+	# Wall-mounted service cores on alternating sides.
+	for y in range(room.position.y + 2, room.position.y + room.size.y - 2, 3):
+		var side: int = rng.randi() % 2
+		var core_x: int = room.position.x if side == 0 else room.position.x + room.size.x - 1
+		if out[y * chunk_size + core_x] == TILE_FLOOR:
+			out[y * chunk_size + core_x] = TILE_SERVICE_CORE
+
+
+## Chamber partially flooded with water or acid, with raised dry walkways
+## and isolated dry platforms. Feels like a breached/damaged area.
+static func _carve_flooded_chamber(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	_fill_rect(out, chunk_size, room, TILE_FLOOR)
+	var fluid_tile: int = TILE_WATER_SHALLOW
+	if zone == 0 or zone == 1:
+		fluid_tile = TILE_ACID_SHALLOW if rng.randf() < 0.5 else TILE_WATER_SHALLOW
+	elif zone == 3:
+		fluid_tile = TILE_WATER_SHALLOW
+	# Flood most of the room floor with fluid.
+	for y in range(room.position.y + 1, room.position.y + room.size.y - 1):
+		for x in range(room.position.x + 1, room.position.x + room.size.x - 1):
+			out[y * chunk_size + x] = fluid_tile
+	# Raised walkway: a single-tile-wide conduit path across the room.
+	var walkway_horizontal: bool = rng.randi() % 2 == 0
+	if walkway_horizontal:
+		var walk_y: int = room.position.y + room.size.y / 2
+		for x in range(room.position.x, room.position.x + room.size.x):
+			out[walk_y * chunk_size + x] = TILE_CONDUIT
+		# Side branches to dry platforms.
+		for _i in range(rng.randi_range(1, 3)):
+			var px: int = rng.randi_range(room.position.x + 1, room.position.x + room.size.x - 2)
+			var branch_dir: int = 1 if rng.randi() % 2 == 0 else -1
+			var py: int = walk_y + branch_dir
+			if py > room.position.y and py < room.position.y + room.size.y - 1:
+				out[py * chunk_size + px] = TILE_CONDUIT
+				# Dry platform (2x2 or 1x1).
+				if px + 1 < room.position.x + room.size.x - 1:
+					out[py * chunk_size + px + 1] = TILE_FLOOR
+	else:
+		var walk_x: int = room.position.x + room.size.x / 2
+		for y in range(room.position.y, room.position.y + room.size.y):
+			out[y * chunk_size + walk_x] = TILE_CONDUIT
+		for _i in range(rng.randi_range(1, 3)):
+			var py: int = rng.randi_range(room.position.y + 1, room.position.y + room.size.y - 2)
+			var branch_dir: int = 1 if rng.randi() % 2 == 0 else -1
+			var px: int = walk_x + branch_dir
+			if px > room.position.x and px < room.position.x + room.size.x - 1:
+				out[py * chunk_size + px] = TILE_CONDUIT
+				if py + 1 < room.position.y + room.size.y - 1:
+					out[(py + 1) * chunk_size + px] = TILE_FLOOR
+	# Entry/exit outlets at walkway ends.
+	out[room.position.y * chunk_size + (room.position.x + room.size.x / 2)] = TILE_OUTLET
+	out[(room.position.y + room.size.y - 1) * chunk_size + (room.position.x + room.size.x / 2)] = TILE_OUTLET
+
+
+## Small ceremonial crypt with service core "sarcophagi" arranged in rows,
+## conduit flooring, and a central rich-wall altar.
+static func _carve_crypt(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	_fill_rect(out, chunk_size, room, TILE_FLOOR)
+	# Conduit floor aisle down the center.
+	var center_x: int = room.position.x + room.size.x / 2
+	for y in range(room.position.y, room.position.y + room.size.y):
+		out[y * chunk_size + center_x] = TILE_CONDUIT
+	# Service core sarcophagi in rows on each side.
+	var spacing: int = 2
+	for y in range(room.position.y + 1, room.position.y + room.size.y - 1, spacing):
+		# Left row.
+		var left_x: int = room.position.x + 1
+		if left_x < center_x and out[y * chunk_size + left_x] == TILE_FLOOR:
+			out[y * chunk_size + left_x] = TILE_SERVICE_CORE
+		# Right row.
+		var right_x: int = room.position.x + room.size.x - 2
+		if right_x > center_x and out[y * chunk_size + right_x] == TILE_FLOOR:
+			out[y * chunk_size + right_x] = TILE_SERVICE_CORE
+	# Rich-wall altar at the far end.
+	var altar_y: int = room.position.y + room.size.y - 1
+	for x in range(center_x - 1, center_x + 2):
+		if x >= room.position.x and x < room.position.x + room.size.x:
+			out[altar_y * chunk_size + x] = TILE_RICH_WALL
+	# Outlet at the entrance.
+	out[room.position.y * chunk_size + center_x] = TILE_OUTLET
+
+
+## Military-style armory with parallel rich-wall weapon racks separated by
+## narrow conduit aisles. Periodic outlets simulate charging stations.
+static func _carve_armory(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	_fill_rect(out, chunk_size, room, TILE_FLOOR)
+	var horizontal_racks: bool = rng.randi() % 2 == 0
+	if horizontal_racks:
+		for y in range(room.position.y + 1, room.position.y + room.size.y - 1):
+			var row_offset: int = (y - room.position.y) % 3
+			if row_offset == 1:
+				# Weapon rack row (rich wall segments with floor gaps).
+				for x in range(room.position.x + 1, room.position.x + room.size.x - 1):
+					if (x - room.position.x) % 3 != 0:
+						out[y * chunk_size + x] = TILE_RICH_WALL
+			elif row_offset == 2:
+				# Conduit aisle.
+				for x in range(room.position.x + 1, room.position.x + room.size.x - 1):
+					out[y * chunk_size + x] = TILE_CONDUIT
+	else:
+		for x in range(room.position.x + 1, room.position.x + room.size.x - 1):
+			var col_offset: int = (x - room.position.x) % 3
+			if col_offset == 1:
+				for y in range(room.position.y + 1, room.position.y + room.size.y - 1):
+					if (y - room.position.y) % 3 != 0:
+						out[y * chunk_size + x] = TILE_RICH_WALL
+			elif col_offset == 2:
+				for y in range(room.position.y + 1, room.position.y + room.size.y - 1):
+					out[y * chunk_size + x] = TILE_CONDUIT
+	# Central service core command post + single outlet.
+	var center := _rect_center(room)
+	out[center.y * chunk_size + center.x] = TILE_SERVICE_CORE
+	out[(room.position.y + 1) * chunk_size + (room.position.x + 1)] = TILE_OUTLET
+
+
+## Hexagonal chamber carved using a hex-distance function from the room center.
+## Produces a distinctive six-sided room shape with conduit accents at vertices.
+static func _carve_hex_chamber(
+	out: PackedInt32Array,
+	chunk_size: int,
+	room: Rect2i,
+	rng: RandomNumberGenerator,
+) -> void:
+	var center := Vector2(
+		float(room.position.x) + (float(room.size.x) - 1.0) * 0.5,
+		float(room.position.y) + (float(room.size.y) - 1.0) * 0.5,
+	)
+	var rx: float = maxf(1.0, float(room.size.x) * 0.5)
+	var ry: float = maxf(1.0, float(room.size.y) * 0.5)
+	for ly in range(room.position.y, room.position.y + room.size.y):
+		for lx in range(room.position.x, room.position.x + room.size.x):
+			# Hex distance: max of three axial projections.
+			var dx: float = absf(float(lx) - center.x) / rx
+			var dy: float = absf(float(ly) - center.y) / ry
+			var hex_dist: float = maxf(dx, dy * 0.866 + dx * 0.5)
+			var rough: float = rng.randf_range(-0.04, 0.04)
+			if hex_dist <= 1.0 + rough:
+				out[ly * chunk_size + lx] = TILE_FLOOR
+	# Conduit accents at hex vertices (corners of the hexagon).
+	var angles: Array[float] = [0.0, 1.047, 2.094, 3.142, 4.189, 5.236]
+	for angle in angles:
+		var vx: int = int(roundf(center.x + cos(angle) * rx * 0.85))
+		var vy: int = int(roundf(center.y + sin(angle) * ry * 0.85))
+		if vx >= room.position.x and vx < room.position.x + room.size.x \
+				and vy >= room.position.y and vy < room.position.y + room.size.y:
+			var idx: int = vy * chunk_size + vx
+			if out[idx] == TILE_FLOOR:
+				out[idx] = TILE_CONDUIT
 
 
 ## Injects structured concrete columns inside larger cavernous spaces.
@@ -1278,6 +1502,80 @@ static func _random_floor_cell(
 	return Vector2i(-1, -1)
 
 
+## Scans corridor floor tiles and adds periodic rest alcoves (small 3x3
+## widenings with outlets) and lighting along long stretches. Only modifies
+## tiles that are currently floor surrounded by walls on 2+ sides (corridor
+## tiles) to avoid disrupting room interiors.
+static func _corridor_improvement_pass(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	const DIRS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var margin: int = 3
+	var outlet_spacing: int = 12  # Place outlet lights every N corridor tiles.
+	var last_outlet: Vector2i = Vector2i(-99, -99)
+	var alcove_chance: float = 0.015  # Chance per corridor tile to carve a rest alcove.
+
+	for y in range(margin, chunk_size - margin):
+		for x in range(margin, chunk_size - margin):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_FLOOR:
+				continue
+			# Count wall neighbors — corridor tiles have 2+ wall neighbors.
+			var wall_count: int = 0
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					if out[ny * chunk_size + nx] == TILE_WALL:
+						wall_count += 1
+			if wall_count < 2:
+				continue
+			# This is a corridor tile.
+			# Periodic outlet lights along corridors.
+			var dist_to_last: int = maxi(absi(x - last_outlet.x), absi(y - last_outlet.y))
+			if dist_to_last >= outlet_spacing and rng.randf() < 0.3:
+				out[idx] = TILE_OUTLET
+				last_outlet = Vector2i(x, y)
+			# Rest alcove: carve a 2x2 or 3x3 widening into a wall neighbor.
+			if rng.randf() < alcove_chance:
+				# Pick a wall neighbor to expand into.
+				for off in DIRS:
+					var wx: int = x + off.x
+					var wy: int = y + off.y
+					if wx < margin or wx >= chunk_size - margin or wy < margin or wy >= chunk_size - margin:
+						continue
+					if out[wy * chunk_size + wx] != TILE_WALL:
+						continue
+					# Verify the wall cell is fully surrounded (won't breach into another room).
+					var deep: bool = true
+					for d2 in DIRS:
+						var w2x: int = wx + d2.x
+						var w2y: int = wy + d2.y
+						if w2x >= 0 and w2x < chunk_size and w2y >= 0 and w2y < chunk_size:
+							if out[w2y * chunk_size + w2x] == TILE_FLOOR and Vector2i(w2x, w2y) != Vector2i(x, y):
+								deep = false
+								break
+					if not deep:
+						continue
+					# Carve a small 2x2 alcove.
+					out[wy * chunk_size + wx] = TILE_FLOOR
+					# Add perpendicular neighbor too.
+					var perp := Vector2i(-off.y, off.x)
+					var px: int = wx + perp.x
+					var py: int = wy + perp.y
+					if px >= margin and px < chunk_size - margin and py >= margin and py < chunk_size - margin:
+						if out[py * chunk_size + px] == TILE_WALL:
+							out[py * chunk_size + px] = TILE_FLOOR
+					# Outlet light inside the alcove.
+					out[wy * chunk_size + wx] = TILE_OUTLET
+					break
+
+
 static func _nearest_room_center(from: Vector2i, rooms: Array[Rect2i]) -> Vector2i:
 	if rooms.is_empty():
 		return Vector2i(-1, -1)
@@ -1356,7 +1654,7 @@ static func _carve_macro_structure(
 	rng: RandomNumberGenerator,
 	zone: int,
 ) -> void:
-	var style: int = rng.randi_range(0, 2)
+	var style: int = rng.randi_range(0, 4)
 	var center := Vector2i(chunk_size / 2, chunk_size / 2)
 
 	match style:
@@ -1378,6 +1676,13 @@ static func _carve_macro_structure(
 					if x >= 0 and x < chunk_size and y >= 0 and y < chunk_size:
 						out[y * chunk_size + x] = TILE_WALL
 
+			# Add rich-wall accent lines on the monolith faces.
+			for x in range(rect.position.x, rect.position.x + rect.size.x):
+				if x >= 0 and x < chunk_size:
+					out[rect.position.y * chunk_size + x] = TILE_RICH_WALL
+					if rect.position.y + rect.size.y - 1 < chunk_size:
+						out[(rect.position.y + rect.size.y - 1) * chunk_size + x] = TILE_RICH_WALL
+
 		1: # The Core Cylinder (Outer walkway ring, hollow deep core void)
 			var outer_r: float = float(chunk_size) * 0.38
 			var inner_r: float = float(chunk_size) * 0.22
@@ -1390,10 +1695,20 @@ static func _carve_macro_structure(
 						out[y * chunk_size + x] = TILE_FLOOR
 					elif dist <= void_r:
 						out[y * chunk_size + x] = TILE_VOID
+					elif dist <= inner_r:
+						# Conduit ring between walkway and void.
+						out[y * chunk_size + x] = TILE_CONDUIT
+			# Service cores at cardinal points on the walkway.
+			for angle_idx in range(4):
+				var angle: float = float(angle_idx) * PI * 0.5
+				var sc_x: int = int(roundf(center.x + cos(angle) * (outer_r - 1.0)))
+				var sc_y: int = int(roundf(center.y + sin(angle) * (outer_r - 1.0)))
+				if sc_x >= 0 and sc_x < chunk_size and sc_y >= 0 and sc_y < chunk_size:
+					out[sc_y * chunk_size + sc_x] = TILE_SERVICE_CORE
 
 		2: # Massive Grid Matrix (Rigidly spaced monolithic support pillars)
 			var spacing: int = rng.randi_range(4, 6)
-			
+
 			# Carve open area first
 			for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
 				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
@@ -1407,6 +1722,62 @@ static func _carve_macro_structure(
 							var idx: int = (y + dy) * chunk_size + (x + dx)
 							if idx < out.size():
 								out[idx] = TILE_WALL
+			# Conduit floor between pillars.
+			for y in range(_EDGE_MARGIN + 1, chunk_size - _EDGE_MARGIN - 1, spacing):
+				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+					out[y * chunk_size + x] = TILE_CONDUIT
+
+		3: # The Grand Atrium — concentric rings of different materials
+			var outer_r: float = float(chunk_size) * 0.40
+			var mid_r: float = float(chunk_size) * 0.28
+			var inner_r: float = float(chunk_size) * 0.14
+			for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+					var dist: float = center.distance_to(Vector2i(x, y))
+					if dist <= inner_r:
+						out[y * chunk_size + x] = TILE_SERVICE_CORE
+					elif dist <= mid_r:
+						out[y * chunk_size + x] = TILE_CONDUIT
+					elif dist <= outer_r:
+						out[y * chunk_size + x] = TILE_FLOOR
+			# Outlet ring at the mid boundary (4 cardinal points only).
+			var outlet_count: int = 4
+			for i in range(outlet_count):
+				var angle: float = float(i) * TAU / float(outlet_count)
+				var ox: int = int(roundf(center.x + cos(angle) * mid_r))
+				var oy: int = int(roundf(center.y + sin(angle) * mid_r))
+				if ox >= 0 and ox < chunk_size and oy >= 0 and oy < chunk_size:
+					out[oy * chunk_size + ox] = TILE_OUTLET
+
+		_: # The Reactor Core — central void with radiating conduit arms
+			var core_r: float = float(chunk_size) * 0.10
+			var arm_r: float = float(chunk_size) * 0.38
+			for y in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+				for x in range(_EDGE_MARGIN, chunk_size - _EDGE_MARGIN):
+					var dist: float = center.distance_to(Vector2i(x, y))
+					if dist <= core_r:
+						out[y * chunk_size + x] = TILE_VOID
+					elif dist <= core_r + 2.0:
+						out[y * chunk_size + x] = TILE_CONDUIT
+					elif dist <= arm_r:
+						out[y * chunk_size + x] = TILE_FLOOR
+			# Radiating conduit arms from core to edge.
+			var arm_count: int = 6
+			for i in range(arm_count):
+				var angle: float = float(i) * TAU / float(arm_count)
+				var steps: int = int(arm_r + 2.0)
+				for s in range(steps):
+					var ax: int = int(roundf(center.x + cos(angle) * float(s)))
+					var ay: int = int(roundf(center.y + sin(angle) * float(s)))
+					if ax >= _EDGE_MARGIN and ax < chunk_size - _EDGE_MARGIN and ay >= _EDGE_MARGIN and ay < chunk_size - _EDGE_MARGIN:
+						out[ay * chunk_size + ax] = TILE_CONDUIT
+			# Service cores at arm tips.
+			for i in range(arm_count):
+				var angle: float = float(i) * TAU / float(arm_count)
+				var tx: int = int(roundf(center.x + cos(angle) * (arm_r - 1.0)))
+				var ty: int = int(roundf(center.y + sin(angle) * (arm_r - 1.0)))
+				if tx >= 0 and tx < chunk_size and ty >= 0 and ty < chunk_size:
+					out[ty * chunk_size + tx] = TILE_SERVICE_CORE
 
 	# Draw explicit corridors from each outer doorway to the center to secure traversability
 	for door in doors:
@@ -1821,6 +2192,382 @@ static func _acid_kind_at(
 		2: return TILE_ACID
 		1: return TILE_ACID_SHALLOW
 		_: return TILE_ACID_PUDDLE
+
+
+## Fine-detail pass applied after all major generation. Adds corridor wall
+## trim, dead-end furnishings, varied pillars, environmental storytelling
+## props, and safer void-edge treatment.
+static func _world_detail_pass(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	const DIRS: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+
+	# 1. Corridor wall trim: floor tiles adjacent to walls in open areas get
+	#    conduit or rust trim, making corridors feel industrial.
+	for y in range(1, chunk_size - 1):
+		for x in range(1, chunk_size - 1):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_FLOOR:
+				continue
+			var wall_neighbors: int = 0
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					if out[ny * chunk_size + nx] == TILE_WALL:
+						wall_neighbors += 1
+			# Only trim tiles that are snug against walls (2+ wall neighbors).
+			if wall_neighbors >= 2 and rng.randf() < 0.18:
+				match zone:
+					0, 3:
+						if rng.randf() < 0.6:
+							out[idx] = TILE_RUST
+						else:
+							out[idx] = TILE_DEBRIS
+					1, 4:
+						out[idx] = TILE_CONDUIT
+					_:
+						if rng.randf() < 0.5:
+							out[idx] = TILE_CONDUIT
+
+	# 2. Dead-end content: scan for isolated floor tiles surrounded by 3+
+	#    wall neighbors (dead-end tips) and add a small feature.
+	for y in range(2, chunk_size - 2):
+		for x in range(2, chunk_size - 2):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_FLOOR:
+				continue
+			var wall_count: int = 0
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					if out[ny * chunk_size + nx] == TILE_WALL:
+						wall_count += 1
+			# Dead-end tip: 3 wall neighbors and 1 floor neighbor.
+			if wall_count >= 3 and rng.randf() < 0.40:
+				var feature: int = rng.randi_range(0, 3)
+				match feature:
+					0:
+						out[idx] = TILE_OUTLET
+					1:
+						out[idx] = TILE_SERVICE_CORE
+					2:
+						# Keep floor but mark it as a special conduit pad.
+						out[idx] = TILE_CONDUIT
+					_:
+						pass # Leave as plain floor (sometimes empty is fine).
+
+	# 3. Environmental storytelling: scattered abandoned workstation clusters
+	#    in open wall-adjacent areas. Look for floor tiles with exactly 1 wall
+	#    neighbor and no special tile already.
+	for y in range(2, chunk_size - 2):
+		for x in range(2, chunk_size - 2):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_FLOOR:
+				continue
+			var wall_count: int = 0
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					if out[ny * chunk_size + nx] == TILE_WALL:
+						wall_count += 1
+			if wall_count == 1 and rng.randf() < 0.012:
+				# Place a small workstation cluster: conduit tile + outlet.
+				out[idx] = TILE_CONDUIT
+				# Try to add an outlet next to it.
+				for off in DIRS:
+					var nx: int = x + off.x
+					var ny: int = y + off.y
+					if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+						var nidx: int = ny * chunk_size + nx
+						if out[nidx] == TILE_FLOOR:
+							out[nidx] = TILE_OUTLET
+							break
+
+	# 4. Void-edge safety railing: conduit tiles along void edges to serve as
+	#    visual catwalk railings. More consistent than the existing catwalk logic.
+	for y in range(1, chunk_size - 1):
+		for x in range(1, chunk_size - 1):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_FLOOR and out[idx] != TILE_CONDUIT and out[idx] != TILE_RUST:
+				continue
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					if out[ny * chunk_size + nx] == TILE_VOID:
+						# Replace this edge tile with conduit (safety railing).
+						out[idx] = TILE_CONDUIT
+						break
+
+	# 5. Pillar variety: in rooms with pillars (wall tiles surrounded by floor),
+	#    randomly upgrade some to rich-wall or service-core pillars.
+	for y in range(2, chunk_size - 2):
+		for x in range(2, chunk_size - 2):
+			var idx: int = y * chunk_size + x
+			if out[idx] != TILE_WALL:
+				continue
+			# A pillar is a wall tile with 4+ floor neighbors.
+			var floor_count: int = 0
+			for off in DIRS:
+				var nx: int = x + off.x
+				var ny: int = y + off.y
+				if nx >= 0 and nx < chunk_size and ny >= 0 and ny < chunk_size:
+					var ntile: int = out[ny * chunk_size + nx]
+					if ntile == TILE_FLOOR or ntile == TILE_CONDUIT or ntile == TILE_DEBRIS:
+						floor_count += 1
+			if floor_count >= 3 and rng.randf() < 0.15:
+				match zone:
+					1:
+						out[idx] = TILE_SERVICE_CORE if rng.randf() < 0.5 else TILE_RICH_WALL
+					3:
+						out[idx] = TILE_RICH_WALL
+					4:
+						out[idx] = TILE_RICH_WALL if rng.randf() < 0.7 else TILE_SERVICE_CORE
+					_:
+						if rng.randf() < 0.4:
+							out[idx] = TILE_RICH_WALL
+
+
+## Carves sealed chambers entirely surrounded by walls. Players discover them
+## only by mining through wall tiles. Each hidden room has a random theme:
+## resource cache, ancient chamber, hazard room, or treasure vault.
+static func _hidden_room_pass(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+	zone: int,
+) -> void:
+	# Number of hidden rooms varies by zone.
+	var room_count: int = 0
+	match zone:
+		0:  # The Abyss — more hidden ruins
+			room_count = rng.randi_range(1, 3)
+		1:  # Industrial Core — hidden utility closets
+			room_count = rng.randi_range(0, 2)
+		2:  # Habitation Blocks — sealed apartments
+			room_count = rng.randi_range(1, 2)
+		3:  # Lithic Vault — rich mineral pockets
+			room_count = rng.randi_range(2, 4)
+		4:  # Structural Grid — hidden support chambers
+			room_count = rng.randi_range(0, 2)
+
+	for _i in range(room_count):
+		var origin: Vector2i = _find_hidden_room_site(out, chunk_size, rng)
+		if origin.x < 0:
+			continue
+		_carve_hidden_room(out, chunk_size, rng, origin, zone)
+
+
+## Finds a deep-wall cell suitable as the center of a hidden room.
+## The cell must be wall, have all 8 neighbors as wall, and be away from
+## chunk edges and existing floor tiles.
+static func _find_hidden_room_site(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+) -> Vector2i:
+	var margin: int = 5
+	for _attempt in 48:
+		var cx: int = rng.randi_range(margin, chunk_size - margin - 1)
+		var cy: int = rng.randi_range(margin, chunk_size - margin - 1)
+		var idx: int = cy * chunk_size + cx
+		if out[idx] != TILE_WALL:
+			continue
+		# Ensure all 8 neighbors are also wall (deep interior).
+		var all_wall: bool = true
+		for dy in range(-2, 3):
+			for dx in range(-2, 3):
+				if dx == 0 and dy == 0:
+					continue
+				var nx: int = cx + dx
+				var ny: int = cy + dy
+				if nx < 0 or nx >= chunk_size or ny < 0 or ny >= chunk_size:
+					all_wall = false
+					break
+				if out[ny * chunk_size + nx] != TILE_WALL:
+					all_wall = false
+					break
+			if not all_wall:
+				break
+		if all_wall:
+			return Vector2i(cx, cy)
+	return Vector2i(-1, -1)
+
+
+## Carves a single hidden room at the given center and fills it with themed content.
+static func _carve_hidden_room(
+	out: PackedInt32Array,
+	chunk_size: int,
+	rng: RandomNumberGenerator,
+	center: Vector2i,
+	zone: int,
+) -> void:
+	# Room dimensions: small and intimate.
+	var w: int = rng.randi_range(3, 5)
+	var h: int = rng.randi_range(3, 5)
+	var origin := Vector2i(
+		clampi(center.x - w / 2, 3, chunk_size - w - 3),
+		clampi(center.y - h / 2, 3, chunk_size - h - 3),
+	)
+
+	# Verify the area is all wall before carving.
+	for ly in range(origin.y - 1, origin.y + h + 1):
+		for lx in range(origin.x - 1, origin.x + w + 1):
+			if lx < 0 or lx >= chunk_size or ly < 0 or ly >= chunk_size:
+				return
+			# The border ring must be wall; interior will be carved.
+			var on_interior: bool = (
+				lx >= origin.x and lx < origin.x + w
+				and ly >= origin.y and ly < origin.y + h
+			)
+			if not on_interior and out[ly * chunk_size + lx] != TILE_WALL:
+				return
+
+	# Pick a room theme.
+	var theme: int = rng.randi_range(0, 7)
+
+	# Carve the interior as floor.
+	for ly in range(origin.y, origin.y + h):
+		for lx in range(origin.x, origin.x + w):
+			out[ly * chunk_size + lx] = TILE_FLOOR
+
+	# Apply themed content.
+	match theme:
+		0: # Resource Cache — rich walls lining the room + service core center
+			var rc := Vector2i(origin.x + w / 2, origin.y + h / 2)
+			out[rc.y * chunk_size + rc.x] = TILE_SERVICE_CORE
+			# Line one or two walls with rich wall tiles.
+			var side: int = rng.randi_range(0, 3)
+			if side == 0: # North wall
+				for lx in range(origin.x, origin.x + w):
+					out[(origin.y - 1) * chunk_size + lx] = TILE_RICH_WALL
+			elif side == 1: # South wall
+				for lx in range(origin.x, origin.x + w):
+					out[(origin.y + h) * chunk_size + lx] = TILE_RICH_WALL
+			elif side == 2: # West wall
+				for ly in range(origin.y, origin.y + h):
+					out[ly * chunk_size + (origin.x - 1)] = TILE_RICH_WALL
+			else: # East wall
+				for ly in range(origin.y, origin.y + h):
+					out[ly * chunk_size + (origin.x + w)] = TILE_RICH_WALL
+
+		1: # Ancient Chamber — teleporter + outlets
+			var rc := Vector2i(origin.x + w / 2, origin.y + h / 2)
+			out[rc.y * chunk_size + rc.x] = TILE_TELEPORTER
+			# Scatter outlets in corners.
+			if w >= 3 and h >= 3:
+				out[origin.y * chunk_size + origin.x] = TILE_OUTLET
+				out[(origin.y + h - 1) * chunk_size + (origin.x + w - 1)] = TILE_OUTLET
+
+		2: # Hazard Room — acid pool with conduit catwalk access
+			var fluid_tile: int = TILE_ACID_SHALLOW
+			if zone == 2 or zone == 4:
+				fluid_tile = TILE_WATER_SHALLOW
+			# Fill center with fluid, edges with conduit.
+			for ly in range(origin.y, origin.y + h):
+				for lx in range(origin.x, origin.x + w):
+					var on_edge: bool = (
+						lx == origin.x or lx == origin.x + w - 1
+						or ly == origin.y or ly == origin.y + h - 1
+					)
+					if on_edge:
+						out[ly * chunk_size + lx] = TILE_CONDUIT
+					else:
+						out[ly * chunk_size + lx] = fluid_tile
+			# One bridge tile across the center.
+			if w >= 3:
+				var bridge_y: int = origin.y + h / 2
+				for lx in range(origin.x, origin.x + w):
+					out[bridge_y * chunk_size + lx] = TILE_CONDUIT
+
+		3: # Treasure Vault — multiple rich walls + service cores + outlets
+			# Line all four border walls with rich wall.
+			for lx in range(origin.x, origin.x + w):
+				out[(origin.y - 1) * chunk_size + lx] = TILE_RICH_WALL
+				out[(origin.y + h) * chunk_size + lx] = TILE_RICH_WALL
+			for ly in range(origin.y, origin.y + h):
+				out[ly * chunk_size + (origin.x - 1)] = TILE_RICH_WALL
+				out[ly * chunk_size + (origin.x + w)] = TILE_RICH_WALL
+			# Place service cores and outlets inside.
+			var core_count: int = mini(3, (w * h) / 3)
+			for _c in range(core_count):
+				var px: int = rng.randi_range(origin.x, origin.x + w - 1)
+				var py: int = rng.randi_range(origin.y, origin.y + h - 1)
+				if out[py * chunk_size + px] == TILE_FLOOR:
+					out[py * chunk_size + px] = TILE_SERVICE_CORE if rng.randf() < 0.6 else TILE_OUTLET
+
+		4: # Abandoned Workshop — conduit floor + scattered service cores
+			for ly in range(origin.y, origin.y + h):
+				for lx in range(origin.x, origin.x + w):
+					if rng.randf() < 0.4:
+						out[ly * chunk_size + lx] = TILE_CONDUIT
+			for _c in range(rng.randi_range(1, 2)):
+				var px: int = rng.randi_range(origin.x, origin.x + w - 1)
+				var py: int = rng.randi_range(origin.y, origin.y + h - 1)
+				out[py * chunk_size + px] = TILE_SERVICE_CORE
+
+		5: # Ancient Terminal — teleporter surrounded by conduit ring + service cores
+			var term_center := Vector2i(origin.x + w / 2, origin.y + h / 2)
+			out[term_center.y * chunk_size + term_center.x] = TILE_TELEPORTER
+			# Conduit ring around the teleporter.
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if dx == 0 and dy == 0:
+						continue
+					var rx: int = term_center.x + dx
+					var ry: int = term_center.y + dy
+					if rx >= origin.x and rx < origin.x + w and ry >= origin.y and ry < origin.y + h:
+						out[ry * chunk_size + rx] = TILE_CONDUIT
+			# Service cores in corners.
+			if w >= 3 and h >= 3:
+				out[origin.y * chunk_size + origin.x] = TILE_SERVICE_CORE
+				out[origin.y * chunk_size + (origin.x + w - 1)] = TILE_SERVICE_CORE
+				out[(origin.y + h - 1) * chunk_size + origin.x] = TILE_SERVICE_CORE
+				out[(origin.y + h - 1) * chunk_size + (origin.x + w - 1)] = TILE_SERVICE_CORE
+			# Outlets at midpoints of walls.
+			if w >= 4:
+				out[(origin.y + h / 2) * chunk_size + origin.x] = TILE_OUTLET
+				out[(origin.y + h / 2) * chunk_size + (origin.x + w - 1)] = TILE_OUTLET
+
+		6: # Crystal Grotto — irregular rich-wall clusters with floor gaps
+			for ly in range(origin.y, origin.y + h):
+				for lx in range(origin.x, origin.x + w):
+					var cell_dist: float = Vector2(lx - origin.x - w / 2, ly - origin.y - h / 2).length()
+					var max_dist: float = float(mini(w, h)) * 0.5
+					if cell_dist < max_dist * 0.7 and rng.randf() < 0.55:
+						out[ly * chunk_size + lx] = TILE_RICH_WALL
+					elif rng.randf() < 0.2:
+						out[ly * chunk_size + lx] = TILE_SERVICE_CORE
+			# Central teleporter "crystal heart."
+			if w >= 3 and h >= 3:
+				out[(origin.y + h / 2) * chunk_size + (origin.x + w / 2)] = TILE_TELEPORTER
+
+		_: # Forgotten Generator — dense service core cluster with sparse outlets
+			# Conduit floor throughout.
+			for ly in range(origin.y, origin.y + h):
+				for lx in range(origin.x, origin.x + w):
+					out[ly * chunk_size + lx] = TILE_CONDUIT
+			# Service core cluster in center.
+			var core_w: int = mini(3, w - 2)
+			var core_h: int = mini(3, h - 2)
+			var cx: int = origin.x + (w - core_w) / 2
+			var cy: int = origin.y + (h - core_h) / 2
+			for ly in range(cy, cy + core_h):
+				for lx in range(cx, cx + core_w):
+					out[ly * chunk_size + lx] = TILE_SERVICE_CORE
+			# Two outlets at opposite corners of the room.
+			if origin.y >= 0 and origin.x >= 0:
+				out[origin.y * chunk_size + origin.x] = TILE_OUTLET
+			if (origin.y + h - 1) < chunk_size and (origin.x + w - 1) < chunk_size:
+				out[(origin.y + h - 1) * chunk_size + (origin.x + w - 1)] = TILE_OUTLET
 
 
 ## Simulates mechanical wear, fluid corrosion, and wiring decay over extensive operations.

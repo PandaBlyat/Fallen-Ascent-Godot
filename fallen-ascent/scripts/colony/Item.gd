@@ -61,6 +61,9 @@ var kind: int = Kind.SCRAP
 var grid: Vector2i = Vector2i.ZERO
 var count: int = 1
 var reserved_by: Node = null
+## Per-stack condition (0..100). Degrades when stored in an exposed stockpile
+## (not enclosed by walls + door). At 0 the stack loses 1 count per tick.
+var condition: float = 100.0
 ## Wall-clock msec before which the StockpileManager will not post a fresh haul
 ## job for this item. Set when a worker drops it after failing to deliver, so
 ## an unreachable / full destination doesn't trigger an instant pickup/drop loop.
@@ -90,6 +93,20 @@ func set_grid(g: Vector2i) -> void:
 
 func get_grid() -> Vector2i:
 	return grid
+
+
+## Reduces condition by `amount`. When condition hits 0, one count is consumed
+## and condition resets to 100. Returns true if the stack was destroyed
+## (count reached 0).
+func degrade(amount: float) -> bool:
+	condition = maxf(0.0, condition - amount)
+	if condition <= 0.0:
+		count -= 1
+		condition = 100.0
+		if count <= 0:
+			return true
+		queue_redraw()
+	return false
 
 
 func add_to_stack(amount: int, max_stack: int = MAX_STACK) -> int:

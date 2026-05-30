@@ -21,6 +21,10 @@ const _FLOOR_VARIATION_SHADER: Shader = preload("res://resources/shaders/floor_v
 ## Single material shared across every chunk's base layer — the shader keys
 ## off world-space tile coords, so one material handles all of them.
 static var _floor_variation_material: ShaderMaterial = null
+## Per-chunk material instance for biome-aware floor variation. Replaces the
+## shared material on each chunk's base layer so zone-specific uniforms can
+## be applied without affecting other chunks.
+var _floor_material: ShaderMaterial = null
 const _REPAINT_OFFSETS: Array[Vector2i] = [
 	Vector2i.ZERO,
 	Vector2i(0, -1),
@@ -63,7 +67,8 @@ func _init() -> void:
 	_grass_masks.resize(_TILE_COUNT)
 	_walker_positions.resize(8)
 	_base_layer = _make_layer("BaseTerrain", TERRAIN_Z_BASE)
-	_base_layer.material = _floor_variation_material_shared()
+	_floor_material = _floor_variation_material_new()
+	_base_layer.material = _floor_material
 	_water_layers.clear()
 	for band in WATER_BAND_COUNT:
 		var water_layer := _make_layer("WaterTerrain%d" % band, TERRAIN_Z_BASE + 1)
@@ -86,6 +91,7 @@ func populate(coord: Vector2i, noise: FastNoiseLite) -> void:
 	chunk_coord = coord
 	position = Vector2(coord * SIZE * TILE_PIXELS)
 	TerrainGenerator.populate(noise, coord, SIZE, _tiles)
+	_apply_zone_shader_uniforms(noise, coord)
 	_repaint_all()
 
 
@@ -159,6 +165,103 @@ static func _floor_variation_material_shared() -> ShaderMaterial:
 		_floor_variation_material.shader = _FLOOR_VARIATION_SHADER
 		_floor_variation_material.set_shader_parameter("tile_size", float(TILE_PIXELS))
 	return _floor_variation_material
+
+
+## Creates a per-chunk floor material instance with default uniforms.
+static func _floor_variation_material_new() -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = _FLOOR_VARIATION_SHADER
+	mat.set_shader_parameter("tile_size", float(TILE_PIXELS))
+	return mat
+
+
+## Sets zone-specific shader uniforms on this chunk's floor material so
+## different structural zones produce visually distinct floor aesthetics.
+func _apply_zone_shader_uniforms(noise: FastNoiseLite, coord: Vector2i) -> void:
+	if _floor_material == null:
+		return
+	var zone: int = TerrainGenerator.get_zone(noise, coord)
+	match zone:
+		0: # The Abyss — corroded, breached, grimy
+			_floor_material.set_shader_parameter("rust_chance", 0.25)
+			_floor_material.set_shader_parameter("rust_strength", 0.65)
+			_floor_material.set_shader_parameter("breach_chance", 0.008)
+			_floor_material.set_shader_parameter("grime_strength", 0.55)
+			_floor_material.set_shader_parameter("grime_threshold", 0.55)
+			_floor_material.set_shader_parameter("conduit_chance", 0.04)
+			_floor_material.set_shader_parameter("wear_strength", 0.50)
+			_floor_material.set_shader_parameter("wear_threshold", 0.50)
+			_floor_material.set_shader_parameter("crack_chance", 0.18)
+			_floor_material.set_shader_parameter("hazard_chance", 0.001)
+			_floor_material.set_shader_parameter("server_chance", 0.0)
+			_floor_material.set_shader_parameter("grate_chance", 0.05)
+			_floor_material.set_shader_parameter("fluid_chance", 0.01)
+			_floor_material.set_shader_parameter("split_chance", 0.12)
+			_floor_material.set_shader_parameter("patch_scale", 4.0)
+		1: # Industrial Core — hazard stripes, server LEDs, fluid leaks
+			_floor_material.set_shader_parameter("rust_chance", 0.12)
+			_floor_material.set_shader_parameter("rust_strength", 0.40)
+			_floor_material.set_shader_parameter("breach_chance", 0.002)
+			_floor_material.set_shader_parameter("grime_strength", 0.35)
+			_floor_material.set_shader_parameter("grime_threshold", 0.72)
+			_floor_material.set_shader_parameter("conduit_chance", 0.02)
+			_floor_material.set_shader_parameter("wear_strength", 0.30)
+			_floor_material.set_shader_parameter("wear_threshold", 0.70)
+			_floor_material.set_shader_parameter("crack_chance", 0.08)
+			_floor_material.set_shader_parameter("hazard_chance", 0.015)
+			_floor_material.set_shader_parameter("server_chance", 0.003)
+			_floor_material.set_shader_parameter("grate_chance", 0.04)
+			_floor_material.set_shader_parameter("fluid_chance", 0.015)
+			_floor_material.set_shader_parameter("split_chance", 0.22)
+			_floor_material.set_shader_parameter("patch_scale", 5.0)
+		2: # Habitation Blocks — cleaner, more tiled, warmer
+			_floor_material.set_shader_parameter("rust_chance", 0.06)
+			_floor_material.set_shader_parameter("rust_strength", 0.25)
+			_floor_material.set_shader_parameter("breach_chance", 0.001)
+			_floor_material.set_shader_parameter("grime_strength", 0.20)
+			_floor_material.set_shader_parameter("grime_threshold", 0.82)
+			_floor_material.set_shader_parameter("conduit_chance", 0.005)
+			_floor_material.set_shader_parameter("wear_strength", 0.18)
+			_floor_material.set_shader_parameter("wear_threshold", 0.80)
+			_floor_material.set_shader_parameter("crack_chance", 0.04)
+			_floor_material.set_shader_parameter("hazard_chance", 0.002)
+			_floor_material.set_shader_parameter("server_chance", 0.0)
+			_floor_material.set_shader_parameter("grate_chance", 0.01)
+			_floor_material.set_shader_parameter("fluid_chance", 0.0)
+			_floor_material.set_shader_parameter("split_chance", 0.35)
+			_floor_material.set_shader_parameter("patch_scale", 8.0)
+		3: # Lithic Vault — cracked, rusted, minimal tech
+			_floor_material.set_shader_parameter("rust_chance", 0.22)
+			_floor_material.set_shader_parameter("rust_strength", 0.55)
+			_floor_material.set_shader_parameter("breach_chance", 0.004)
+			_floor_material.set_shader_parameter("grime_strength", 0.45)
+			_floor_material.set_shader_parameter("grime_threshold", 0.60)
+			_floor_material.set_shader_parameter("conduit_chance", 0.005)
+			_floor_material.set_shader_parameter("wear_strength", 0.45)
+			_floor_material.set_shader_parameter("wear_threshold", 0.55)
+			_floor_material.set_shader_parameter("crack_chance", 0.22)
+			_floor_material.set_shader_parameter("hazard_chance", 0.0)
+			_floor_material.set_shader_parameter("server_chance", 0.0)
+			_floor_material.set_shader_parameter("grate_chance", 0.01)
+			_floor_material.set_shader_parameter("fluid_chance", 0.005)
+			_floor_material.set_shader_parameter("split_chance", 0.10)
+			_floor_material.set_shader_parameter("patch_scale", 3.5)
+		_: # Structural Grid — wide conduit lines, grating, clean patches
+			_floor_material.set_shader_parameter("rust_chance", 0.10)
+			_floor_material.set_shader_parameter("rust_strength", 0.30)
+			_floor_material.set_shader_parameter("breach_chance", 0.002)
+			_floor_material.set_shader_parameter("grime_strength", 0.28)
+			_floor_material.set_shader_parameter("grime_threshold", 0.75)
+			_floor_material.set_shader_parameter("conduit_chance", 0.06)
+			_floor_material.set_shader_parameter("wear_strength", 0.22)
+			_floor_material.set_shader_parameter("wear_threshold", 0.78)
+			_floor_material.set_shader_parameter("crack_chance", 0.06)
+			_floor_material.set_shader_parameter("hazard_chance", 0.008)
+			_floor_material.set_shader_parameter("server_chance", 0.001)
+			_floor_material.set_shader_parameter("grate_chance", 0.06)
+			_floor_material.set_shader_parameter("fluid_chance", 0.0)
+			_floor_material.set_shader_parameter("split_chance", 0.28)
+			_floor_material.set_shader_parameter("patch_scale", 7.0)
 
 
 func _grass_material_new() -> ShaderMaterial:

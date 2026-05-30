@@ -128,6 +128,9 @@ func _refresh(grid: Vector2i) -> void:
 	if _stockpile_manager != null and _stockpile_manager.zone_at(grid) != null:
 		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
 		lines.append("Stockpile: %d/%d" % [zone.stored_count(), zone.capacity()])
+		if _stockpile_manager.has_method("is_zone_enclosed"):
+			if not _stockpile_manager.is_zone_enclosed(zone):
+				lines.append("⚠ Degrading — enclose with walls + door")
 	var room_line: String = _room_line_at(grid)
 	if not room_line.is_empty():
 		lines.append(room_line)

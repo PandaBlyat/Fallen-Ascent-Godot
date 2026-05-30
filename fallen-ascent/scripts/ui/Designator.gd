@@ -89,6 +89,10 @@ var _build_rotation: int = 0
 var _relocate_source_anchor: Vector2i = Vector2i.ZERO
 var _relocate_source_id: int = -1
 var _relocate_source_rotation: int = 0
+var _prev_hover_zone: StockpileZone = null
+## When set, STOCKPILE mode adds cells to this zone instead of creating a new
+## one or auto-detecting. Cleared when mode changes away from STOCKPILE.
+var _expand_target_zone: StockpileZone = null
 
 
 func _ready() -> void:
@@ -109,6 +113,13 @@ func current_mode() -> int:
 
 func set_mode(mode: int) -> void:
 	_set_mode(mode)
+
+
+## Enter STOCKPILE mode targeting a specific zone for expansion. Cells dragged
+## in this mode are always added to `zone` instead of creating a new zone.
+func set_expand_zone(zone: StockpileZone) -> void:
+	_expand_target_zone = zone
+	_set_mode(Mode.STOCKPILE)
 
 
 func toggle_mode(mode: int) -> void:
@@ -179,6 +190,11 @@ func _set_mode(m: int) -> void:
 		return
 	_mode = m
 	_dragging = false
+	if _prev_hover_zone != null and is_instance_valid(_prev_hover_zone):
+		_prev_hover_zone.set_hovered(false)
+		_prev_hover_zone = null
+	if m != Mode.STOCKPILE:
+		_expand_target_zone = null
 	queue_redraw()
 	mode_changed.emit(_mode)
 
@@ -224,6 +240,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_hover_grid = _world_to_grid(_camera.get_global_mouse_position())
 		if _dragging:
 			_drag_end = _hover_grid
+		_update_stockpile_hover()
 		queue_redraw()
 
 	if _mode == Mode.NONE:
@@ -282,7 +299,19 @@ func _on_right_release() -> void:
 		var _did_place: bool = false
 		match _mode:
 			Mode.STOCKPILE:
-				_stockpile_manager.create_zone(cells)
+				if _expand_target_zone != null and is_instance_valid(_expand_target_zone):
+					_stockpile_manager.add_cells_to_zone(_expand_target_zone, cells)
+				else:
+					var existing_zone: StockpileZone = null
+					for cell in cells:
+						existing_zone = _stockpile_manager.zone_at(cell)
+						if existing_zone != null:
+							break
+					if existing_zone != null:
+						_stockpile_manager.add_cells_to_zone(existing_zone, cells)
+					else:
+						_stockpile_manager.create_zone(cells)
+				_expand_target_zone = null
 				_did_place = true
 			Mode.MINE:
 				for cell in cells:
@@ -291,8 +320,7 @@ func _on_right_release() -> void:
 				for cell in cells:
 					_apply_scrape_biomass_click(cell)
 			Mode.REMOVE_STOCKPILE:
-				for cell in cells:
-					_apply_remove_stockpile_click(cell)
+				_apply_remove_stockpile_rect(cells)
 			Mode.FORBIDDEN_ZONE:
 				for cell in cells:
 					if _forbidden_zone_manager != null:
@@ -385,12 +413,25 @@ func _apply_build_click(grid: Vector2i, blueprint_id: int) -> void:
 
 
 func _apply_remove_stockpile_click(grid: Vector2i) -> void:
-	if _fog != null and not _fog.is_explored(grid):
-		return
-	var zone: StockpileZone = _stockpile_manager.zone_at(grid)
-	if zone == null:
-		return
-	_stockpile_manager.remove_zone(zone)
+	_apply_remove_stockpile_rect([grid])
+
+
+func _apply_remove_stockpile_rect(cells_in_rect: Array[Vector2i]) -> void:
+	var by_zone: Dictionary = {}
+	for cell in cells_in_rect:
+		if _fog != null and not _fog.is_explored(cell):
+			continue
+		var zone: StockpileZone = _stockpile_manager.zone_at(cell)
+		if zone == null:
+			continue
+		if not by_zone.has(zone):
+			by_zone[zone] = Array([], TYPE_VECTOR2I, "", null)
+		(by_zone[zone] as Array).append(cell)
+	for zone in by_zone.keys():
+		var typed_cells: Array[Vector2i] = []
+		for c in by_zone[zone] as Array:
+			typed_cells.append(c as Vector2i)
+		_stockpile_manager.remove_cells_from_zone(zone, typed_cells)
 
 
 func _apply_dock_room(cells: Array[Vector2i]) -> void:
@@ -565,6 +606,19 @@ func _world_to_grid(world_pos: Vector2) -> Vector2i:
 		int(floor(world_pos.x / Chunk.TILE_PIXELS)),
 		int(floor(world_pos.y / Chunk.TILE_PIXELS)),
 	)
+
+
+func _update_stockpile_hover() -> void:
+	if _stockpile_manager == null:
+		return
+	var zone: StockpileZone = _stockpile_manager.zone_at(_hover_grid)
+	if zone == _prev_hover_zone:
+		return
+	if _prev_hover_zone != null and is_instance_valid(_prev_hover_zone):
+		_prev_hover_zone.set_hovered(false)
+	_prev_hover_zone = zone
+	if zone != null:
+		zone.set_hovered(true)
 
 
 static func _rect_cells(a: Vector2i, b: Vector2i) -> Array[Vector2i]:

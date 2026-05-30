@@ -85,6 +85,7 @@ const WATER_SHALLOW_SPEED_MULT: float = 0.3
 const WATER_PUDDLE_SPEED_MULT: float = 0.55
 const ACID_SHALLOW_SPEED_MULT: float = 0.3
 const ACID_PUDDLE_SPEED_MULT: float = 0.2
+const STOCKPILE_OCCUPIED_SPEED_MULT: float = 0.72
 const ACID_SHALLOW_DPS: float = 2.0
 const ACID_PUDDLE_DPS: float = 0.5
 const ACID_DEEP_DPS: float = 6.0
@@ -374,37 +375,232 @@ var _forbidden_zone_manager: ForbiddenZoneManager = null
 var _last_job_was_manual: bool = false
 
 # ── Particle System ─────────────────────────────────────────────────────────
-# Lightweight code-driven particle system for walking dust, mining sparks,
-# water/acid splashes, and crafting effects.
-class _Particle:
-	var pos: Vector2
-	var vel: Vector2
-	var color: Color
-	var size: float
-	var life: float
-	var max_life: float
-	
-	func _init(p: Vector2, v: Vector2, c: Color, s: float, l: float) -> void:
-		pos = p
-		vel = v
-		color = c
-		size = s
-		life = l
-		max_life = l
+# Code-driven particle effects using CPUParticles2D nodes.
+var _dust_particles: CPUParticles2D
+var _splash_particles: CPUParticles2D
+var _mining_particles: CPUParticles2D
+var _crafting_particles: CPUParticles2D
+var _rest_particles: CPUParticles2D
+var _last_move_pos: Vector2 = Vector2.ZERO  # Track position for dust particle direction
 
-const PARTICLE_MAX_COUNT: int = 64
-const PARTICLE_DUST_COLOR := Color(0.65, 0.60, 0.55, 0.8)
-const PARTICLE_WATER_COLOR := Color(0.35, 0.55, 0.85, 0.9)
-const PARTICLE_ACID_COLOR := Color(0.45, 0.95, 0.35, 0.9)
-const PARTICLE_SPARK_COLOR := Color(1.0, 0.85, 0.45, 1.0)
-const PARTICLE_ENERGY_COLOR := Color(0.55, 0.75, 1.0, 0.85)
-const PARTICLE_REST_COLOR := Color(0.60, 0.70, 0.90, 0.5)
 
-var _particles: Array[_Particle] = []
-var _last_move_pos: Vector2 = Vector2.ZERO
-var _particle_emit_cooldown: float = 0.0
-var _craft_anim_timer: float = 0.0
-var _rest_anim_timer: float = 0.0
+func _setup_particle_system() -> void:
+	# Walking dust particles - small brown/gray puffs behind the worker
+	_dust_particles = CPUParticles2D.new()
+	_dust_particles.name = "DustParticles"
+	_dust_particles.emitting = false
+	_dust_particles.amount = 12
+	_dust_particles.lifetime = 0.6
+	_dust_particles.one_shot = false
+	_dust_particles.explosiveness = 0.8
+	_dust_particles.randomness = 1.0
+	_dust_particles.direction = Vector2(0, -1)  # Float upward
+	_dust_particles.spread = 45.0
+	_dust_particles.initial_velocity_min = 15.0
+	_dust_particles.initial_velocity_max = 25.0
+	_dust_particles.gravity = Vector2(0, 30)  # Slight downward pull
+	_dust_particles.damping_min = 2.0
+	_dust_particles.damping_max = 4.0
+	_dust_particles.scale_amount_min = 2.0
+	_dust_particles.scale_amount_max = 3.5
+	_dust_particles.color = Color(0.65, 0.58, 0.50, 0.7)
+	_dust_particles.position = Vector2(0, BODY_RADIUS * 0.5)  # Behind worker
+	add_child(_dust_particles)
+
+	# Water/acid splash particles
+	_splash_particles = CPUParticles2D.new()
+	_splash_particles.name = "SplashParticles"
+	_splash_particles.emitting = false
+	_splash_particles.amount = 16
+	_splash_particles.lifetime = 0.4
+	_splash_particles.one_shot = false
+	_splash_particles.explosiveness = 0.9
+	_splash_particles.randomness = 0.8
+	_splash_particles.direction = Vector2(0, -1)
+	_splash_particles.spread = 180.0  # Splash in all directions
+	_splash_particles.initial_velocity_min = 40.0
+	_splash_particles.initial_velocity_max = 60.0
+	_splash_particles.gravity = Vector2(0, 80)
+	_splash_particles.damping_min = 3.0
+	_splash_particles.damping_max = 5.0
+	_splash_particles.scale_amount_min = 1.5
+	_splash_particles.scale_amount_max = 2.5
+	_splash_particles.color = Color(0.35, 0.55, 0.85, 0.9)  # Water blue
+	_splash_particles.position = Vector2.ZERO
+	add_child(_splash_particles)
+
+	# Mining particles - colored based on tile being mined
+	_mining_particles = CPUParticles2D.new()
+	_mining_particles.name = "MiningParticles"
+	_mining_particles.emitting = false
+	_mining_particles.amount = 20
+	_mining_particles.lifetime = 0.5
+	_mining_particles.one_shot = false
+	_mining_particles.explosiveness = 0.95
+	_mining_particles.randomness = 0.7
+	_mining_particles.direction = Vector2(0, -1)
+	_mining_particles.spread = 120.0
+	_mining_particles.initial_velocity_min = 30.0
+	_mining_particles.initial_velocity_max = 50.0
+	_mining_particles.gravity = Vector2(0, 60)
+	_mining_particles.damping_min = 2.5
+	_mining_particles.damping_max = 4.0
+	_mining_particles.scale_amount_min = 2.0
+	_mining_particles.scale_amount_max = 4.0
+	_mining_particles.color = Color(0.7, 0.65, 0.6, 0.95)  # Default stone color
+	_mining_particles.position = Vector2(0, -BODY_RADIUS * 0.3)
+	add_child(_mining_particles)
+
+	# Crafting spark particles
+	_crafting_particles = CPUParticles2D.new()
+	_crafting_particles.name = "CraftingParticles"
+	_crafting_particles.emitting = false
+	_crafting_particles.amount = 24
+	_crafting_particles.lifetime = 0.35
+	_crafting_particles.one_shot = false
+	_crafting_particles.explosiveness = 1.0
+	_crafting_particles.randomness = 1.0
+	_crafting_particles.direction = Vector2(0, -1)
+	_crafting_particles.spread = 360.0
+	_crafting_particles.initial_velocity_min = 50.0
+	_crafting_particles.initial_velocity_max = 80.0
+	_crafting_particles.gravity = Vector2(0, 40)
+	_crafting_particles.damping_min = 4.0
+	_crafting_particles.damping_max = 6.0
+	_crafting_particles.scale_amount_min = 1.0
+	_crafting_particles.scale_amount_max = 2.0
+	_crafting_particles.color = Color(1.0, 0.85, 0.45, 1.0)  # Bright yellow sparks
+	_crafting_particles.position = Vector2(0, -BODY_RADIUS * 0.5)
+	add_child(_crafting_particles)
+
+	# Rest/meditation glow particles
+	_rest_particles = CPUParticles2D.new()
+	_rest_particles.name = "RestParticles"
+	_rest_particles.emitting = false
+	_rest_particles.amount = 8
+	_rest_particles.lifetime = 1.2
+	_rest_particles.one_shot = false
+	_rest_particles.explosiveness = 0.6
+	_rest_particles.randomness = 0.9
+	_rest_particles.direction = Vector2(0, -1)
+	_rest_particles.spread = 30.0
+	_rest_particles.initial_velocity_min = 8.0
+	_rest_particles.initial_velocity_max = 15.0
+	_rest_particles.gravity = Vector2(0, -5)  # Float upward
+	_rest_particles.damping_min = 1.0
+	_rest_particles.damping_max = 2.0
+	_rest_particles.scale_amount_min = 3.0
+	_rest_particles.scale_amount_max = 5.0
+	_rest_particles.color = Color(0.60, 0.70, 0.90, 0.5)  # Soft blue glow
+	_rest_particles.position = Vector2(0, -BODY_RADIUS * 0.3)
+	add_child(_rest_particles)
+
+
+func _update_particle_emission() -> void:
+	# Only emit particles when in the right state
+	var should_dust: bool = _is_moving_state() and not _is_on_fluid()
+	var should_splash: bool = _is_moving_state() and _is_on_fluid()
+	var should_mine: bool = _state == State.WORKING and _job is MineJob
+	var should_build: bool = _state == State.BUILDING
+	var should_craft: bool = _state == State.CRAFTING
+	var should_rest: bool = _state == State.RESTING or _state == State.MEDITATING
+
+	_dust_particles.emitting = should_dust
+	_splash_particles.emitting = should_splash
+	_mining_particles.emitting = should_mine
+	_crafting_particles.emitting = should_craft or should_build
+	_rest_particles.emitting = should_rest
+
+	# Update dust particles - emit from behind worker based on movement direction
+	if should_dust and _last_move_pos != Vector2.ZERO:
+		var move_dir := (position - _last_move_pos).normalized()
+		_dust_particles.position = -move_dir * BODY_RADIUS * 0.8
+		_dust_particles.direction = move_dir  # Dust goes in direction of movement
+
+	# Update splash particles - emit from worker's feet when on fluid
+	if should_splash:
+		_splash_particles.position = Vector2(0, BODY_RADIUS * 0.5)
+		# Update color based on fluid type
+		if _chunk_manager != null:
+			var tile: int = _chunk_manager.get_tile_at(current_grid())
+			if tile == TerrainGenerator.TILE_WATER_SHALLOW or tile == TerrainGenerator.TILE_WATER_PUDDLE:
+				_splash_particles.color = Color(0.35, 0.55, 0.85, 0.9)  # Water blue
+			elif tile == TerrainGenerator.TILE_ACID_SHALLOW or tile == TerrainGenerator.TILE_ACID_PUDDLE:
+				_splash_particles.color = Color(0.45, 0.95, 0.35, 0.95)  # Acid green
+
+	# Update mining particles - emit from target tile towards worker
+	if should_mine and _job != null:
+		var mine_job := _job as MineJob
+		if mine_job.target != Vector2i.ZERO and _chunk_manager != null:
+			# Position particles at the target tile (relative to worker)
+			var target_pixel := Chunk.grid_to_pixel_center(mine_job.target)
+			var offset := target_pixel - position
+			_mining_particles.position = offset
+			
+			# Direction: from target towards worker (particles fly at the worker)
+			var direction_to_worker := -offset.normalized()
+			_mining_particles.direction = direction_to_worker
+			
+			# Color based on tile type being mined
+			var tile: int = _chunk_manager.get_tile_at(mine_job.target)
+			var tile_color: Color = _get_tile_particle_color(tile)
+			_mining_particles.color = tile_color
+
+	# Update crafting/building particles - emit from work site towards worker
+	if should_craft or should_build:
+		if _job != null:
+			var work_pos := Vector2.ZERO
+			if _job is BuildJob:
+				var build_job := _job as BuildJob
+				work_pos = Chunk.grid_to_pixel_center(build_job.target())
+			elif _job is CraftJob:
+				var craft_job := _job as CraftJob
+				work_pos = Chunk.grid_to_pixel_center(craft_job.target())
+			
+			if work_pos != Vector2.ZERO:
+				var offset := work_pos - position
+				_crafting_particles.position = offset
+				
+				# Sparks fly from work site towards worker
+				var direction_to_worker := -offset.normalized()
+				_crafting_particles.direction = direction_to_worker
+				
+				# Randomize spark colors between yellow and orange
+				if randf() < 0.5:
+					_crafting_particles.color = Color(1.0, 0.85, 0.45, 1.0)  # Yellow sparks
+				else:
+					_crafting_particles.color = Color(1.0, 0.6, 0.2, 1.0)  # Orange sparks
+
+	# Update rest particles - gentle glow around worker
+	if should_rest:
+		_rest_particles.position = Vector2.ZERO
+		# Subtle color shift for rest particles
+		var time_shift := sin(Time.get_ticks_msec() * 0.001) * 0.1
+		_rest_particles.color = Color(0.60 + time_shift, 0.70, 0.90, 0.5)
+
+
+func _get_tile_particle_color(tile: int) -> Color:
+	"""Get appropriate particle color based on tile type"""
+	match tile:
+		TerrainGenerator.TILE_WALL:
+			return Color(0.45, 0.42, 0.40, 0.95)  # Dark stone gray
+		TerrainGenerator.TILE_RICH_WALL:
+			return Color(0.75, 0.65, 0.55, 0.95)  # Rich wall tan/beige
+		TerrainGenerator.TILE_SERVICE_CORE:
+			return Color(0.6, 0.65, 0.7, 0.95)  # Metallic blue-gray
+		TerrainGenerator.TILE_TELEPORTER:
+			return Color(0.5, 0.8, 1.0, 0.95)  # Bright cyan
+		_:
+			# Default: use the tile's actual color from TerrainGenerator
+			return TerrainGenerator.tile_color(tile)
+
+
+func _is_on_fluid() -> bool:
+	if _chunk_manager == null:
+		return false
+	var tile: int = _chunk_manager.get_tile_at(current_grid())
+	return tile == TerrainGenerator.TILE_WATER_SHALLOW or tile == TerrainGenerator.TILE_WATER_PUDDLE \
+		or tile == TerrainGenerator.TILE_ACID_SHALLOW or tile == TerrainGenerator.TILE_ACID_PUDDLE
 
 
 func setup(
@@ -438,6 +634,7 @@ func _ready() -> void:
 	_crowd_tick_timer = randf_range(0.0, CROWD_TICK_INTERVAL)
 	_personality = randi() % PERSONALITY_LABELS.size()
 	_update_name_text_size()
+	_setup_particle_system()  # Initialize particle nodes
 	stats = CombatStatsScript.new() as CombatStats
 	stats.max_hp = COMBAT_HP_MAX
 	stats.hp = COMBAT_HP_MAX
@@ -1316,6 +1513,12 @@ func _process(delta: float) -> void:
 	if ai_due and _state != State.FIGHTING and not rescuing and _should_seek_charge():
 		if _begin_auto_charge():
 			return
+	# Abort haul jobs targeting deleted stockpiles immediately
+	if _job is HaulJob:
+		var haul := _job as HaulJob
+		if haul.dropoff_zone == null or not is_instance_valid(haul.dropoff_zone):
+			_abandon_job()
+			return
 	match _state:
 		State.IDLE:
 			# A mental break overrides normal work: the bot ignores the job board
@@ -1565,6 +1768,9 @@ func _process(delta: float) -> void:
 		_last_sound_state = _state
 		_last_sound_job = _job
 		_update_sounds()
+
+	# Update particle emission based on current state
+	_update_particle_emission()
 
 
 ## True when this worker is in the rebooting (downed) state — condition has
@@ -2340,7 +2546,7 @@ func _resume_after_chat() -> void:
 		
 		if resume_job is HaulJob:
 			var haul := resume_job as HaulJob
-			if haul.dropoff_zone is StockpileZone:
+			if haul.dropoff_zone != null and is_instance_valid(haul.dropoff_zone):
 				(haul.dropoff_zone as StockpileZone).unreserve(haul.dropoff)
 			if haul.item != null and is_instance_valid(haul.item):
 				(haul.item as Item).reserved_by = null
@@ -2700,8 +2906,8 @@ func _find_material_for_build(job: BuildJob) -> Item:
 		for zone in _stockpile_manager.zones:
 			for cell in zone.cells:
 				var occ: Variant = zone.occupant.get(cell)
-				if occ is Item:
-					var it2 := occ as Item
+				var it2: Item = StockpileZone._occupant_item(occ)
+				if it2 != null:
 					if it2.reserved_by == null and it2.kind == job.material_kind:
 						if cell != origin and not _route_exists(origin, cell, true):
 							continue
@@ -2775,8 +2981,8 @@ func _find_material_for_craft(job: CraftJob) -> Item:
 		for zone in _stockpile_manager.zones:
 			for cell in zone.cells:
 				var occ: Variant = zone.occupant.get(cell)
-				if occ is Item:
-					var it2 := occ as Item
+				var it2: Item = StockpileZone._occupant_item(occ)
+				if it2 != null:
 					if it2.reserved_by == null and it2.kind == job.material_kind:
 						if cell != origin and not _route_exists(origin, cell, true):
 							continue
@@ -2855,8 +3061,8 @@ func _find_material_for_operation(job: OperateStructureJob) -> Item:
 		for zone in _stockpile_manager.zones:
 			for cell in zone.cells:
 				var occ: Variant = zone.occupant.get(cell)
-				if occ is Item:
-					var it2 := occ as Item
+				var it2: Item = StockpileZone._occupant_item(occ)
+				if it2 != null:
 					if it2.reserved_by == null and it2.kind == job.material_kind:
 						if cell != origin and not _route_exists(origin, cell, true):
 							continue
@@ -3097,8 +3303,10 @@ func _drop_item() -> void:
 	if haul == null or _carried == null:
 		_abandon_job()
 		return
-	var zone := haul.dropoff_zone as StockpileZone
-	if zone == null or not is_instance_valid(zone) or not zone.contains_cell(haul.dropoff):
+	var zone: StockpileZone = null
+	if haul.dropoff_zone != null and is_instance_valid(haul.dropoff_zone):
+		zone = haul.dropoff_zone as StockpileZone
+	if zone == null or not zone.contains_cell(haul.dropoff):
 		_drop_in_place()
 		return
 	zone.unreserve(haul.dropoff)
@@ -3132,7 +3340,7 @@ func _drop_item() -> void:
 
 func _drop_in_place() -> void:
 	var haul := _job as HaulJob
-	if haul != null and haul.dropoff_zone is StockpileZone:
+	if haul != null and haul.dropoff_zone != null and is_instance_valid(haul.dropoff_zone):
 		(haul.dropoff_zone as StockpileZone).unreserve(haul.dropoff)
 	var dropped: Item = null
 	if _carried != null and is_instance_valid(_carried):
@@ -3408,7 +3616,7 @@ func _release_charge_reservation() -> void:
 func _clear_job_reservations() -> void:
 	if _job is HaulJob:
 		var haul := _job as HaulJob
-		if haul.dropoff_zone is StockpileZone:
+		if haul.dropoff_zone != null and is_instance_valid(haul.dropoff_zone):
 			(haul.dropoff_zone as StockpileZone).unreserve(haul.dropoff)
 		if haul.item != null and is_instance_valid(haul.item):
 			(haul.item as Item).reserved_by = null
@@ -3895,6 +4103,7 @@ func _advance_path(delta: float) -> bool:
 	speed_mult *= _light_speed_multiplier()
 	speed_mult *= _water_speed_multiplier()
 	speed_mult *= _energy_speed_multiplier()
+	speed_mult *= _stockpile_speed_multiplier()
 	var step: float = _move_speed * speed_mult * delta
 	while step > 0.0 and _path_index < _path.size():
 		var target: Vector2 = _path[_path_index]
@@ -3916,12 +4125,14 @@ func _advance_path(delta: float) -> bool:
 		if dist > ARRIVE_EPSILON_PX:
 			_set_facing_from_vector(to_target)
 		if dist <= step + ARRIVE_EPSILON_PX:
+			_last_move_pos = position
 			position = target
 			step -= dist
 			_path_index += 1
 			if _chunk_manager != null and _chunk_manager.is_teleporter(target_grid):
 				return false
 		else:
+			_last_move_pos = position
 			position += to_target / dist * step
 			step = 0.0
 			
@@ -3992,6 +4203,18 @@ func _water_speed_multiplier() -> float:
 	if tile == TerrainGenerator.TILE_ACID_PUDDLE:
 		return ACID_PUDDLE_SPEED_MULT
 	return 1.0
+
+
+func _stockpile_speed_multiplier() -> float:
+	if _stockpile_manager == null:
+		return 1.0
+	var zone: StockpileZone = _stockpile_manager.zone_at(current_grid())
+	if zone == null:
+		return 1.0
+	var v: Variant = zone.occupant.get(current_grid())
+	if v == null:
+		return 1.0
+	return STOCKPILE_OCCUPIED_SPEED_MULT
 
 
 func _is_low_energy_mode() -> bool:
@@ -4762,102 +4985,7 @@ func _order_highlight_world_target() -> Vector2:
 	return position
 
 
-# ── Particle System Methods ─────────────────────────────────────────────────
-
-func _spawn_particle(p: Vector2, v: Vector2, c: Color, s: float, l: float) -> void:
-	if _particles.size() >= PARTICLE_MAX_COUNT:
-		_particles.pop_front()
-	_particles.append(_Particle.new(p, v, c, s, l))
-
-
-func _emit_walking_dust() -> void:
-	# Emit 1-2 small gray/brown particles behind the worker based on movement direction.
-	var move_dir: Vector2 = position - _last_move_pos
-	if move_dir.length() < 0.5:
-		return
-	move_dir = move_dir.normalized()
-	var emit_pos: Vector2 = -move_dir * BODY_RADIUS * 0.7
-	for i in range(2):
-		var spread: Vector2 = Vector2(randf_range(-0.3, 0.3), randf_range(-0.3, 0.3))
-		var vel: Vector2 = (-move_dir * randf_range(8.0, 16.0)) + spread * 12.0
-		var col: Color = PARTICLE_DUST_COLOR
-		col.a = randf_range(0.5, 0.8)
-		_spawn_particle(emit_pos, vel, col, randf_range(1.5, 2.5), randf_range(0.4, 0.7))
-
-
-func _emit_water_splash(tile: int) -> void:
-	# Emit water or acid splash particles when walking over fluid tiles.
-	var base_color: Color = PARTICLE_WATER_COLOR
-	if tile == TerrainGenerator.TILE_ACID_SHALLOW or tile == TerrainGenerator.TILE_ACID_PUDDLE:
-		base_color = PARTICLE_ACID_COLOR
-	# Emit 3-4 upward splash particles.
-	for i in range(4):
-		var angle: float = randf_range(0.0, TAU)
-		var speed: float = randf_range(12.0, 24.0)
-		var vel: Vector2 = Vector2(cos(angle), sin(angle) - 0.5) * speed
-		var col: Color = base_color
-		col.a = randf_range(0.7, 0.95)
-		_spawn_particle(Vector2.ZERO, vel, col, randf_range(1.8, 3.0), randf_range(0.3, 0.55))
-
-
-func _emit_mining_particles(target_color: Color) -> void:
-	# Emit 2-3 particles colored like the object being mined/salvaged.
-	for i in range(3):
-		var angle: float = randf_range(0.0, TAU)
-		var speed: float = randf_range(10.0, 20.0)
-		var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
-		var col: Color = target_color
-		col.a = randf_range(0.8, 1.0)
-		_spawn_particle(Vector2.ZERO, vel, col, randf_range(2.0, 3.5), randf_range(0.5, 0.8))
-
-
-func _emit_crafting_sparks() -> void:
-	# Emit bright sparks and energy pulses during crafting.
-	for i in range(2):
-		var angle: float = randf_range(0.0, TAU)
-		var speed: float = randf_range(14.0, 28.0)
-		var vel: Vector2 = Vector2(cos(angle), sin(angle)) * speed
-		var col: Color = PARTICLE_SPARK_COLOR if randf() < 0.6 else PARTICLE_ENERGY_COLOR
-		col.a = randf_range(0.85, 1.0)
-		_spawn_particle(Vector2.ZERO, vel, col, randf_range(1.5, 2.5), randf_range(0.35, 0.6))
-
-
-func _emit_rest_glow() -> void:
-	# Emit gentle, slow-moving particles during rest/meditation.
-	var angle: float = randf_range(0.0, TAU)
-	var speed: float = randf_range(3.0, 8.0)
-	var vel: Vector2 = Vector2(cos(angle), sin(angle) - 0.3) * speed
-	var col: Color = PARTICLE_REST_COLOR
-	col.a = randf_range(0.3, 0.55)
-	_spawn_particle(Vector2.ZERO, vel, col, randf_range(2.5, 4.0), randf_range(0.8, 1.2))
-
-
-func _update_particles(delta: float) -> void:
-	# Update particle positions, fade alpha, and remove dead particles.
-	var i: int = _particles.size() - 1
-	while i >= 0:
-		var p: _Particle = _particles[i]
-		p.pos += p.vel * delta
-		p.vel *= 0.92  # Damping.
-		p.life -= delta
-		# Fade out as life decreases.
-		p.color.a = clampf(p.life / p.max_life, 0.0, 1.0) * (p.color.a / maxf(0.01, p.life / p.max_life))
-		if p.life <= 0.0:
-			_particles.remove_at(i)
-		i -= 1
-
-
-func _draw_particles() -> void:
-	# Draw all active particles as small circles with fading alpha.
-	for p in _particles:
-		var alpha: float = clampf(p.life / p.max_life, 0.0, 1.0)
-		var col: Color = p.color
-		col.a *= alpha
-		draw_circle(p.pos, p.size, col)
-
-
 func _draw() -> void:
-	_draw_particles()  # Render particles behind the worker.
 	_draw_action_bubble()
 	if _highlighter_atlas != null:
 		var cell: int = _highlight_cell()

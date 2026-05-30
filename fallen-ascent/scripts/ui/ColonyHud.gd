@@ -10,6 +10,8 @@ const UI_ATLAS_PATH := "res://resources/ui/placeholder_ui_atlas.png"
 const WORKSHOP_ATLAS_PATH := "res://resources/objects/workshops_atlas.png"
 const OBJECT_ATLAS_PATH := "res://resources/objects/craftable_objects_atlas.png"
 const DOOR_ATLAS_PATH := "res://resources/objects/doors_atlas.png"
+const ITEM_ATLAS_PATH := "res://resources/items/placeholder_items_atlas.png"
+const ITEM_REGION_SIZE := Vector2(32, 32)
 const ICON_CELL_SIZE := Vector2i(32, 32)
 const WORKSHOP_ICON_SOURCE_SIZE := Vector2i(64, 64)
 
@@ -120,6 +122,7 @@ var _object_atlas: Texture2D
 var _door_atlas: Texture2D
 var _worker_atlas: Texture2D
 var _bot_atlas: Texture2D
+var _item_atlas: Texture2D
 var _tab_group: ButtonGroup = ButtonGroup.new()
 var _current_tab: StringName = TAB_ORDERS
 var _current_building_subtab: StringName = TAB_BUILD_GENERAL
@@ -142,6 +145,7 @@ var _tech_tree_panel: CanvasLayer = null
 const TECH_TREE_SCENE: PackedScene = preload("res://scenes/ui/TechTreePanel.tscn")
 var _selection_panel: PanelContainer
 var _selection_box: VBoxContainer
+var _stockpile_filter_popup: PanelContainer = null
 var _palette_panel: PanelContainer
 var _palette_box: VBoxContainer
 var _palette_collapsed_label: Label
@@ -189,6 +193,7 @@ func _ready() -> void:
 	_door_atlas = load(DOOR_ATLAS_PATH) as Texture2D
 	_worker_atlas = load(WORKER_ATLAS_PATH) as Texture2D
 	_bot_atlas = load(BOTS_ATLAS_PATH) as Texture2D
+	_item_atlas = load(ITEM_ATLAS_PATH) as Texture2D
 
 	_build_layout()
 	_connect_signals()
@@ -1071,18 +1076,8 @@ func _resource_counts() -> Dictionary:
 			if zone == null or not is_instance_valid(zone):
 				continue
 			for value in zone.occupant.values():
-				if value == null:
-					continue
-				if typeof(value) == TYPE_OBJECT and not is_instance_valid(value as Object):
-					continue
-				var item: Item = null
-				if value is Item:
-					item = value as Item
-				elif value is Dictionary:
-					var existing: Variant = (value as Dictionary).get(StockpileZone.R_EXISTING)
-					if existing != null and typeof(existing) == TYPE_OBJECT and is_instance_valid(existing as Object):
-						item = existing as Item
-				if item != null and is_instance_valid(item):
+				var item: Item = StockpileZone._occupant_item(value)
+				if item != null:
 					counts[item.kind] = int(counts.get(item.kind, 0)) + item.count
 	return counts
 
@@ -1283,6 +1278,7 @@ func _refresh_selection_panel() -> void:
 	if _selection_panel == null or _selection_box == null:
 		return
 	_close_hardware_popup()
+	_close_stockpile_filter_popup()
 	for child in _selection_box.get_children():
 		_selection_box.remove_child(child)
 		child.queue_free()
@@ -1963,29 +1959,307 @@ func _build_stockpile_card() -> void:
 	if _selected_stockpile == null or not is_instance_valid(_selected_stockpile):
 		_selected_stockpile = null
 		return
+	var zone := _selected_stockpile
 	var card := VBoxContainer.new()
 	card.custom_minimum_size = Vector2(360, 0)
 	card.add_theme_constant_override("separation", 5)
 	_selection_box.add_child(card)
-	_add_card_title(card, "Stockpile")
-	_add_card_line(card, "cells", "%d" % _selected_stockpile.cells.size())
-	_add_card_line(card, "stacks", "%d / %d" % [_selected_stockpile.stack_count(), _selected_stockpile.stack_capacity()])
-	_add_card_line(card, "items", "%d / %d" % [_selected_stockpile.stored_count(), _selected_stockpile.capacity()])
+	var title_text: String = "Stockpile (Filtered)" if zone.is_customized() else "Stockpile"
+	_add_card_title(card, title_text)
+	# Expand / Shrink buttons at top
+	var size_row := HBoxContainer.new()
+	size_row.add_theme_constant_override("separation", 6)
+	card.add_child(size_row)
+	var expand_btn := Button.new()
+	expand_btn.text = "Expand"
+	expand_btn.tooltip_text = "Enter stockpile mode to add cells\nto this stockpile by dragging."
+	expand_btn.custom_minimum_size = Vector2(80, 28)
+	expand_btn.add_theme_font_size_override("font_size", 11)
+	expand_btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.16, 0.12, 0.95), Color(0.40, 0.80, 0.50, 0.65)))
+	expand_btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.20, 0.16, 0.98), Color(0.50, 0.90, 0.60, 0.85)))
+	expand_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.24, 0.20, 1.0), Color(0.60, 1.0, 0.70, 1.0)))
+	expand_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	expand_btn.pressed.connect(_on_stockpile_expand_pressed)
+	expand_btn.pressed.connect(AudioManager.play_button_press)
+	size_row.add_child(expand_btn)
+	var shrink_btn := Button.new()
+	shrink_btn.text = "Shrink"
+	shrink_btn.tooltip_text = "Enter remove-stockpile mode to\nremove cells from this stockpile."
+	shrink_btn.custom_minimum_size = Vector2(80, 28)
+	shrink_btn.add_theme_font_size_override("font_size", 11)
+	shrink_btn.add_theme_stylebox_override("normal", _button_style(Color(0.16, 0.12, 0.10, 0.95), Color(0.80, 0.55, 0.35, 0.65)))
+	shrink_btn.add_theme_stylebox_override("hover", _button_style(Color(0.20, 0.16, 0.14, 0.98), Color(0.90, 0.65, 0.45, 0.85)))
+	shrink_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.24, 0.20, 0.18, 1.0), Color(1.0, 0.75, 0.55, 1.0)))
+	shrink_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	shrink_btn.pressed.connect(_on_stockpile_shrink_pressed)
+	shrink_btn.pressed.connect(AudioManager.play_button_press)
+	size_row.add_child(shrink_btn)
+	_add_card_line(card, "cells", "%d" % zone.cells.size())
+	_add_card_line(card, "stacks", "%d / %d" % [zone.stack_count(), zone.stack_capacity()])
+	_add_card_line(card, "items", "%d / %d" % [zone.stored_count(), zone.capacity()])
+	# Enclosure + degradation
+	var enclosed: bool = false
 	if _stockpile_manager != null and _stockpile_manager.has_method("is_zone_enclosed"):
-		if not _stockpile_manager.is_zone_enclosed(_selected_stockpile):
-			_add_card_line(card, "status", "⚠ Degrading — enclose with walls + door", Color(0.95, 0.75, 0.2))
-		else:
-			_add_card_line(card, "status", "enclosed (protected)", COLOR_TEXT_MUTED)
-	var counts: Dictionary = _selected_stockpile.resource_counts()
+		enclosed = _stockpile_manager.is_zone_enclosed(zone)
+	if not enclosed:
+		_add_card_line(card, "status", "⚠ Degrading — enclose with walls + door", Color(0.95, 0.75, 0.2))
+		var stats: Dictionary = zone.degrade_stats()
+		var avg_pct: int = int(roundf(float(stats.get("avg_condition", 100.0))))
+		var lost: int = int(stats.get("items_lost", 0))
+		var dmg: float = float(stats.get("condition_damage", 0.0))
+		_add_card_line(card, "avg condition", "%d%%" % avg_pct, _condition_color(float(avg_pct)))
+		if lost > 0:
+			_add_card_line(card, "items lost", "%d" % lost, Color(0.95, 0.35, 0.28))
+		if dmg > 0.0:
+			_add_card_line(card, "condition damage", "%.0f" % dmg, Color(0.95, 0.55, 0.25))
+	else:
+		_add_card_line(card, "status", "enclosed (protected)", COLOR_TEXT_MUTED)
+	# Resources with item icons
+	var counts: Dictionary = zone.resource_counts()
 	if counts.is_empty():
 		_add_card_line(card, "resources", "empty", COLOR_TEXT_MUTED)
+	else:
+		_add_section_header(card, "resources", COLOR_ACCENT_CYAN)
+		for kind in _tracked_item_kinds():
+			var count: int = int(counts.get(kind, 0))
+			if count <= 0:
+				continue
+			_add_resource_row(card, kind, count, zone)
+	# Filter button
+	var filter_btn := Button.new()
+	var filter_label: String = "Filter" if not zone.is_customized() else "Filter (active)"
+	filter_btn.text = filter_label
+	filter_btn.tooltip_text = "Open filter panel to control which\nitem types this stockpile accepts."
+	filter_btn.custom_minimum_size = Vector2(120, 28)
+	filter_btn.add_theme_font_size_override("font_size", 11)
+	if zone.is_customized():
+		filter_btn.add_theme_stylebox_override("normal", _button_style(Color(0.12, 0.14, 0.22, 0.95), Color(0.45, 0.60, 0.92, 0.75)))
+		filter_btn.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.18, 0.26, 0.98), Color(0.55, 0.70, 1.0, 0.95)))
+		filter_btn.add_theme_color_override("font_color", Color(0.55, 0.75, 1.0))
+	else:
+		filter_btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.14, 0.18, 0.95), Color(0.35, 0.55, 0.70, 0.55)))
+		filter_btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.18, 0.22, 0.98), Color(0.45, 0.65, 0.80, 0.75)))
+		filter_btn.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	filter_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.22, 0.28, 1.0), Color(0.55, 0.75, 0.90, 0.95)))
+	filter_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	filter_btn.pressed.connect(_on_stockpile_filter_button_pressed.bind(zone))
+	filter_btn.pressed.connect(AudioManager.play_button_press)
+	card.add_child(filter_btn)
+	# Delete button
+	var delete_btn := Button.new()
+	delete_btn.text = "Delete Stockpile"
+	delete_btn.tooltip_text = "Remove all cells from this stockpile.\nItems are dropped as loose."
+	delete_btn.custom_minimum_size = Vector2(140, 32)
+	delete_btn.add_theme_font_size_override("font_size", 12)
+	delete_btn.add_theme_stylebox_override("normal", _button_style(Color(0.18, 0.07, 0.07, 0.95), Color(0.70, 0.22, 0.18, 0.78)))
+	delete_btn.add_theme_stylebox_override("hover", _button_style(Color(0.26, 0.10, 0.09, 0.98), Color(1.0, 0.32, 0.24, 0.95)))
+	delete_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.34, 0.12, 0.10, 1.0), Color(1.0, 0.38, 0.28, 1.0)))
+	delete_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	delete_btn.pressed.connect(_on_stockpile_delete_pressed.bind(zone))
+	delete_btn.pressed.connect(AudioManager.play_button_press)
+	card.add_child(delete_btn)
+
+
+func _on_stockpile_expand_pressed() -> void:
+	if _designator != null and _selected_stockpile != null and is_instance_valid(_selected_stockpile):
+		_designator.set_expand_zone(_selected_stockpile)
+	elif _designator != null:
+		_designator.set_mode(Designator.Mode.STOCKPILE)
+
+
+func _on_stockpile_shrink_pressed() -> void:
+	if _designator != null:
+		_designator.set_mode(Designator.Mode.REMOVE_STOCKPILE)
+
+
+func _on_stockpile_filter_button_pressed(zone: StockpileZone) -> void:
+	if zone == null or not is_instance_valid(zone):
 		return
-	_add_section_header(card, "resources", COLOR_ACCENT_CYAN)
+	_show_stockpile_filter_popup(zone)
+
+
+func _show_stockpile_filter_popup(zone: StockpileZone) -> void:
+	_close_stockpile_filter_popup()
+	var popup := PanelContainer.new()
+	popup.name = "StockpileFilterPopup"
+	popup.add_theme_stylebox_override("panel", _button_style(Color(0.08, 0.10, 0.14, 0.98), Color(0.35, 0.50, 0.70, 0.65)))
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	popup.add_child(vbox)
+	_add_section_header(vbox, "Item Filter", Color(0.50, 0.70, 0.95))
+	# Allow all / Allow none
+	var quick_row := HBoxContainer.new()
+	quick_row.add_theme_constant_override("separation", 6)
+	vbox.add_child(quick_row)
+	var all_btn := Button.new()
+	all_btn.text = "Allow all"
+	all_btn.custom_minimum_size = Vector2(80, 26)
+	all_btn.add_theme_font_size_override("font_size", 10)
+	all_btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.14, 0.18, 0.95), Color(0.35, 0.55, 0.70, 0.55)))
+	all_btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.18, 0.22, 0.98), Color(0.45, 0.65, 0.80, 0.75)))
+	all_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.22, 0.28, 1.0), Color(0.55, 0.75, 0.90, 0.95)))
+	all_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	all_btn.pressed.connect(_on_stockpile_filter_all.bind(zone))
+	all_btn.pressed.connect(AudioManager.play_button_press)
+	quick_row.add_child(all_btn)
+	var none_btn := Button.new()
+	none_btn.text = "Allow none"
+	none_btn.custom_minimum_size = Vector2(80, 26)
+	none_btn.add_theme_font_size_override("font_size", 10)
+	none_btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.14, 0.18, 0.95), Color(0.35, 0.55, 0.70, 0.55)))
+	none_btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.18, 0.22, 0.98), Color(0.45, 0.65, 0.80, 0.75)))
+	none_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.18, 0.22, 0.28, 1.0), Color(0.55, 0.75, 0.90, 0.95)))
+	none_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	none_btn.pressed.connect(_on_stockpile_filter_none.bind(zone))
+	none_btn.pressed.connect(AudioManager.play_button_press)
+	quick_row.add_child(none_btn)
+	# Per-kind toggles
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 3)
+	vbox.add_child(grid)
 	for kind in _tracked_item_kinds():
-		var count: int = int(counts.get(kind, 0))
-		if count <= 0:
-			continue
-		_add_card_line(card, Item.kind_name(kind), "%d" % count, Item.kind_color(kind).lerp(Color.WHITE, 0.35))
+		_add_filter_toggle_to_container(grid, kind, zone)
+	# Close button
+	var close_btn := Button.new()
+	close_btn.text = "Close"
+	close_btn.custom_minimum_size = Vector2(80, 28)
+	close_btn.add_theme_font_size_override("font_size", 11)
+	close_btn.add_theme_stylebox_override("normal", _button_style(Color(0.12, 0.12, 0.14, 0.95), Color(0.45, 0.45, 0.50, 0.55)))
+	close_btn.add_theme_stylebox_override("hover", _button_style(Color(0.16, 0.16, 0.18, 0.98), Color(0.55, 0.55, 0.60, 0.75)))
+	close_btn.add_theme_stylebox_override("pressed", _button_style(Color(0.20, 0.20, 0.22, 1.0), Color(0.65, 0.65, 0.70, 0.95)))
+	close_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	close_btn.pressed.connect(_close_stockpile_filter_popup)
+	close_btn.pressed.connect(AudioManager.play_button_press)
+	vbox.add_child(close_btn)
+	_selection_box.add_child(popup)
+	_stockpile_filter_popup = popup
+
+
+func _close_stockpile_filter_popup() -> void:
+	if _stockpile_filter_popup != null and is_instance_valid(_stockpile_filter_popup):
+		_selection_box.remove_child(_stockpile_filter_popup)
+		_stockpile_filter_popup.queue_free()
+	_stockpile_filter_popup = null
+
+
+func _on_stockpile_filter_all(zone: StockpileZone) -> void:
+	if zone == null or not is_instance_valid(zone):
+		return
+	zone.set_all_kinds_allowed()
+	_close_stockpile_filter_popup()
+	_refresh_selection_panel()
+
+
+func _on_stockpile_filter_none(zone: StockpileZone) -> void:
+	if zone == null or not is_instance_valid(zone):
+		return
+	zone.clear_all_kinds_allowed()
+	_close_stockpile_filter_popup()
+	_refresh_selection_panel()
+
+
+func _on_stockpile_filter_toggle(zone: StockpileZone, kind: int) -> void:
+	if zone == null or not is_instance_valid(zone):
+		return
+	zone.toggle_kind_allowed(kind)
+	_close_stockpile_filter_popup()
+	_refresh_selection_panel()
+
+
+func _add_filter_toggle_to_container(parent: Control, kind: int, zone: StockpileZone) -> void:
+	var allowed: bool = zone.accepts_kind(kind)
+	var btn := Button.new()
+	var kind_color: Color = Item.kind_color(kind)
+	btn.text = Item.kind_name(kind)
+	btn.custom_minimum_size = Vector2(110, 24)
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.add_theme_font_size_override("font_size", 10)
+	if allowed:
+		btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.16, 0.12, 0.95), kind_color * Color(1.0, 1.0, 1.0, 0.55)))
+		btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.20, 0.16, 0.98), kind_color * Color(1.0, 1.0, 1.0, 0.75)))
+		btn.add_theme_color_override("font_color", kind_color.lerp(Color.WHITE, 0.4))
+	else:
+		btn.add_theme_stylebox_override("normal", _button_style(Color(0.10, 0.10, 0.10, 0.95), Color(0.35, 0.35, 0.35, 0.35)))
+		btn.add_theme_stylebox_override("hover", _button_style(Color(0.14, 0.14, 0.14, 0.98), Color(0.45, 0.45, 0.45, 0.55)))
+		btn.add_theme_color_override("font_color", COLOR_TEXT_MUTED * Color(1.0, 1.0, 1.0, 0.55))
+	btn.add_theme_stylebox_override("pressed", _button_style(Color(0.16, 0.18, 0.22, 1.0), kind_color))
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	btn.pressed.connect(_on_stockpile_filter_toggle.bind(zone, kind))
+	btn.pressed.connect(AudioManager.play_button_press)
+	parent.add_child(btn)
+
+
+func _on_stockpile_delete_pressed(zone: StockpileZone) -> void:
+	if zone == null or not is_instance_valid(zone) or _stockpile_manager == null:
+		return
+	_close_stockpile_filter_popup()
+	_selected_stockpile = null
+	_stockpile_manager.remove_zone(zone)
+	call_deferred("_refresh_selection_panel")
+
+
+func _condition_color(pct: float) -> Color:
+	if pct >= 70.0:
+		return Color(0.55, 0.90, 0.45)
+	if pct >= 40.0:
+		return Color(0.95, 0.75, 0.25)
+	return Color(0.95, 0.35, 0.28)
+
+
+func _add_resource_row(parent: Control, kind: int, count: int, zone: StockpileZone) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	parent.add_child(row)
+	# Item texture icon
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(20, 20)
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	var atlas: Texture2D = null
+	var source := Rect2()
+	if Item.is_craftable_object_kind(kind) and _object_atlas != null:
+		atlas = _object_atlas
+		source = Rect2(Vector2(Item.object_atlas_index(kind) * int(ITEM_REGION_SIZE.x), 0), ITEM_REGION_SIZE)
+	elif _item_atlas != null:
+		atlas = _item_atlas
+		source = Rect2(Vector2(kind * int(ITEM_REGION_SIZE.x), 0), ITEM_REGION_SIZE)
+	if atlas != null:
+		icon.texture = ImageTexture.create_from_image(atlas.get_image().get_region(source))
+	else:
+		var fallback := Image.create(20, 20, false, Image.FORMAT_RGBA8)
+		fallback.fill(Item.kind_color(kind))
+		icon.texture = ImageTexture.create_from_image(fallback)
+	row.add_child(icon)
+	# Name
+	var name_label := Label.new()
+	name_label.text = Item.kind_name(kind)
+	name_label.add_theme_font_size_override("font_size", 11)
+	name_label.add_theme_color_override("font_color", Item.kind_color(kind).lerp(Color.WHITE, 0.35))
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_label)
+	# Count
+	var count_label := Label.new()
+	count_label.text = "%d" % count
+	count_label.add_theme_font_size_override("font_size", 11)
+	count_label.add_theme_color_override("font_color", COLOR_TEXT_LIGHT)
+	row.add_child(count_label)
+	# Average condition for this kind
+	var total_cond: float = 0.0
+	var n_stacks: int = 0
+	for v in zone.occupant.values():
+		var item: Item = StockpileZone._occupant_item(v)
+		if item != null and item.kind == kind and item.count > 0:
+			total_cond += item.condition
+			n_stacks += 1
+	if n_stacks > 0:
+		var avg: float = total_cond / float(n_stacks)
+		var cond_label := Label.new()
+		cond_label.text = "%d%%" % int(roundf(avg))
+		cond_label.add_theme_font_size_override("font_size", 10)
+		cond_label.add_theme_color_override("font_color", _condition_color(avg))
+		row.add_child(cond_label)
 
 
 func _build_construction_card() -> void:

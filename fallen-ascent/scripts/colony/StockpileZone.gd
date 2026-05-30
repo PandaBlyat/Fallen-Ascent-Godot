@@ -8,8 +8,13 @@ extends Node2D
 
 const FILL_COLOR := Color(0.25, 0.65, 0.35, 0.25)
 const BORDER_COLOR := Color(0.4, 0.85, 0.5, 0.5)
+const CUSTOM_FILL_COLOR := Color(0.25, 0.40, 0.72, 0.25)
+const CUSTOM_BORDER_COLOR := Color(0.40, 0.60, 0.92, 0.55)
+const HOVER_FILL_COLOR := Color(0.35, 0.85, 0.50, 0.18)
+const HOVER_CUSTOM_FILL_COLOR := Color(0.35, 0.55, 0.92, 0.18)
 const MAX_STACK_PER_CELL: int = 4
 const STORAGE_BIN_STACK_PER_CELL: int = 12
+const ENCLOSURE_SEARCH_LIMIT: int = 1024
 
 # Reservation dict keys.
 const R_KIND: String = "kind"
@@ -33,6 +38,14 @@ var _perimeter_dirty: bool = true
 ## Cached enclosure state. Invalidated when terrain/structures change.
 var _enclosed: bool = false
 var _enclosure_dirty: bool = true
+## When non-empty, only these item kinds are accepted for new hauls.
+## Existing stored items are not affected.
+var allowed_kinds: Array = []
+## Degradation tracking for detailed UI display.
+var _degrade_total_items_lost: int = 0
+var _degrade_total_condition_damage: float = 0.0
+var _degrade_avg_condition: float = 100.0
+var _hovered: bool = false
 
 
 func setup(zone_cells: Array[Vector2i]) -> void:
@@ -48,6 +61,115 @@ func contains_cell(grid: Vector2i) -> bool:
 	return _cell_set.has(grid)
 
 
+## Safely extract an Item from an occupant value. Handles freed instances
+## (queue_freed items still in the dict) by returning null.
+static func _occupant_item(v: Variant) -> Item:
+	if v == null:
+		return null
+	if typeof(v) == TYPE_OBJECT:
+		if not is_instance_valid(v as Object):
+			return null
+		if v is Item:
+			return v as Item
+		return null
+	if v is Dictionary:
+		var d := v as Dictionary
+		var existing: Variant = d.get(R_EXISTING)
+		if existing != null and typeof(existing) == TYPE_OBJECT and is_instance_valid(existing as Object):
+			return existing as Item
+	return null
+
+
+## True when the occupant value is a reservation dict (not a placed Item).
+static func _occupant_is_reservation(v: Variant) -> bool:
+	if v == null:
+		return false
+	if typeof(v) == TYPE_OBJECT:
+		if not is_instance_valid(v as Object):
+			return false
+		return false
+	return v is Dictionary
+
+
+func set_hovered(hovered: bool) -> void:
+	if _hovered == hovered:
+		return
+	_hovered = hovered
+	queue_redraw()
+
+
+## True when any item filter is active.
+func is_customized() -> bool:
+	return not allowed_kinds.is_empty()
+
+
+func accepts_kind(kind: int) -> bool:
+	if allowed_kinds.is_empty():
+		return true
+	return allowed_kinds.has(kind)
+
+
+func toggle_kind_allowed(kind: int) -> void:
+	if allowed_kinds.has(kind):
+		allowed_kinds.erase(kind)
+	else:
+		allowed_kinds.append(kind)
+	_perimeter_dirty = true
+	queue_redraw()
+
+
+func set_all_kinds_allowed() -> void:
+	allowed_kinds.clear()
+	_perimeter_dirty = true
+	queue_redraw()
+
+
+func clear_all_kinds_allowed() -> void:
+	allowed_kinds.clear()
+	for k in range(Item.Kind.size()):
+		allowed_kinds.append(k)
+	_perimeter_dirty = true
+	queue_redraw()
+
+
+func degrade_stats() -> Dictionary:
+	return {
+		"items_lost": _degrade_total_items_lost,
+		"condition_damage": _degrade_total_condition_damage,
+		"avg_condition": _degrade_avg_condition,
+	}
+
+
+func reset_degrade_stats() -> void:
+	_degrade_total_items_lost = 0
+	_degrade_total_condition_damage = 0.0
+	_degrade_avg_condition = 100.0
+
+
+func _update_avg_condition() -> void:
+	var total: float = 0.0
+	var n: int = 0
+	for v in occupant.values():
+		var item: Item = _occupant_item(v)
+		if item != null and item.count > 0:
+			total += item.condition
+			n += 1
+	_degrade_avg_condition = total / float(maxi(n, 1))
+
+
+## Remove cells from this zone. Returns array of [cell, Item|null] for each
+## detached cell so the caller (StockpileManager) can handle haul cancellation
+## and item re-homing.
+func remove_cells(cells_to_remove: Array[Vector2i]) -> Array:
+	var result: Array = []
+	for cell in cells_to_remove:
+		if not contains_cell(cell):
+			continue
+		var item: Item = detach_cell(cell)
+		result.append([cell, item])
+	return result
+
+
 ## Save layer: cells, per-cell capacity bumps, and the placed stacks. Inbound
 ## reservations are transient and intentionally dropped.
 func capture_save() -> Dictionary:
@@ -60,14 +182,20 @@ func capture_save() -> Dictionary:
 	var items: Array = []
 	for cell in occupant:
 		var v: Variant = occupant[cell]
-		var it: Item = null
-		if v is Item:
-			it = v as Item
-		elif v is Dictionary:
-			it = (v as Dictionary).get(R_EXISTING) as Item
-		if it != null and is_instance_valid(it) and it.count > 0:
+		var it: Item = _occupant_item(v)
+		if it != null and it.count > 0:
 			items.append([cell, int(it.kind), int(it.count), float(it.condition)])
-	return {"cells": cell_list, "capacity": cap, "items": items}
+	var filter: Array = []
+	for k in allowed_kinds:
+		filter.append(int(k))
+	return {
+		"cells": cell_list,
+		"capacity": cap,
+		"items": items,
+		"filter": filter,
+		"degrade_lost": _degrade_total_items_lost,
+		"degrade_damage": _degrade_total_condition_damage,
+	}
 
 
 ## Rebuild a zone from saved data. `make_item` is a Callable returning a fresh
@@ -89,6 +217,14 @@ func restore_save(data: Dictionary, make_item: Callable) -> void:
 			item.condition = float(entry[3])
 		add_child(item)
 		place(item, cell)
+	var filter_data: Array = data.get("filter", []) as Array
+	if not filter_data.is_empty():
+		allowed_kinds.clear()
+		for k in filter_data:
+			allowed_kinds.append(int(k))
+	_degrade_total_items_lost = int(data.get("degrade_lost", 0))
+	_degrade_total_condition_damage = float(data.get("degrade_damage", 0.0))
+	_update_avg_condition()
 
 
 ## Picks a cell that can accept `amount` of `kind`:
@@ -96,6 +232,8 @@ func restore_save(data: Dictionary, make_item: Callable) -> void:
 ##   2. An empty cell.
 ## Returns null if no slot is suitable.
 func first_free_cell_for(kind: int, amount: int = 1) -> Variant:
+	if not accepts_kind(kind):
+		return null
 	var partials: Dictionary = _partials_by_kind.get(kind, {}) as Dictionary
 	for c in partials.keys():
 		if room_at(c, kind) >= amount:
@@ -109,18 +247,13 @@ func room_at(cell: Vector2i, kind: int) -> int:
 	var v: Variant = occupant.get(cell)
 	if v == null:
 		return _stack_limit_at(cell)
-	if v is Item:
-		var item := v as Item
+	var item: Item = _occupant_item(v)
+	if item != null:
 		if item.kind != kind:
 			return 0
 		return maxi(0, _stack_limit_at(cell) - item.count)
-	if v is Dictionary:
+	if _occupant_is_reservation(v):
 		var d := v as Dictionary
-		var existing: Item = d.get(R_EXISTING) as Item
-		if existing != null and is_instance_valid(existing):
-			if existing.kind != kind:
-				return 0
-			return maxi(0, _stack_limit_at(cell) - existing.count)
 		if int(d.get(R_KIND, -1)) == kind:
 			return _stack_limit_at(cell)
 	return 0
@@ -140,25 +273,16 @@ func stack_capacity() -> int:
 func stack_count() -> int:
 	var n: int = 0
 	for v in occupant.values():
-		if v is Item:
+		if _occupant_item(v) != null:
 			n += 1
-		elif v is Dictionary:
-			var d := v as Dictionary
-			var existing: Item = d.get(R_EXISTING) as Item
-			if existing != null and is_instance_valid(existing):
-				n += 1
 	return n
 
 
 func resource_counts() -> Dictionary:
 	var counts: Dictionary = {}
 	for v in occupant.values():
-		var item: Item = null
-		if v is Item:
-			item = v as Item
-		elif v is Dictionary:
-			item = (v as Dictionary).get(R_EXISTING) as Item
-		if item != null and is_instance_valid(item) and item.count > 0:
+		var item: Item = _occupant_item(v)
+		if item != null and item.count > 0:
 			counts[item.kind] = int(counts.get(item.kind, 0)) + item.count
 	return counts
 
@@ -166,28 +290,22 @@ func resource_counts() -> Dictionary:
 func stored_count_for_kind(kind: int) -> int:
 	var n: int = 0
 	for v in occupant.values():
-		var item: Item = null
-		if v is Item:
-			item = v as Item
-		elif v is Dictionary:
-			item = (v as Dictionary).get(R_EXISTING) as Item
-		if item != null and is_instance_valid(item) and item.kind == kind:
+		var item: Item = _occupant_item(v)
+		if item != null and item.kind == kind:
 			n += item.count
 	return n
 
 
 func reserve(cell: Vector2i, kind: int) -> void:
 	var v: Variant = occupant.get(cell)
-	var existing: Item = null
-	if v is Item:
-		existing = v as Item
+	var existing: Item = _occupant_item(v)
 	occupant[cell] = {R_KIND: kind, R_EXISTING: existing}
 	_refresh_cell_state(cell)
 
 
 func unreserve(cell: Vector2i) -> void:
 	var v: Variant = occupant.get(cell)
-	if not (v is Dictionary):
+	if not _occupant_is_reservation(v):
 		return
 	var d := v as Dictionary
 	var existing: Item = d.get(R_EXISTING) as Item
@@ -200,10 +318,11 @@ func unreserve(cell: Vector2i) -> void:
 
 func reserved_kind_at(cell: Vector2i) -> int:
 	var v: Variant = occupant.get(cell)
-	if v is Dictionary:
+	if _occupant_is_reservation(v):
 		return (v as Dictionary).get(R_KIND, -1)
-	if v is Item:
-		return (v as Item).kind
+	var item: Item = _occupant_item(v)
+	if item != null:
+		return item.kind
 	return -1
 
 
@@ -214,14 +333,9 @@ func reserved_kind_at(cell: Vector2i) -> int:
 func place(item: Item, cell: Vector2i) -> Item:
 	# Pull the previous existing (from reservation) so we can decide to merge.
 	var prev: Variant = occupant.get(cell)
-	var existing: Item = null
-	if prev is Dictionary:
-		var d := prev as Dictionary
-		existing = d.get(R_EXISTING) as Item
-	elif prev is Item:
-		existing = prev as Item
+	var existing: Item = _occupant_item(prev)
 
-	if existing != null and is_instance_valid(existing) and existing.kind == item.kind:
+	if existing != null and existing.kind == item.kind:
 		var overflow: int = existing.add_to_stack(item.count, _stack_limit_at(cell))
 		item.count = overflow
 		if overflow <= 0 and item.get_parent() != null:
@@ -246,12 +360,9 @@ func take(cell: Vector2i) -> void:
 func stored_count() -> int:
 	var n: int = 0
 	for v in occupant.values():
-		if v is Item:
-			n += (v as Item).count
-		elif v is Dictionary and (v as Dictionary).has(R_EXISTING):
-			var ex: Item = (v as Dictionary)[R_EXISTING] as Item
-			if ex != null and is_instance_valid(ex):
-				n += ex.count
+		var item: Item = _occupant_item(v)
+		if item != null:
+			n += item.count
 	return n
 
 
@@ -269,12 +380,7 @@ func detach_cell(cell: Vector2i) -> Item:
 	for kind_bucket in _partials_by_kind.values():
 		(kind_bucket as Dictionary).erase(cell)
 	queue_redraw()
-	if v is Item:
-		return v as Item
-	if v is Dictionary:
-		var d := v as Dictionary
-		return d.get(R_EXISTING) as Item
-	return null
+	return _occupant_item(v)
 
 
 func set_capacity_multiplier(cell: Vector2i, multiplier: int) -> void:
@@ -316,40 +422,43 @@ func is_enclosed(chunk_manager: ChunkManager, structure_manager: StructureManage
 
 
 func _compute_enclosed(chunk_manager: ChunkManager, structure_manager: StructureManager) -> bool:
+	if cells.is_empty():
+		return false
 	const NEIGHBORS: Array[Vector2i] = [
 		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 	]
+	var visited: Dictionary = {}
+	for c in cells:
+		visited[c] = true
+	var queue: Array[Vector2i] = cells.duplicate()
 	var has_door: bool = false
-	for cell in cells:
+	var checked: int = 0
+	while not queue.is_empty():
+		var current: Vector2i = queue.pop_front()
+		checked += 1
+		if checked > ENCLOSURE_SEARCH_LIMIT:
+			return false
 		for off in NEIGHBORS:
-			var n: Vector2i = cell + off
-			if _cell_set.has(n):
+			var n: Vector2i = current + off
+			if visited.has(n):
 				continue
-			if not _is_stockpile_boundary(n, chunk_manager, structure_manager):
-				return false
-			# Track whether at least one door is on the perimeter.
-			if not has_door:
-				var s: Dictionary = structure_manager.structure_at(n)
-				if not s.is_empty() and int(s.get("id", -1)) == BuildBlueprint.Id.DOOR:
+			visited[n] = true
+			if not chunk_manager.is_walkable(n):
+				continue
+			var s: Dictionary = structure_manager.structure_at(n)
+			if not s.is_empty():
+				var sid: int = int(s.get("id", -1))
+				if sid == BuildBlueprint.Id.WALL:
+					continue
+				if sid == BuildBlueprint.Id.DOOR:
 					has_door = true
-	return has_door
-
-
-static func _is_stockpile_boundary(
-	cell: Vector2i,
-	chunk_manager: ChunkManager,
-	structure_manager: StructureManager,
-) -> bool:
-	var tile: int = chunk_manager.get_tile_at(cell)
-	if tile == TerrainGenerator.TILE_WALL \
-			or tile == TerrainGenerator.TILE_RICH_WALL \
-			or tile == TerrainGenerator.TILE_SERVICE_CORE:
-		return true
-	var s: Dictionary = structure_manager.structure_at(cell)
-	if s.is_empty():
+					continue
+			queue.append(n)
+	if not has_door:
 		return false
-	var sid: int = int(s.get("id", -1))
-	return sid == BuildBlueprint.Id.WALL or sid == BuildBlueprint.Id.DOOR
+	return true
+
+
 
 
 ## Degrade all stored items in this zone. Returns an array of cells whose
@@ -358,19 +467,28 @@ func degrade_exposed_items(amount: float) -> Array[Vector2i]:
 	var consumed: Array[Vector2i] = []
 	for cell in cells:
 		var v: Variant = occupant.get(cell)
-		var item: Item = null
-		if v is Item:
-			item = v as Item
-		elif v is Dictionary:
-			item = (v as Dictionary).get(R_EXISTING) as Item
-		if item == null or not is_instance_valid(item):
+		var item: Item = _occupant_item(v)
+		if item == null:
 			continue
+		var prev_condition: float = item.condition
+		var prev_count: int = item.count
 		if item.degrade(amount):
 			consumed.append(cell)
 			take(cell)
 			if item.get_parent() == self:
 				remove_child(item)
 			item.queue_free()
+			_degrade_total_items_lost += prev_count
+			_degrade_total_condition_damage += prev_condition
+		else:
+			var damage: float = prev_condition - item.condition
+			if damage < 0.0:
+				damage = prev_condition + (100.0 - item.condition)
+			_degrade_total_condition_damage += damage
+			var items_lost: int = prev_count - item.count
+			if items_lost > 0:
+				_degrade_total_items_lost += items_lost
+	_update_avg_condition()
 	return consumed
 
 
@@ -385,18 +503,12 @@ func _refresh_cell_state(cell: Vector2i) -> void:
 		return
 	var v: Variant = occupant[cell]
 	var partial_kind: int = -1
-	if v is Item:
-		var item := v as Item
+	var item: Item = _occupant_item(v)
+	if item != null:
 		if item.count < _stack_limit_at(cell):
 			partial_kind = item.kind
-	elif v is Dictionary:
-		var d := v as Dictionary
-		var existing: Item = d.get(R_EXISTING) as Item
-		if existing != null and is_instance_valid(existing):
-			if existing.count < _stack_limit_at(cell):
-				partial_kind = existing.kind
-		else:
-			partial_kind = int(d.get(R_KIND, -1))
+	elif _occupant_is_reservation(v):
+		partial_kind = int((v as Dictionary).get(R_KIND, -1))
 	if partial_kind >= 0:
 		if not _partials_by_kind.has(partial_kind):
 			_partials_by_kind[partial_kind] = {}
@@ -406,8 +518,15 @@ func _refresh_cell_state(cell: Vector2i) -> void:
 func _draw() -> void:
 	if _perimeter_dirty:
 		_rebuild_perimeter_edges()
+	if _hovered:
+		var hover_fill: Color = HOVER_CUSTOM_FILL_COLOR if is_customized() else HOVER_FILL_COLOR
+		for c in cells:
+			var origin := Vector2(c.x * Chunk.TILE_PIXELS, c.y * Chunk.TILE_PIXELS)
+			var rect := Rect2(origin, Vector2(Chunk.TILE_PIXELS, Chunk.TILE_PIXELS))
+			draw_rect(rect, hover_fill)
 	if not _perimeter_edges.is_empty():
-		draw_multiline(_perimeter_edges, BORDER_COLOR, 1.0)
+		var border: Color = CUSTOM_BORDER_COLOR if is_customized() else BORDER_COLOR
+		draw_multiline(_perimeter_edges, border, 1.0)
 
 
 func _rebuild_perimeter_edges() -> void:

@@ -127,10 +127,20 @@ func _refresh(grid: Vector2i) -> void:
 		lines.append(job_line)
 	if _stockpile_manager != null and _stockpile_manager.zone_at(grid) != null:
 		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
-		lines.append("Stockpile: %d/%d" % [zone.stored_count(), zone.capacity()])
+		var zone_label: String = "Stockpile"
+		if zone.is_customized():
+			zone_label = "Stockpile (filtered)"
+		lines.append("%s: %d/%d" % [zone_label, zone.stored_count(), zone.capacity()])
 		if _stockpile_manager.has_method("is_zone_enclosed"):
 			if not _stockpile_manager.is_zone_enclosed(zone):
-				lines.append("⚠ Degrading — enclose with walls + door")
+				var stats: Dictionary = zone.degrade_stats()
+				var avg_pct: int = int(roundf(float(stats.get("avg_condition", 100.0))))
+				lines.append("⚠ Degrading — avg %d%%" % avg_pct)
+				var lost: int = int(stats.get("items_lost", 0))
+				if lost > 0:
+					lines.append("  %d items lost" % lost)
+			else:
+				lines.append("enclosed (protected)")
 	var room_line: String = _room_line_at(grid)
 	if not room_line.is_empty():
 		lines.append(room_line)
@@ -147,15 +157,13 @@ func _item_line_at(grid: Vector2i) -> String:
 		var zone: StockpileZone = _stockpile_manager.zone_at(grid)
 		if zone != null:
 			var occupant: Variant = zone.occupant.get(grid)
-			if occupant is Item:
-				var stored := occupant as Item
+			var stored: Item = StockpileZone._occupant_item(occupant)
+			if stored != null:
+				if StockpileZone._occupant_is_reservation(occupant):
+					return "Stored: %s x%d (reserved)" % [Item.kind_name(stored.kind), stored.count]
 				return "Stored: %s x%d" % [Item.kind_name(stored.kind), stored.count]
-			if occupant is Dictionary:
-				var reservation := occupant as Dictionary
-				var existing: Item = reservation.get(StockpileZone.R_EXISTING) as Item
-				if existing != null and is_instance_valid(existing):
-					return "Stored: %s x%d (reserved)" % [Item.kind_name(existing.kind), existing.count]
-				var reserved_kind: int = int(reservation.get(StockpileZone.R_KIND, -1))
+			if StockpileZone._occupant_is_reservation(occupant):
+				var reserved_kind: int = int((occupant as Dictionary).get(StockpileZone.R_KIND, -1))
 				if reserved_kind >= 0:
 					return "Reserved for: " + Item.kind_name(reserved_kind)
 	return ""

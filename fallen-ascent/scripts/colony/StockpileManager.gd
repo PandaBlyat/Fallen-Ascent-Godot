@@ -78,6 +78,67 @@ func create_zone(rect_cells: Array[Vector2i]) -> void:
 	_schedule_match_loose_items()
 
 
+## Add cells to an existing zone. Cells must be walkable and not in any zone.
+func add_cells_to_zone(zone: StockpileZone, rect_cells: Array[Vector2i]) -> void:
+	if zone == null or not is_instance_valid(zone):
+		return
+	var new_cells: Array[Vector2i] = []
+	for c in rect_cells:
+		if _chunk_manager.is_walkable(c) and not _cell_in_any_zone(c):
+			new_cells.append(c)
+	if new_cells.is_empty():
+		return
+	for c in new_cells:
+		zone.cells.append(c)
+		zone._cell_set[c] = true
+		zone._empty_cells[c] = true
+	zone._perimeter_dirty = true
+	zone.invalidate_enclosure()
+	zone.queue_redraw()
+	stockpile_changed.emit()
+	_schedule_match_loose_items()
+
+
+## Remove specific cells from a zone. Handles haul cancellation, item
+## re-homing, and auto-removes the zone if it becomes empty.
+func remove_cells_from_zone(zone: StockpileZone, rect_cells: Array[Vector2i]) -> void:
+	if zone == null or not is_instance_valid(zone):
+		return
+	# Cancel pending haul jobs FIRST (while dropoff_zone is still valid)
+	for cell in rect_cells:
+		_job_board.cancel_haul_to(zone, cell)
+	# Null out dropoff_zone on workers that claimed jobs to these cells
+	if _items_root != null:
+		var workers_root: Node = _items_root.get_parent()
+		if workers_root != null:
+			for w in workers_root.get_children():
+				if w is Worker:
+					var worker := w as Worker
+					if worker._job is HaulJob:
+						var haul := worker._job as HaulJob
+						if haul.dropoff_zone == zone and rect_cells.has(haul.dropoff):
+							haul.dropoff_zone = null
+							if haul.item != null and is_instance_valid(haul.item):
+								haul.item.reserved_by = null
+	var detached: Array = zone.remove_cells(rect_cells)
+	for entry in detached:
+		var cell: Vector2i = entry[0] as Vector2i
+		var item: Item = entry[1] as Item
+		if item != null and is_instance_valid(item):
+			if item.get_parent() == zone:
+				zone.remove_child(item)
+			_items_root.add_child(item)
+			item.set_grid(cell)
+			item.reserved_by = null
+			_register_loose_item(item)
+	if zone.cells.is_empty():
+		zones.erase(zone)
+		zone_removed.emit(zone)
+		zone.queue_free()
+	stockpile_changed.emit()
+	_schedule_match_loose_items()
+
+
 func capture_save() -> Dictionary:
 	var out: Array = []
 	for z in zones:
@@ -131,16 +192,27 @@ func unregister_storage_bin(cell: Vector2i) -> void:
 func remove_zone(zone: StockpileZone) -> void:
 	if zone == null or not is_instance_valid(zone):
 		return
-	# Clear reservations on items that were inbound to this zone before we
-	# cancel the hauls — workers will see job_cancelled and drop carry.
-	for j in _job_board.pending:
-		if j is HaulJob and (j as HaulJob).dropoff_zone == zone:
-			var it: Item = (j as HaulJob).item as Item
-			if it != null and is_instance_valid(it):
-				it.reserved_by = null
+	# Cancel pending haul jobs on the board FIRST (before nulling dropoff_zone)
+	# so cancel_hauls_to_zone can match by zone reference. This emits
+	# job_cancelled for workers that haven't started moving yet.
 	_job_board.cancel_hauls_to_zone(zone)
-	# Drop placed items as loose items at their cell, in case a worker is
-	# carrying inbound material we drop the carry on _on_job_cancelled.
+	# Null out dropoff_zone on any worker's active haul job targeting this
+	# zone. These workers already claimed the job (removed from pending) so
+	# cancel_hauls_to_zone didn't reach them. The worker's proactive check
+	# in _process will see null dropoff_zone and abandon the job.
+	if _items_root != null:
+		var workers_root: Node = _items_root.get_parent()
+		if workers_root != null:
+			for w in workers_root.get_children():
+				if w is Worker:
+					var worker := w as Worker
+					if worker._job is HaulJob:
+						var haul := worker._job as HaulJob
+						if haul.dropoff_zone == zone:
+							haul.dropoff_zone = null
+							if haul.item != null and is_instance_valid(haul.item):
+								haul.item.reserved_by = null
+	# Drop placed items as loose items at their cell.
 	for cell in zone.cells.duplicate():
 		var item: Item = zone.detach_cell(cell)
 		if item != null and is_instance_valid(item):
@@ -320,12 +392,8 @@ func available_count(kind: int) -> int:
 	var n: int = 0
 	for zone in zones:
 		for value in zone.occupant.values():
-			var item: Item = null
-			if value is Item:
-				item = value as Item
-			elif value is Dictionary:
-				item = (value as Dictionary).get(StockpileZone.R_EXISTING) as Item
-			if item != null and is_instance_valid(item) and item.reserved_by == null and item.kind == kind and item.count > 0:
+			var item: Item = StockpileZone._occupant_item(value)
+			if item != null and item.reserved_by == null and item.kind == kind and item.count > 0:
 				n += item.count
 	return n
 
@@ -334,12 +402,8 @@ func consume_one(kind: int) -> bool:
 	for zone in zones:
 		for cell in zone.cells:
 			var value: Variant = zone.occupant.get(cell)
-			var item: Item = null
-			if value is Item:
-				item = value as Item
-			elif value is Dictionary:
-				item = (value as Dictionary).get(StockpileZone.R_EXISTING) as Item
-			if item == null or not is_instance_valid(item) or item.reserved_by != null or item.kind != kind or item.count <= 0:
+			var item: Item = StockpileZone._occupant_item(value)
+			if item == null or item.reserved_by != null or item.kind != kind or item.count <= 0:
 				continue
 			item.count -= 1
 			if item.count <= 0:
